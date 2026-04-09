@@ -64,6 +64,7 @@ interface AppState {
   deleteProject: (id: string) => Promise<void>;
   createWorktree: (projectId: string, branch: string, name: string) => Promise<void>;
   renameWorktree: (id: string, projectId: string, name: string) => Promise<void>;
+  setWorktreeTargetBranch: (id: string, projectId: string, targetBranch: string | null) => Promise<void>;
   deleteWorktree: (id: string, projectId: string) => Promise<void>;
 
   // Actions — tabs
@@ -159,6 +160,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   renameWorktree: async (id, projectId, name) => {
     await commands.renameWorktree(id, name);
+    await get().loadWorktrees(projectId);
+  },
+
+  setWorktreeTargetBranch: async (id, projectId, targetBranch) => {
+    await commands.setWorktreeTargetBranch(id, targetBranch);
     await get().loadWorktrees(projectId);
   },
 

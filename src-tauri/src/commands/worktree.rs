@@ -107,6 +107,11 @@ pub fn create_worktree_new_branch(
 }
 
 #[tauri::command]
+pub fn set_worktree_target_branch(db: State<'_, Database>, id: String, target_branch: Option<String>) -> Result<(), String> {
+    db.set_worktree_target_branch(&id, target_branch.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn rename_worktree(db: State<'_, Database>, id: String, name: String) -> Result<(), String> {
     db.rename_worktree(&id, &name).map_err(|e| e.to_string())
 }

@@ -39,18 +39,20 @@ export function ChangesPanel() {
     }
   }, [worktree?.path]);
 
+  const baseBranch = worktree?.target_branch || project?.base_branch || "main";
+
   const refreshPrFiles = useCallback(async () => {
     if (!worktree) return;
     setLoadingPr(true);
     try {
-      const files = await commands.getPrDiffFiles(worktree.path);
+      const files = await commands.getPrDiffFiles(worktree.path, baseBranch);
       setPrFiles(files);
     } catch {
       setPrFiles([]);
     } finally {
       setLoadingPr(false);
     }
-  }, [worktree?.path]);
+  }, [worktree?.path, baseBranch]);
 
   // Auto-refresh uncommitted on worktree change and every 5 seconds
   useEffect(() => {
@@ -70,7 +72,7 @@ export function ChangesPanel() {
   if (!worktree || !project) return null;
 
   const handleFileClick = (file: string, mode: "uncommitted" | "pr") => {
-    openDiffTab(worktree.id, file, worktree.path, mode);
+    openDiffTab(worktree.id, file, worktree.path, mode, mode === "pr" ? baseBranch : undefined);
   };
 
   return (
@@ -130,7 +132,7 @@ export function ChangesPanel() {
           <FileList
             files={prFiles}
             loading={loadingPr}
-            emptyMessage="No PR changes (or no common ancestor with main)"
+            emptyMessage={`No PR changes (or no common ancestor with ${baseBranch})`}
             onFileClick={(f) => handleFileClick(f, "pr")}
           />
         )}
@@ -147,9 +149,14 @@ export function ChangesPanel() {
               );
             }}
             onCreatePrWithClaude={() => {
-              requestClaudeTab(
-                `claude "Please look at the changes on this branch compared to the main branch. Push the branch to origin if needed, then create a well-written pull request with a clear title and description summarizing the changes. Use gh pr create."`
-              );
+              if (project.pr_create_skill) {
+                // Use custom skill/command
+                requestClaudeTab(project.pr_create_skill);
+              } else {
+                requestClaudeTab(
+                  `claude "Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}"`
+                );
+              }
             }}
           />
         )}

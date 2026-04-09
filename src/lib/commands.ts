@@ -85,6 +85,10 @@ export async function getPrFileDiff(path: string, file: string, baseBranch?: str
   return invoke("get_pr_file_diff", { path, file, baseBranch });
 }
 
+export async function setWorktreeTargetBranch(id: string, targetBranch: string | null): Promise<void> {
+  return invoke("set_worktree_target_branch", { id, targetBranch });
+}
+
 export async function renameWorktree(id: string, name: string): Promise<void> {
   return invoke("rename_worktree", { id, name });
 }

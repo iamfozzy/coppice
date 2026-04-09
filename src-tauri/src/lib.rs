@@ -26,6 +26,7 @@ pub fn run() {
             commands::worktree::list_worktrees,
             commands::worktree::create_worktree,
             commands::worktree::create_worktree_new_branch,
+            commands::worktree::set_worktree_target_branch,
             commands::worktree::rename_worktree,
             commands::worktree::delete_worktree,
             commands::worktree::list_branches,

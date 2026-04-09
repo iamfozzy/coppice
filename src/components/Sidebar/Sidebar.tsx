@@ -46,9 +46,12 @@ export function Sidebar() {
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 h-12 border-b border-border-primary shrink-0">
-        <span className="text-sm font-semibold text-text-primary tracking-tight">
-          Coppice
-        </span>
+        <div className="flex items-center gap-2">
+          <img src="/icon.png" alt="" className="w-5 h-5" />
+          <span className="text-sm font-semibold text-text-primary tracking-tight">
+            Coppice
+          </span>
+        </div>
         <button
           onClick={() => openProjectSettings("new")}
           className="w-6 h-6 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"

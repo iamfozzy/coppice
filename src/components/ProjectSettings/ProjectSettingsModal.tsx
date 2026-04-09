@@ -7,10 +7,12 @@ const emptyForm: ProjectFormData = {
   name: "",
   local_path: "",
   github_remote: "",
+  base_branch: "main",
   setup_scripts: [],
   build_command: "",
   run_command: "",
   env_files: [],
+  pr_create_skill: "",
 };
 
 export function ProjectSettingsModal() {
@@ -37,10 +39,12 @@ export function ProjectSettingsModal() {
         name: existingProject.name,
         local_path: existingProject.local_path,
         github_remote: existingProject.github_remote,
+        base_branch: existingProject.base_branch || "main",
         setup_scripts: existingProject.setup_scripts,
         build_command: existingProject.build_command,
         run_command: existingProject.run_command,
         env_files: existingProject.env_files,
+        pr_create_skill: existingProject.pr_create_skill || "",
       });
       setSetupScriptsText(existingProject.setup_scripts.join("\n"));
       setEnvFilesText(existingProject.env_files.join("\n"));
@@ -139,6 +143,12 @@ export function ProjectSettingsModal() {
             placeholder="https://github.com/owner/repo or owner/repo"
           />
           <Field
+            label="Base branch"
+            value={form.base_branch}
+            onChange={(base_branch) => setForm({ ...form, base_branch })}
+            placeholder="main"
+          />
+          <Field
             label="Build command"
             value={form.build_command}
             onChange={(build_command) => setForm({ ...form, build_command })}
@@ -162,6 +172,13 @@ export function ProjectSettingsModal() {
             value={envFilesText}
             onChange={setEnvFilesText}
             placeholder={".env\n.env.local"}
+            rows={2}
+          />
+          <TextAreaField
+            label="PR create skill (custom Claude command for creating PRs)"
+            value={form.pr_create_skill}
+            onChange={(pr_create_skill) => setForm({ ...form, pr_create_skill })}
+            placeholder={'claude "Review changes and create a PR with /commit"'}
             rows={2}
           />
         </div>

@@ -13,6 +13,7 @@ export function WorktreeView() {
   const addTab = useAppStore((s) => s.addTab);
   const closeTab = useAppStore((s) => s.closeTab);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const setWorktreeTargetBranch = useAppStore((s) => s.setWorktreeTargetBranch);
   const pendingClaudeCommand = useAppStore((s) => s.pendingClaudeCommand);
   const consumeClaudeCommand = useAppStore((s) => s.consumeClaudeCommand);
 
@@ -86,6 +87,13 @@ export function WorktreeView() {
           {worktree.name}
         </h2>
         <span className="text-xs text-text-tertiary font-mono">{liveBranch ?? worktree.branch}</span>
+        <TargetBranchPicker
+          currentTarget={worktree.target_branch || project.base_branch}
+          onChange={(branch) => {
+            const value = branch === project.base_branch ? null : branch;
+            setWorktreeTargetBranch(worktree.id, project.id, value);
+          }}
+        />
 
         <div className="ml-auto flex items-center gap-1.5">
           <ActionButton title="Open in VS Code" icon="vscode" onClick={() => commands.openInVscode(worktree.path)} />
@@ -248,5 +256,61 @@ function ActionButton({
         {title}
       </div>
     </div>
+  );
+}
+
+function TargetBranchPicker({
+  currentTarget,
+  onChange,
+}: {
+  currentTarget: string;
+  onChange: (branch: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(currentTarget);
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1">
+        <span className="text-[10px] text-text-tertiary">→</span>
+        <input
+          className="px-1.5 py-0.5 text-[11px] bg-bg-tertiary border border-accent rounded text-text-primary font-mono focus:outline-none w-24"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && value.trim()) {
+              onChange(value.trim());
+              setEditing(false);
+            } else if (e.key === "Escape") {
+              setEditing(false);
+              setValue(currentTarget);
+            }
+          }}
+          onBlur={() => {
+            if (value.trim() && value.trim() !== currentTarget) {
+              onChange(value.trim());
+            }
+            setEditing(false);
+          }}
+          autoFocus
+          spellCheck={false}
+          autoComplete="off"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <button
+      className="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+      onClick={() => {
+        setValue(currentTarget);
+        setEditing(true);
+      }}
+      title="Target branch for PR comparisons (click to change)"
+    >
+      <span>→</span>
+      <span className="font-mono">{currentTarget}</span>
+    </button>
   );
 }

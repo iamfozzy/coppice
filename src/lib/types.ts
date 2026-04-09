@@ -3,10 +3,12 @@ export interface Project {
   name: string;
   local_path: string;
   github_remote: string;
+  base_branch: string;
   setup_scripts: string[];
   build_command: string;
   run_command: string;
   env_files: string[];
+  pr_create_skill: string;
   created_at: string;
 }
 
@@ -16,6 +18,7 @@ export interface Worktree {
   name: string;
   path: string;
   branch: string;
+  target_branch: string | null;
   source_type: "branch" | "pr" | "tag";
   pr_number: number | null;
   pr_status: PrStatus | null;

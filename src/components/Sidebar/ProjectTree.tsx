@@ -13,6 +13,7 @@ export function ProjectTree() {
   const deleteWorktree = useAppStore((s) => s.deleteWorktree);
   const deletingWorktreeIds = useAppStore((s) => s.deletingWorktreeIds);
   const renameWorktree = useAppStore((s) => s.renameWorktree);
+  const runnersByWorktree = useAppStore((s) => s.runnersByWorktree);
   const [creatingWorktreeForProject, setCreatingWorktreeForProject] =
     useState<string | null>(null);
 
@@ -39,6 +40,7 @@ export function ProjectTree() {
             selectWorktree(wt.id);
           }}
           deletingIds={deletingWorktreeIds}
+          runnersByWorktree={runnersByWorktree}
           onDeleteWorktree={(wt) => {
             if (confirm(`Delete worktree "${wt.name}"? This will remove the directory from disk.`)) {
               deleteWorktree(wt.id, project.id);
@@ -66,6 +68,7 @@ function ProjectNode({
   worktrees,
   selectedWorktreeId,
   deletingIds,
+  runnersByWorktree,
   onSelectWorktree,
   onDeleteWorktree,
   onRenameWorktree,
@@ -76,6 +79,7 @@ function ProjectNode({
   worktrees: Worktree[];
   selectedWorktreeId: string | null;
   deletingIds: Set<string>;
+  runnersByWorktree: Record<string, Record<string, import("../../stores/appStore").RunnerInfo>>;
   onSelectWorktree: (wt: Worktree) => void;
   onDeleteWorktree: (wt: Worktree) => void;
   onRenameWorktree: (wt: Worktree, name: string) => void;
@@ -105,22 +109,22 @@ function ProjectNode({
         >
           <path d="M3 1l4 4-4 4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" />
         </svg>
-        <span className="truncate">{project.name}</span>
-        <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <span className="truncate flex-1">{project.name}</span>
+        <span className="flex items-center gap-0.5">
           <span
-            className="text-text-tertiary hover:text-text-primary"
+            className="w-5 h-5 flex items-center justify-center rounded text-text-tertiary hover:text-text-primary hover:bg-bg-active transition-colors"
             onClick={(e) => {
               e.stopPropagation();
               onAddWorktree();
             }}
             title="Add worktree"
           >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+              <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
             </svg>
           </span>
           <span
-            className="text-text-tertiary hover:text-text-primary"
+            className="w-5 h-5 flex items-center justify-center rounded text-text-tertiary hover:text-text-primary hover:bg-bg-active transition-colors"
             onClick={(e) => {
               e.stopPropagation();
               onEditProject();
@@ -146,6 +150,7 @@ function ProjectNode({
           ) : (
             worktrees.map((wt) => {
               const isDeleting = deletingIds.has(wt.id);
+              const hasRunningRunner = runnersByWorktree[wt.id]?.["run"]?.status === "running";
               return (
               <div
                 key={wt.id}
@@ -194,6 +199,7 @@ function ProjectNode({
                 ) : (
                   <span className="truncate flex-1">{wt.name}</span>
                 )}
+                {hasRunningRunner && !isDeleting && <RunningIndicator />}
                 {!isDeleting && <span
                   className="opacity-0 group-hover/wt:opacity-100 text-text-tertiary hover:text-error transition-opacity shrink-0"
                   onClick={(e) => {
@@ -213,6 +219,15 @@ function ProjectNode({
         </div>
       )}
     </div>
+  );
+}
+
+function RunningIndicator() {
+  return (
+    <span className="shrink-0 relative flex h-2 w-2" title="Run command active">
+      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-50" />
+      <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
+    </span>
   );
 }
 
