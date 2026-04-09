@@ -38,6 +38,7 @@ interface AppState {
   sidebarWidth: number;
   pendingClaudeCommand: string | null;
   pendingRunner: { key: string } | null;
+  deletingWorktreeIds: Set<string>;
 
   // Per-worktree sessions (keyed by worktree ID)
   tabsByWorktree: Record<string, TabInfo[]>;
@@ -91,6 +92,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sidebarWidth: 260,
   pendingClaudeCommand: null,
   pendingRunner: null,
+  deletingWorktreeIds: new Set(),
   tabsByWorktree: {},
   activeTabByWorktree: {},
   runnersByWorktree: {},
@@ -161,11 +163,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   deleteWorktree: async (id, projectId) => {
-    await commands.deleteWorktree(id);
+    // Mark as deleting immediately for UI feedback
+    set((s) => ({
+      deletingWorktreeIds: new Set([...s.deletingWorktreeIds, id]),
+    }));
     if (get().selectedWorktreeId === id) {
       set({ selectedWorktreeId: null });
     }
+    // Async cleanup
+    await commands.deleteWorktree(id);
     await get().loadWorktrees(projectId);
+    // Remove from deleting set
+    set((s) => {
+      const next = new Set(s.deletingWorktreeIds);
+      next.delete(id);
+      return { deletingWorktreeIds: next };
+    });
   },
 
   // ── Tabs ──

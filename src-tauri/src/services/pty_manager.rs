@@ -113,50 +113,75 @@ impl PtyManager {
         let sid = session_id.to_string();
         let sessions_ref = self.sessions.clone();
 
+        // Shared buffer between reader thread and flush thread
+        let shared_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let shared_buf_reader = shared_buf.clone();
+        let shared_buf_flusher = shared_buf.clone();
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done_reader = done.clone();
+        let done_flusher = done.clone();
+
+        let event_name_flush = event_name.clone();
+        let app_flush = app.clone();
+
+        // Flush thread — emits buffered data every 50ms
         thread::spawn(move || {
-            let mut buf = [0u8; 8192];
-            // Buffer to hold incomplete UTF-8 sequences between reads
-            let mut pending: Vec<u8> = Vec::new();
+            while !done_flusher.load(std::sync::atomic::Ordering::Relaxed) {
+                thread::sleep(std::time::Duration::from_millis(50));
+
+                let mut buf = shared_buf_flusher.lock().unwrap();
+                if buf.is_empty() { continue; }
+
+                let valid_up_to = match std::str::from_utf8(&buf) {
+                    Ok(_) => buf.len(),
+                    Err(e) => e.valid_up_to(),
+                };
+
+                if valid_up_to > 0 {
+                    let data = unsafe {
+                        std::str::from_utf8_unchecked(&buf[..valid_up_to])
+                    };
+                    let _ = app_flush.emit(&event_name_flush, data);
+                    buf.drain(..valid_up_to);
+                }
+
+                if buf.len() > 64 {
+                    let data = String::from_utf8_lossy(&buf).to_string();
+                    let _ = app_flush.emit(&event_name_flush, &data);
+                    buf.clear();
+                }
+            }
+
+            // Final flush
+            let mut buf = shared_buf_flusher.lock().unwrap();
+            if !buf.is_empty() {
+                let data = String::from_utf8_lossy(&buf).to_string();
+                let _ = app_flush.emit(&event_name_flush, &data);
+                buf.clear();
+            }
+        });
+
+        // Reader thread — reads from PTY and appends to shared buffer
+        thread::spawn(move || {
+            let mut read_buf = [0u8; 16384];
 
             loop {
-                match reader.read(&mut buf) {
+                match reader.read(&mut read_buf) {
                     Ok(0) => {
-                        // Flush any remaining bytes
-                        if !pending.is_empty() {
-                            let data = String::from_utf8_lossy(&pending).to_string();
-                            let _ = app.emit(&event_name, &data);
-                        }
+                        done_reader.store(true, std::sync::atomic::Ordering::Relaxed);
+                        // Wait a bit for flusher to drain
+                        thread::sleep(std::time::Duration::from_millis(100));
                         let _ = app.emit(&format!("pty-exit-{}", sid), ());
                         sessions_ref.lock().unwrap().remove(&sid);
                         break;
                     }
                     Ok(n) => {
-                        pending.extend_from_slice(&buf[..n]);
-
-                        // Find the last valid UTF-8 boundary
-                        let valid_up_to = match std::str::from_utf8(&pending) {
-                            Ok(_) => pending.len(),
-                            Err(e) => e.valid_up_to(),
-                        };
-
-                        if valid_up_to > 0 {
-                            // Safety: we just verified this slice is valid UTF-8
-                            let data = unsafe {
-                                std::str::from_utf8_unchecked(&pending[..valid_up_to])
-                            };
-                            let _ = app.emit(&event_name, data);
-                            pending.drain(..valid_up_to);
-                        }
-
-                        // If pending has grown large with invalid bytes, flush them
-                        // to avoid unbounded memory growth
-                        if pending.len() > 64 {
-                            let data = String::from_utf8_lossy(&pending).to_string();
-                            let _ = app.emit(&event_name, &data);
-                            pending.clear();
-                        }
+                        let mut buf = shared_buf_reader.lock().unwrap();
+                        buf.extend_from_slice(&read_buf[..n]);
                     }
                     Err(_) => {
+                        done_reader.store(true, std::sync::atomic::Ordering::Relaxed);
+                        thread::sleep(std::time::Duration::from_millis(100));
                         let _ = app.emit(&format!("pty-exit-{}", sid), ());
                         sessions_ref.lock().unwrap().remove(&sid);
                         break;

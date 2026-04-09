@@ -11,6 +11,7 @@ export function ProjectTree() {
   const selectProject = useAppStore((s) => s.selectProject);
   const openProjectSettings = useAppStore((s) => s.openProjectSettings);
   const deleteWorktree = useAppStore((s) => s.deleteWorktree);
+  const deletingWorktreeIds = useAppStore((s) => s.deletingWorktreeIds);
   const renameWorktree = useAppStore((s) => s.renameWorktree);
   const [creatingWorktreeForProject, setCreatingWorktreeForProject] =
     useState<string | null>(null);
@@ -37,8 +38,11 @@ export function ProjectTree() {
             selectProject(project.id);
             selectWorktree(wt.id);
           }}
+          deletingIds={deletingWorktreeIds}
           onDeleteWorktree={(wt) => {
-            deleteWorktree(wt.id, project.id);
+            if (confirm(`Delete worktree "${wt.name}"? This will remove the directory from disk.`)) {
+              deleteWorktree(wt.id, project.id);
+            }
           }}
           onRenameWorktree={(wt, name) => {
             renameWorktree(wt.id, project.id, name);
@@ -61,6 +65,7 @@ function ProjectNode({
   project,
   worktrees,
   selectedWorktreeId,
+  deletingIds,
   onSelectWorktree,
   onDeleteWorktree,
   onRenameWorktree,
@@ -70,6 +75,7 @@ function ProjectNode({
   project: Project;
   worktrees: Worktree[];
   selectedWorktreeId: string | null;
+  deletingIds: Set<string>;
   onSelectWorktree: (wt: Worktree) => void;
   onDeleteWorktree: (wt: Worktree) => void;
   onRenameWorktree: (wt: Worktree, name: string) => void;
@@ -138,23 +144,30 @@ function ProjectNode({
               No worktrees
             </div>
           ) : (
-            worktrees.map((wt) => (
+            worktrees.map((wt) => {
+              const isDeleting = deletingIds.has(wt.id);
+              return (
               <div
                 key={wt.id}
-                className={`flex items-center gap-2 pl-7 pr-3 py-1 text-xs transition-colors cursor-pointer group/wt ${
-                  selectedWorktreeId === wt.id
-                    ? "bg-accent-muted text-accent-hover"
-                    : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                className={`flex items-center gap-2 pl-7 pr-3 py-1 text-xs transition-colors group/wt ${
+                  isDeleting
+                    ? "opacity-40 pointer-events-none"
+                    : selectedWorktreeId === wt.id
+                      ? "bg-accent-muted text-accent-hover cursor-pointer"
+                      : "text-text-secondary hover:text-text-primary hover:bg-bg-hover cursor-pointer"
                 }`}
-                onClick={() => onSelectWorktree(wt)}
+                onClick={() => !isDeleting && onSelectWorktree(wt)}
                 onDoubleClick={(e) => {
+                  if (isDeleting) return;
                   e.stopPropagation();
                   setRenamingId(wt.id);
                   setRenameValue(wt.name);
                 }}
               >
                 <WorktreeIcon status={wt.ci_status} />
-                {renamingId === wt.id ? (
+                {isDeleting ? (
+                  <span className="truncate flex-1 italic text-text-tertiary">Deleting...</span>
+                ) : renamingId === wt.id ? (
                   <input
                     className="flex-1 min-w-0 px-1 py-0 text-xs bg-bg-tertiary border border-accent rounded text-text-primary focus:outline-none font-mono"
                     value={renameValue}
@@ -181,7 +194,7 @@ function ProjectNode({
                 ) : (
                   <span className="truncate flex-1">{wt.name}</span>
                 )}
-                <span
+                {!isDeleting && <span
                   className="opacity-0 group-hover/wt:opacity-100 text-text-tertiary hover:text-error transition-opacity shrink-0"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -192,9 +205,10 @@ function ProjectNode({
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                     <path d="M2 2l6 6M8 2L2 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
                   </svg>
-                </span>
+                </span>}
               </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
