@@ -1,0 +1,259 @@
+use std::process::Command;
+use serde::Serialize;
+use tauri::State;
+use crate::db::Database;
+use crate::models::{Project, Worktree};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitFileStatus {
+    pub status: String,
+    pub file: String,
+}
+
+#[tauri::command]
+pub fn list_worktrees(db: State<'_, Database>, project_id: String) -> Result<Vec<Worktree>, String> {
+    db.list_worktrees(&project_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_worktree(
+    db: State<'_, Database>,
+    project_id: String,
+    branch: String,
+    name: String,
+) -> Result<Worktree, String> {
+    let project = find_project(&db, &project_id)?;
+    let worktree_path = build_worktree_path(&project, &name);
+
+    // Prune stale worktree references first
+    let _ = Command::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(&project.local_path)
+        .output();
+
+    // Use --detach to avoid "already checked out" errors, then checkout the branch
+    let output = Command::new("git")
+        .args(["worktree", "add", "--detach", &worktree_path])
+        .current_dir(&project.local_path)
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git worktree add failed: {}", stderr));
+    }
+
+    // Now checkout the desired branch in the worktree
+    let checkout = Command::new("git")
+        .args(["checkout", &branch])
+        .current_dir(&worktree_path)
+        .output()
+        .map_err(|e| format!("Failed to checkout: {}", e))?;
+
+    if !checkout.status.success() {
+        let stderr = String::from_utf8_lossy(&checkout.stderr);
+        // Clean up the worktree if checkout fails
+        let _ = Command::new("git")
+            .args(["worktree", "remove", "--force", &worktree_path])
+            .current_dir(&project.local_path)
+            .output();
+        return Err(format!("git checkout failed: {}", stderr));
+    }
+
+    post_create_setup(&project, &worktree_path);
+
+    db.create_worktree(&project_id, &name, &worktree_path, &branch, "branch")
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_worktree_new_branch(
+    db: State<'_, Database>,
+    project_id: String,
+    base_branch: String,
+    new_branch: String,
+    name: String,
+) -> Result<Worktree, String> {
+    let project = find_project(&db, &project_id)?;
+    let worktree_path = build_worktree_path(&project, &name);
+
+    // Prune stale worktree references first
+    let _ = Command::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(&project.local_path)
+        .output();
+
+    // Create worktree with a new branch based off the selected base
+    let output = Command::new("git")
+        .args([
+            "worktree", "add",
+            "-b", &new_branch,
+            &worktree_path,
+            &base_branch,
+        ])
+        .current_dir(&project.local_path)
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git worktree add failed: {}", stderr));
+    }
+
+    post_create_setup(&project, &worktree_path);
+
+    db.create_worktree(&project_id, &name, &worktree_path, &new_branch, "branch")
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_worktree(db: State<'_, Database>, id: String, name: String) -> Result<(), String> {
+    db.rename_worktree(&id, &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_worktree(db: State<'_, Database>, id: String) -> Result<(), String> {
+    // Collect info needed for cleanup before deleting the DB record
+    let mut cleanup_info: Option<(String, String)> = None;
+    let projects = db.list_projects().map_err(|e| e.to_string())?;
+    for project in &projects {
+        let worktrees = db.list_worktrees(&project.id).map_err(|e| e.to_string())?;
+        if let Some(wt) = worktrees.iter().find(|w| w.id == id) {
+            cleanup_info = Some((project.local_path.clone(), wt.path.clone()));
+            break;
+        }
+    }
+
+    // Delete from DB immediately so UI updates instantly
+    db.delete_worktree(&id).map_err(|e| e.to_string())?;
+
+    // Run the heavy git/filesystem cleanup in the background
+    if let Some((project_path, wt_path)) = cleanup_info {
+        std::thread::spawn(move || {
+            let _ = Command::new("git")
+                .args(["worktree", "prune"])
+                .current_dir(&project_path)
+                .output();
+
+            let _ = Command::new("git")
+                .args(["worktree", "remove", "--force", &wt_path])
+                .current_dir(&project_path)
+                .output();
+
+            let path = std::path::Path::new(&wt_path);
+            if path.exists() {
+                let _ = std::fs::remove_dir_all(path);
+            }
+
+            let _ = Command::new("git")
+                .args(["worktree", "prune"])
+                .current_dir(&project_path)
+                .output();
+        });
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_branches(db: State<'_, Database>, project_id: String) -> Result<Vec<String>, String> {
+    let project = find_project(&db, &project_id)?;
+
+    let output = Command::new("git")
+        .args(["branch", "-a", "--format=%(refname:short)"])
+        .current_dir(&project.local_path)
+        .output()
+        .map_err(|e| format!("Failed to list branches: {}", e))?;
+
+    if !output.status.success() {
+        return Err("Failed to list branches".to_string());
+    }
+
+    let branches = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    Ok(branches)
+}
+
+#[tauri::command]
+pub fn get_current_branch(path: String) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&path)
+        .output()
+        .map_err(|e| format!("Failed to get branch: {}", e))?;
+
+    if !output.status.success() {
+        return Err("Not a git directory".to_string());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[tauri::command]
+pub fn get_git_status(path: String) -> Result<Vec<GitFileStatus>, String> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain=v1"])
+        .current_dir(&path)
+        .output()
+        .map_err(|e| format!("Failed to run git status: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git status failed: {}", stderr));
+    }
+
+    let statuses = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let status = line[..2].trim().to_string();
+            let file = line[3..].to_string();
+            GitFileStatus { status, file }
+        })
+        .collect();
+
+    Ok(statuses)
+}
+
+fn find_project(db: &Database, project_id: &str) -> Result<Project, String> {
+    let projects = db.list_projects().map_err(|e| e.to_string())?;
+    projects
+        .into_iter()
+        .find(|p| p.id == project_id)
+        .ok_or_else(|| "Project not found".to_string())
+}
+
+fn post_create_setup(project: &Project, worktree_path: &str) {
+    // Copy env files (fast, synchronous)
+    for env_file in &project.env_files {
+        let src = std::path::Path::new(&project.local_path).join(env_file);
+        let dst = std::path::Path::new(worktree_path).join(env_file);
+        if src.exists() {
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::copy(&src, &dst).ok();
+        }
+    }
+    // Setup scripts are NOT run here — the frontend runs them
+    // visibly in a runner panel so the user can see progress.
+}
+
+fn build_worktree_path(project: &Project, name: &str) -> String {
+    let base = std::path::Path::new(&project.local_path);
+    let parent = base.parent().unwrap_or(base);
+    let repo_name = base
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    parent
+        .join(format!("{}-worktrees", repo_name))
+        .join(name)
+        .to_string_lossy()
+        .to_string()
+}
