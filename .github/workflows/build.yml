@@ -67,7 +67,7 @@ jobs:
         run: npm ci
 
       - name: Build with Tauri
-        run: npx tauri build --verbose ${{ matrix.args }}
+        run: npx tauri build --verbose --bundles all ${{ matrix.args }}
 
       - name: List bundle output
         if: always()
