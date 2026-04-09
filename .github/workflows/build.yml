@@ -69,13 +69,16 @@ jobs:
       - name: Build with Tauri
         run: npx tauri build --verbose ${{ matrix.args }}
 
-      - name: List bundle output
-        if: always()
+      - name: List bundle output (Unix)
+        if: always() && runner.os != 'Windows'
         run: |
-          echo "=== target directory structure ==="
-          find src-tauri/target -path "*/release/bundle*" -type f 2>/dev/null || echo "No bundle files found"
-          echo "=== release directory listing ==="
-          ls -la src-tauri/target/*/release/ 2>/dev/null || ls -la src-tauri/target/release/ 2>/dev/null || echo "No release dir"
+          find src-tauri/target -path "*/release/bundle*" -type f || echo "No bundle files found"
+
+      - name: List bundle output (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse src-tauri/target -Filter "bundle" -Directory -ErrorAction SilentlyContinue | Get-ChildItem -Recurse -File | Select-Object FullName
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
