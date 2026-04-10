@@ -113,11 +113,17 @@ jobs:
       - name: List artifacts
         run: find artifacts -type f | head -50
 
+      - name: Delete existing release if present
+        run: gh release delete ${{ github.ref_name }} --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          draft: false
           generate_release_notes: true
+          make_latest: true
           files: |
             artifacts/**/*.dmg
             artifacts/**/*.deb
