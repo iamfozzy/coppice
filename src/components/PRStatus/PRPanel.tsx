@@ -19,11 +19,12 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
   const [comments, setComments] = useState<PrComment[]>([]);
   const [checked, setChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Single effect for everything — keyed on cacheKey so it restarts on worktree switch
   const generationRef = useRef(0);
 
-  const refresh = useCallback(async (generation: number) => {
+  const refresh = useCallback(async (generation: number, force = false) => {
     try {
       let liveBranch = branch;
       try {
@@ -34,12 +35,14 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
       const ck = `pr-${projectId}-${worktreePath}`;
       const cck = `pr-comments-${projectId}-${worktreePath}`;
 
-      // Use fresh cache if available
-      const fresh = cacheGet<PrStatusResult>(ck, 15000);
-      if (fresh) {
-        setPrStatus(fresh);
-        setChecked(true);
-        return;
+      // Use fresh cache if available (skip on manual refresh)
+      if (!force) {
+        const fresh = cacheGet<PrStatusResult>(ck, 15000);
+        if (fresh) {
+          setPrStatus(fresh);
+          setChecked(true);
+          return;
+        }
       }
 
       const status = await commands.getPrForBranch(projectId, liveBranch);
@@ -67,6 +70,12 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
       }
     }
   }, [projectId, branch, worktreePath]);
+
+  const handleManualRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refresh(generationRef.current, true);
+    setRefreshing(false);
+  }, [refresh]);
 
   // On worktree change: restore cache, bump generation, schedule refresh
   useEffect(() => {
@@ -137,11 +146,12 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
               #{pr.number} {pr.title}
             </a>
             <button
-              onClick={() => refresh(generationRef.current)}
+              onClick={handleManualRefresh}
               className="text-text-tertiary hover:text-text-secondary transition-colors shrink-0"
               title="Refresh"
+              disabled={refreshing}
             >
-              <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+              <svg width="10" height="10" viewBox="0 0 12 12" fill="none" className={refreshing ? "animate-spin" : ""}>
                 <path d="M1 6a5 5 0 019-3M11 6a5 5 0 01-9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               </svg>
             </button>
@@ -204,9 +214,16 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
               Create PR with Claude
             </button>
             <button
-              onClick={() => refresh(generationRef.current)}
-              className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors"
+              onClick={handleManualRefresh}
+              className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors flex items-center gap-1"
+              disabled={refreshing}
             >
+              {refreshing && (
+                <svg className="animate-spin h-3 w-3" viewBox="0 0 12 12" fill="none">
+                  <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.5" opacity="0.25" />
+                  <path d="M6 1a5 5 0 014.33 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              )}
               Refresh
             </button>
           </div>
