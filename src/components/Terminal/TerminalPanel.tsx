@@ -63,7 +63,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, keepAliv
         brightCyan: "#22d3ee",
         brightWhite: "#fafafa",
       },
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Menlo', 'Cascadia Code', monospace",
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', 'DejaVu Sans Mono', monospace",
       fontSize,
       lineHeight: 1.2,
       cursorBlink: true,
@@ -83,7 +83,6 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, keepAliv
       shellOpen(uri);
     }));
 
-    term.open(container);
     termInstanceRef.current = term;
 
     // Custom copy handler: strip wrapped-line newlines and trailing spaces
@@ -137,26 +136,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, keepAliv
       commands.terminalWrite(sessionId, data).catch(() => {});
     });
 
-    // Fit, measure, then spawn (or reconnect if session already exists)
-    const spawnTimer = setTimeout(async () => {
-      fitAddon.fit();
-      const { rows, cols } = term;
-      const exists = await commands.terminalExists(sessionId).catch(() => false);
-      if (exists) {
-        // Session still alive — just resize and focus
-        commands.terminalResize(sessionId, rows, cols).catch(() => {});
-        term.focus();
-      } else {
-        commands
-          .terminalSpawn(sessionId, cwd, command, rows, cols)
-          .then(() => term.focus())
-          .catch((e) => {
-            term.write(`\x1b[31mFailed to spawn: ${e}\x1b[0m\r\n`);
-          });
-      }
-    }, 100);
-
-    // Observe container resize
+    let aborted = false;
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit();
       const { rows, cols } = term;
@@ -164,11 +144,38 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, keepAliv
         commands.terminalResize(sessionId, rows, cols).catch(() => {});
       }
     });
-    resizeObserver.observe(container);
+
+    // Wait for bundled JetBrains Mono to load before opening the terminal
+    // so xterm.js measures character cell widths with the correct font.
+    const init = async () => {
+      await document.fonts.load(`${fontSize}px 'JetBrains Mono'`).catch(() => {});
+      if (aborted) return;
+
+      term.open(container);
+      resizeObserver.observe(container);
+      fitAddon.fit();
+
+      const { rows, cols } = term;
+      const exists = await commands.terminalExists(sessionId).catch(() => false);
+      if (aborted) return;
+
+      if (exists) {
+        commands.terminalResize(sessionId, rows, cols).catch(() => {});
+        term.focus();
+      } else {
+        commands
+          .terminalSpawn(sessionId, cwd, command, rows, cols)
+          .then(() => { if (!aborted) term.focus(); })
+          .catch((e) => {
+            term.write(`\x1b[31mFailed to spawn: ${e}\x1b[0m\r\n`);
+          });
+      }
+    };
+    init();
 
     const keepAliveCapture = keepAlive;
     return () => {
-      clearTimeout(spawnTimer);
+      aborted = true;
       resizeObserver.disconnect();
       dataDisposable.dispose();
       unlistenOutput.then((fn) => fn());

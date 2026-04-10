@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@fontsource/jetbrains-mono/400.css";
 
 @theme {
   /* Base palette — dark mode first, light mode ready */
