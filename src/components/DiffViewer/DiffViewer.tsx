@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { DiffEditor } from "@monaco-editor/react";
+import { useAppStore } from "../../stores/appStore";
 import * as commands from "../../lib/commands";
 
 interface Props {
@@ -53,6 +54,7 @@ function getLanguage(file: string): string {
 }
 
 export function DiffViewer({ cwd, file, mode, baseBranch }: Props) {
+  const appSettings = useAppStore((s) => s.appSettings);
   const [original, setOriginal] = useState<string>("");
   const [modified, setModified] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -143,7 +145,10 @@ export function DiffViewer({ cwd, file, mode, baseBranch }: Props) {
             readOnly: mode === "pr",
             renderSideBySide: true,
             minimap: { enabled: true },
-            fontSize: 12,
+            fontFamily: appSettings?.terminal_font_family
+              ? `'${appSettings.terminal_font_family}', 'JetBrains Mono', monospace`
+              : "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+            fontSize: appSettings?.terminal_font_size || 12,
             lineHeight: 18,
             scrollBeyondLastLine: false,
             automaticLayout: true,
