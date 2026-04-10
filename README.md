@@ -1,4 +1,4 @@
-<img width="1207" height="802" alt="Screenshot 2026-04-09 at 6 12 20 p m" src="https://github.com/user-attachments/assets/142e8982-e6dd-475c-b1af-69ca39308c42" />
+<img alt="Coppice screenshot" src="docs/screenshot.png" />
 
 
 # Coppice
