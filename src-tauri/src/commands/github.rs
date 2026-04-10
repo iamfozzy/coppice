@@ -1,7 +1,7 @@
-use std::process::Command;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use crate::db::Database;
+use crate::services::shell_env::user_command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrInfo {
@@ -55,7 +55,7 @@ pub fn get_pr_for_branch(
     let cwd = get_project_path(&db, &project_id)?;
 
     // Get PR for this branch using gh CLI
-    let pr_output = Command::new("gh")
+    let pr_output = user_command("gh")
         .args([
             "pr", "view", &branch,
             "--json", "number,title,state,url,isDraft,mergeable,headRefName",
@@ -91,7 +91,7 @@ pub fn get_pr_for_branch(
 }
 
 fn get_check_runs(cwd: &str, pr_number: i64) -> Result<Vec<CheckRun>, String> {
-    let output = Command::new("gh")
+    let output = user_command("gh")
         .args([
             "pr", "checks", &pr_number.to_string(),
             "--json", "name,state,link",
@@ -133,7 +133,7 @@ pub fn create_pr(
     };
 
     // Push the branch first
-    let push_output = Command::new("git")
+    let push_output = user_command("git")
         .args(["push", "-u", "origin", "HEAD"])
         .current_dir(&cwd)
         .output()
@@ -145,7 +145,7 @@ pub fn create_pr(
     }
 
     // Create the PR
-    let output = Command::new("gh")
+    let output = user_command("gh")
         .args([
             "pr", "create",
             "--title", &title,
@@ -185,7 +185,7 @@ pub fn get_failed_action_logs(
 
     // First, resolve the PR's head branch name (Command::new doesn't
     // invoke a shell, so we cannot use $(...) expansions).
-    let head_ref_output = Command::new("gh")
+    let head_ref_output = user_command("gh")
         .args([
             "pr", "view", &pr_number.to_string(),
             "--json", "headRefName",
@@ -198,7 +198,7 @@ pub fn get_failed_action_logs(
     let head_ref = String::from_utf8_lossy(&head_ref_output.stdout).trim().to_string();
 
     // Get from PR checks directly
-    let checks_output = Command::new("gh")
+    let checks_output = user_command("gh")
         .args([
             "pr", "checks", &pr_number.to_string(),
         ])
@@ -221,7 +221,7 @@ pub fn get_failed_action_logs(
         run_list_args.push(&head_ref);
     }
 
-    let run_list = Command::new("gh")
+    let run_list = user_command("gh")
         .args(&run_list_args)
         .current_dir(&cwd)
         .output()
@@ -233,7 +233,7 @@ pub fn get_failed_action_logs(
         return Ok(format!("PR #{} checks:\n{}", pr_number, checks_text));
     }
 
-    let logs_output = Command::new("gh")
+    let logs_output = user_command("gh")
         .args(["run", "view", &run_id, "--log-failed"])
         .current_dir(&cwd)
         .output()
@@ -274,7 +274,7 @@ pub fn get_pr_comments(
     let cwd = get_project_path(&db, &project_id)?;
 
     // Get review comments (inline code comments)
-    let review_output = Command::new("gh")
+    let review_output = user_command("gh")
         .args([
             "api",
             &format!("repos/{{owner}}/{{repo}}/pulls/{}/comments", pr_number),
@@ -303,7 +303,7 @@ pub fn get_pr_comments(
     }
 
     // Get issue comments (general PR comments)
-    let issue_output = Command::new("gh")
+    let issue_output = user_command("gh")
         .args([
             "api",
             &format!("repos/{{owner}}/{{repo}}/issues/{}/comments", pr_number),

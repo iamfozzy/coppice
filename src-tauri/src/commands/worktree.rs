@@ -1,8 +1,8 @@
-use std::process::Command;
 use serde::Serialize;
 use tauri::State;
 use crate::db::Database;
 use crate::models::{Project, Worktree};
+use crate::services::shell_env::user_command;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GitFileStatus {
@@ -26,13 +26,13 @@ pub fn create_worktree(
     let worktree_path = build_worktree_path(&project, &name);
 
     // Prune stale worktree references first
-    let _ = Command::new("git")
+    let _ = user_command("git")
         .args(["worktree", "prune"])
         .current_dir(&project.local_path)
         .output();
 
     // Use --detach to avoid "already checked out" errors, then checkout the branch
-    let output = Command::new("git")
+    let output = user_command("git")
         .args(["worktree", "add", "--detach", &worktree_path])
         .current_dir(&project.local_path)
         .output()
@@ -44,7 +44,7 @@ pub fn create_worktree(
     }
 
     // Now checkout the desired branch in the worktree
-    let checkout = Command::new("git")
+    let checkout = user_command("git")
         .args(["checkout", &branch])
         .current_dir(&worktree_path)
         .output()
@@ -53,7 +53,7 @@ pub fn create_worktree(
     if !checkout.status.success() {
         let stderr = String::from_utf8_lossy(&checkout.stderr);
         // Clean up the worktree if checkout fails
-        let _ = Command::new("git")
+        let _ = user_command("git")
             .args(["worktree", "remove", "--force", &worktree_path])
             .current_dir(&project.local_path)
             .output();
@@ -78,13 +78,13 @@ pub fn create_worktree_new_branch(
     let worktree_path = build_worktree_path(&project, &name);
 
     // Prune stale worktree references first
-    let _ = Command::new("git")
+    let _ = user_command("git")
         .args(["worktree", "prune"])
         .current_dir(&project.local_path)
         .output();
 
     // Create worktree with a new branch based off the selected base
-    let output = Command::new("git")
+    let output = user_command("git")
         .args([
             "worktree", "add",
             "-b", &new_branch,
@@ -135,12 +135,12 @@ pub fn delete_worktree(db: State<'_, Database>, id: String) -> Result<(), String
     // Run the heavy git/filesystem cleanup in the background
     if let Some((project_path, wt_path)) = cleanup_info {
         std::thread::spawn(move || {
-            let _ = Command::new("git")
+            let _ = user_command("git")
                 .args(["worktree", "prune"])
                 .current_dir(&project_path)
                 .output();
 
-            let _ = Command::new("git")
+            let _ = user_command("git")
                 .args(["worktree", "remove", "--force", &wt_path])
                 .current_dir(&project_path)
                 .output();
@@ -150,7 +150,7 @@ pub fn delete_worktree(db: State<'_, Database>, id: String) -> Result<(), String
                 let _ = std::fs::remove_dir_all(path);
             }
 
-            let _ = Command::new("git")
+            let _ = user_command("git")
                 .args(["worktree", "prune"])
                 .current_dir(&project_path)
                 .output();
@@ -164,7 +164,7 @@ pub fn delete_worktree(db: State<'_, Database>, id: String) -> Result<(), String
 pub fn list_branches(db: State<'_, Database>, project_id: String) -> Result<Vec<String>, String> {
     let project = find_project(&db, &project_id)?;
 
-    let output = Command::new("git")
+    let output = user_command("git")
         .args(["branch", "-a", "--format=%(refname:short)"])
         .current_dir(&project.local_path)
         .output()
@@ -185,7 +185,7 @@ pub fn list_branches(db: State<'_, Database>, project_id: String) -> Result<Vec<
 
 #[tauri::command]
 pub fn get_current_branch(path: String) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = user_command("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(&path)
         .output()
@@ -200,7 +200,7 @@ pub fn get_current_branch(path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn get_git_status(path: String) -> Result<Vec<GitFileStatus>, String> {
-    let output = Command::new("git")
+    let output = user_command("git")
         .args(["status", "--porcelain=v1"])
         .current_dir(&path)
         .output()
@@ -229,7 +229,7 @@ pub fn get_git_status(path: String) -> Result<Vec<GitFileStatus>, String> {
 pub fn get_file_content(path: String, file: String, git_ref: Option<String>) -> Result<String, String> {
     if let Some(r) = git_ref {
         // Read from git object
-        let output = Command::new("git")
+        let output = user_command("git")
             .args(["show", &format!("{}:{}", r, file)])
             .current_dir(&path)
             .output()
@@ -252,7 +252,7 @@ pub fn get_file_content(path: String, file: String, git_ref: Option<String>) -> 
 #[tauri::command]
 pub fn get_merge_base(path: String, base_branch: Option<String>) -> Result<String, String> {
     let base = base_branch.unwrap_or_else(|| "main".to_string());
-    let output = Command::new("git")
+    let output = user_command("git")
         .args(["merge-base", &base, "HEAD"])
         .current_dir(&path)
         .output()
@@ -264,7 +264,7 @@ pub fn get_merge_base(path: String, base_branch: Option<String>) -> Result<Strin
 #[tauri::command]
 pub fn get_file_diff(path: String, file: String) -> Result<String, String> {
     // Try staged diff first, fall back to unstaged
-    let output = Command::new("git")
+    let output = user_command("git")
         .args(["diff", "HEAD", "--", &file])
         .current_dir(&path)
         .output()
@@ -275,7 +275,7 @@ pub fn get_file_diff(path: String, file: String) -> Result<String, String> {
     // If empty, try diff against nothing (new file)
     if diff.trim().is_empty() {
         let empty_path = if cfg!(target_os = "windows") { "NUL" } else { "/dev/null" };
-        let output2 = Command::new("git")
+        let output2 = user_command("git")
             .args(["diff", "--no-index", empty_path, &file])
             .current_dir(&path)
             .output()
@@ -292,7 +292,7 @@ pub fn get_pr_diff_files(path: String, base_branch: Option<String>) -> Result<Ve
     let base = base_branch.unwrap_or_else(|| "main".to_string());
 
     // Get merge base
-    let merge_base = Command::new("git")
+    let merge_base = user_command("git")
         .args(["merge-base", &base, "HEAD"])
         .current_dir(&path)
         .output()
@@ -303,7 +303,7 @@ pub fn get_pr_diff_files(path: String, base_branch: Option<String>) -> Result<Ve
         return Ok(Vec::new());
     }
 
-    let output = Command::new("git")
+    let output = user_command("git")
         .args(["diff", "--name-status", &base_commit, "HEAD"])
         .current_dir(&path)
         .output()
@@ -337,7 +337,7 @@ pub fn get_pr_diff_files(path: String, base_branch: Option<String>) -> Result<Ve
 pub fn get_pr_file_diff(path: String, file: String, base_branch: Option<String>) -> Result<String, String> {
     let base = base_branch.unwrap_or_else(|| "main".to_string());
 
-    let merge_base = Command::new("git")
+    let merge_base = user_command("git")
         .args(["merge-base", &base, "HEAD"])
         .current_dir(&path)
         .output()
@@ -348,7 +348,7 @@ pub fn get_pr_file_diff(path: String, file: String, base_branch: Option<String>)
         return Err("Could not find merge base".to_string());
     }
 
-    let output = Command::new("git")
+    let output = user_command("git")
         .args(["diff", &base_commit, "HEAD", "--", &file])
         .current_dir(&path)
         .output()
