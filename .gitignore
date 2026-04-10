@@ -3,5 +3,5 @@ dist/
 src-tauri/target/
 .DS_Store
 *.log
-.claude/
+.claude/settings.local.json
 src-tauri/gen/
