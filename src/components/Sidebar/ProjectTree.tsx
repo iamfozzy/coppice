@@ -153,13 +153,14 @@ function ProjectNode({
             worktrees.map((wt) => {
               const isDeleting = deletingIds.has(wt.id);
               const hasRunningRunner = runnersByWorktree[wt.id]?.["run"]?.status === "running";
+              const isSelected = selectedWorktreeId === wt.id;
               return (
               <div
                 key={wt.id}
-                className={`flex items-center gap-2 pl-7 pr-3 py-1 text-xs transition-colors group/wt ${
+                className={`flex items-center gap-2 pl-7 pr-3 py-1.5 text-xs transition-colors group/wt ${
                   isDeleting
                     ? "opacity-40 pointer-events-none"
-                    : selectedWorktreeId === wt.id
+                    : isSelected
                       ? "bg-accent-muted text-accent-hover cursor-pointer"
                       : "text-text-secondary hover:text-text-primary hover:bg-bg-hover cursor-pointer"
                 }`}
@@ -171,36 +172,45 @@ function ProjectNode({
                   setRenameValue(wt.name);
                 }}
               >
-                <WorktreeIcon status={wt.ci_status} />
-                {isDeleting ? (
-                  <span className="truncate flex-1 italic text-text-tertiary">Deleting...</span>
-                ) : renamingId === wt.id ? (
-                  <input
-                    className="flex-1 min-w-0 px-1 py-0 text-xs bg-bg-tertiary border border-accent rounded text-text-primary focus:outline-none font-mono"
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && renameValue.trim()) {
-                        onRenameWorktree(wt, renameValue.trim());
+                <div className="flex flex-col flex-1 min-w-0 gap-0.5">
+                  {isDeleting ? (
+                    <span className="truncate italic text-text-tertiary">Deleting...</span>
+                  ) : renamingId === wt.id ? (
+                    <input
+                      className="min-w-0 px-1 py-0 text-xs bg-bg-tertiary border border-accent rounded text-text-primary focus:outline-none font-mono"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && renameValue.trim()) {
+                          onRenameWorktree(wt, renameValue.trim());
+                          setRenamingId(null);
+                        } else if (e.key === "Escape") {
+                          setRenamingId(null);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (renameValue.trim() && renameValue.trim() !== wt.name) {
+                          onRenameWorktree(wt, renameValue.trim());
+                        }
                         setRenamingId(null);
-                      } else if (e.key === "Escape") {
-                        setRenamingId(null);
-                      }
-                    }}
-                    onBlur={() => {
-                      if (renameValue.trim() && renameValue.trim() !== wt.name) {
-                        onRenameWorktree(wt, renameValue.trim());
-                      }
-                      setRenamingId(null);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    autoFocus
-                    spellCheck={false}
-                    autoComplete="off"
-                  />
-                ) : (
-                  <span className="truncate flex-1">{wt.name}</span>
-                )}
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      autoFocus
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                  ) : (
+                    <>
+                      <span className="truncate">{wt.name}</span>
+                      <span className={`truncate text-[10px] font-mono ${isSelected ? "text-accent-hover/60" : "text-text-tertiary"}`}>
+                        {wt.branch}
+                        {wt.pr_number != null && (
+                          <span className={isSelected ? "text-accent-hover/80" : "text-text-secondary"}> #{wt.pr_number}</span>
+                        )}
+                      </span>
+                    </>
+                  )}
+                </div>
                 {hasRunningRunner && !isDeleting && <RunningIndicator />}
                 {!isDeleting && <span
                   className="opacity-0 group-hover/wt:opacity-100 text-text-tertiary hover:text-error transition-opacity shrink-0"
@@ -233,19 +243,3 @@ function RunningIndicator() {
   );
 }
 
-function WorktreeIcon({ status }: { status: Worktree["ci_status"] }) {
-  const color =
-    status === "success"
-      ? "text-success"
-      : status === "failure"
-        ? "text-error"
-        : status === "running"
-          ? "text-warning"
-          : "text-text-tertiary";
-
-  return (
-    <svg width="8" height="8" viewBox="0 0 8 8" className={`shrink-0 ${color}`}>
-      <circle cx="4" cy="4" r="3" fill="currentColor" />
-    </svg>
-  );
-}
