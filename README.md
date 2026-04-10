@@ -102,6 +102,10 @@ xattr -cr /Applications/Coppice.app
 
 Then open Coppice normally. You only need to do this once.
 
+### Windows — SmartScreen warning
+
+Since the app is not code-signed, Windows SmartScreen may block it on first launch. When you see the "Windows protected your PC" dialog, click **More info** then **Run anyway**. You only need to do this once.
+
 ## Prerequisites
 
 - **Node.js** 20+
