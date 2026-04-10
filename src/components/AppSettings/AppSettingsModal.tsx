@@ -155,7 +155,7 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full px-3 py-1.5 text-sm bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors"
+        className="w-full px-3 py-1.5 text-sm bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors font-mono"
       />
       {hint && <p className="mt-0.5 text-[10px] text-text-tertiary">{hint}</p>}
     </div>

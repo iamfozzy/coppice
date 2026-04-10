@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../../stores/appStore";
 import * as commands from "../../lib/commands";
 
@@ -13,6 +14,7 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
   const [branches, setBranches] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [progressMsg, setProgressMsg] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("existing");
   const [selectedBranch, setSelectedBranch] = useState("");
@@ -70,22 +72,23 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
   const handleCreate = async () => {
     if (mode === "existing") {
       if (!selectedBranch || !worktreeName) return;
-      setCreating(true);
-      setError(null);
-      try {
-        await createWorktree(projectId, selectedBranch, worktreeName);
-        selectNewWorktreeAndSetup();
-        onClose();
-      } catch (e) {
-        setError(String(e));
-        setCreating(false);
-      }
     } else {
       if (!selectedBranch || !newBranchName || !worktreeName) return;
-      setCreating(true);
-      setError(null);
-      try {
-        // Update the base branch from origin before creating, so the new branch starts fresh
+    }
+
+    setCreating(true);
+    setError(null);
+    setProgressMsg("Creating worktree...");
+
+    const unlisten = await listen<{ step: number; total: number; file: string }>(
+      "worktree-setup-progress",
+      (e) => setProgressMsg(`Copying ${e.payload.file} (${e.payload.step}/${e.payload.total})`)
+    );
+
+    try {
+      if (mode === "existing") {
+        await createWorktree(projectId, selectedBranch, worktreeName);
+      } else {
         await commands.updateBaseBranch(projectId, selectedBranch).catch(() => {});
         await commands.createWorktreeNewBranch(
           projectId,
@@ -94,12 +97,15 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
           worktreeName
         );
         await useAppStore.getState().loadWorktrees(projectId);
-        selectNewWorktreeAndSetup();
-        onClose();
-      } catch (e) {
-        setError(String(e));
-        setCreating(false);
       }
+      selectNewWorktreeAndSetup();
+      onClose();
+    } catch (e) {
+      setError(String(e));
+      setCreating(false);
+    } finally {
+      unlisten();
+      setProgressMsg("");
     }
   };
 
@@ -268,7 +274,7 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
               disabled={creating || !canCreate}
               className="px-4 py-1.5 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-40 text-white rounded transition-colors"
             >
-              {creating ? "Creating..." : "Create Worktree"}
+              {creating ? (progressMsg || "Creating...") : "Create Worktree"}
             </button>
           </div>
         </div>

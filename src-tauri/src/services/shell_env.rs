@@ -34,9 +34,21 @@ pub fn get_user_path() -> &'static str {
     })
 }
 
-/// Create a Command that has the user's full PATH set.
+/// Create a Command that has the user's full PATH set and AppImage library
+/// path pollution removed so child processes use system libraries.
 pub fn user_command(program: &str) -> Command {
     let mut cmd = Command::new(program);
     cmd.env("PATH", get_user_path());
+
+    // AppImage sets LD_LIBRARY_PATH to its bundled libs, which breaks child
+    // processes like git that need the system's libcurl/libpcre2/etc.
+    // Restore the original value (saved by AppImage as *_ORIG) or unset it.
+    if cfg!(target_os = "linux") {
+        match std::env::var("LD_LIBRARY_PATH_ORIG") {
+            Ok(orig) => { cmd.env("LD_LIBRARY_PATH", orig); }
+            Err(_) => { cmd.env_remove("LD_LIBRARY_PATH"); }
+        }
+    }
+
     cmd
 }

@@ -244,7 +244,7 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full px-3 py-1.5 text-sm bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors"
+        className="w-full px-3 py-1.5 text-sm bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors font-mono"
       />
     </div>
   );
@@ -281,7 +281,7 @@ function PathField({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="flex-1 px-3 py-1.5 text-sm bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors"
+          className="flex-1 px-3 py-1.5 text-sm bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors font-mono"
         />
         <button
           type="button"

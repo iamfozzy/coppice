@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 use crate::db::Database;
 use crate::models::{Project, Worktree};
 use crate::services::shell_env::user_command;
@@ -17,6 +17,7 @@ pub async fn list_worktrees(db: State<'_, Database>, project_id: String) -> Resu
 
 #[tauri::command]
 pub async fn create_worktree(
+    app: AppHandle,
     db: State<'_, Database>,
     project_id: String,
     branch: String,
@@ -60,7 +61,7 @@ pub async fn create_worktree(
         return Err(format!("git checkout failed: {}", stderr));
     }
 
-    post_create_setup(&project, &worktree_path);
+    post_create_setup(&app, &project, &worktree_path);
 
     db.create_worktree(&project_id, &name, &worktree_path, &branch, "branch")
         .map_err(|e| e.to_string())
@@ -68,6 +69,7 @@ pub async fn create_worktree(
 
 #[tauri::command]
 pub async fn create_worktree_new_branch(
+    app: AppHandle,
     db: State<'_, Database>,
     project_id: String,
     base_branch: String,
@@ -100,7 +102,7 @@ pub async fn create_worktree_new_branch(
         return Err(format!("git worktree add failed: {}", stderr));
     }
 
-    post_create_setup(&project, &worktree_path);
+    post_create_setup(&app, &project, &worktree_path);
 
     db.create_worktree(&project_id, &name, &worktree_path, &new_branch, "branch")
         .map_err(|e| e.to_string())
@@ -518,20 +520,40 @@ fn find_project(db: &Database, project_id: &str) -> Result<Project, String> {
         .ok_or_else(|| "Project not found".to_string())
 }
 
-fn post_create_setup(project: &Project, worktree_path: &str) {
-    // Copy env files (fast, synchronous)
-    for env_file in &project.env_files {
+fn post_create_setup(app: &AppHandle, project: &Project, worktree_path: &str) {
+    let total = project.env_files.len();
+    for (i, env_file) in project.env_files.iter().enumerate() {
+        let _ = app.emit("worktree-setup-progress", serde_json::json!({
+            "step": i + 1,
+            "total": total,
+            "file": env_file,
+        }));
         let src = std::path::Path::new(&project.local_path).join(env_file);
         let dst = std::path::Path::new(worktree_path).join(env_file);
-        if src.exists() {
+        if src.is_dir() {
+            copy_dir_recursive(&src, &dst).ok();
+        } else if src.exists() {
             if let Some(parent) = dst.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
             std::fs::copy(&src, &dst).ok();
         }
     }
-    // Setup scripts are NOT run here — the frontend runs them
-    // visibly in a runner panel so the user can see progress.
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 fn build_worktree_path(project: &Project, name: &str) -> String {
