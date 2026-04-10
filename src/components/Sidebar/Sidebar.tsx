@@ -23,7 +23,7 @@ export function Sidebar() {
 
     const onMouseMove = (e: MouseEvent) => {
       if (!isResizing.current) return;
-      const width = Math.max(200, Math.min(500, e.clientX));
+      const width = Math.max(310, Math.min(500, e.clientX));
       setSidebarWidth(width);
     };
 
