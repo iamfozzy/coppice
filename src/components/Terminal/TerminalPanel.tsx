@@ -4,7 +4,6 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import * as commands from "../../lib/commands";
 import "@xterm/xterm/css/xterm.css";
@@ -181,29 +180,6 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, keepAliv
     };
   }, [sessionId, cwd, command]);
 
-  // Listen for Tauri native file drops — only handle if this terminal is visible
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const unlisten = getCurrentWindow().onDragDropEvent((event) => {
-      if (event.payload.type !== "drop") return;
-
-      // Check if this terminal is the visible one (parent not hidden)
-      const parent = container.closest("[style]") as HTMLElement | null;
-      if (parent && parent.style.visibility === "hidden") return;
-      // Also skip if parent has pointerEvents none (background terminal)
-      if (parent && parent.style.pointerEvents === "none") return;
-
-      const paths = event.payload.paths;
-      if (paths.length > 0) {
-        const text = paths.map((p: string) => `"${p}"`).join(" ");
-        commands.terminalWrite(sessionId, text).catch(() => {});
-      }
-    });
-
-    return () => { unlisten.then((fn) => fn()); };
-  }, [sessionId]);
 
   return (
     <div

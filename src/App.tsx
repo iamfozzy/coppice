@@ -1,9 +1,11 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { WorktreeView } from "./components/WorktreeView/WorktreeView";
 import { ProjectSettingsModal } from "./components/ProjectSettings/ProjectSettingsModal";
 import { TerminalPanel } from "./components/Terminal/TerminalPanel";
 import { useAppStore } from "./stores/appStore";
+import * as commands from "./lib/commands";
 
 function App() {
   const editingProject = useAppStore((s) => s.editingProject);
@@ -41,6 +43,23 @@ function App() {
     }
     return result;
   }, [runnersByWorktree]);
+
+  // Single window-level file drop handler — routes to active session only
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onDragDropEvent((event) => {
+      if (event.payload.type !== "drop") return;
+      const { selectedWorktreeId: wtId, activeTabByWorktree: activeTab } = useAppStore.getState();
+      if (!wtId) return;
+      const activeSessionId = activeTab[wtId];
+      if (!activeSessionId) return;
+      const paths = event.payload.paths;
+      if (paths.length > 0) {
+        const text = paths.map((p: string) => `"${p}"`).join(" ");
+        commands.terminalWrite(activeSessionId, text).catch(() => {});
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
 
   return (
     <div className="flex h-full">
