@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import * as commands from "../../lib/commands";
-import type { PrStatusResult } from "../../lib/commands";
+import type { PrStatusResult, PrComment } from "../../lib/commands";
 
 interface Props {
   projectId: string;
@@ -12,34 +12,41 @@ interface Props {
 
 export function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCreatePrWithClaude }: Props) {
   const [prStatus, setPrStatus] = useState<PrStatusResult | null>(null);
+  const [comments, setComments] = useState<PrComment[]>([]);
   const [checked, setChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      // Always read the actual branch from git, not the stored one
       let liveBranch = branch;
       try {
         liveBranch = await commands.getCurrentBranch(worktreePath);
-      } catch {
-        // fall back to stored branch
-      }
+      } catch { /* fall back */ }
       const status = await commands.getPrForBranch(projectId, liveBranch);
       setPrStatus(status);
       setChecked(true);
+
+      // Fetch comments if PR exists
+      if (status.pr) {
+        try {
+          const c = await commands.getPrComments(projectId, status.pr.number);
+          setComments(c);
+        } catch {
+          setComments([]);
+        }
+      }
     } catch (e) {
       setError(String(e));
       setChecked(true);
     }
   }, [projectId, branch, worktreePath]);
 
-  // Auto-check in the background after a short delay — no blocking
+  // Auto-check after 300ms, then poll every 30s
   useEffect(() => {
-    const timer = setTimeout(() => {
-      refresh();
-    }, 300);
-    return () => clearTimeout(timer);
+    const timer = setTimeout(refresh, 300);
+    const interval = setInterval(refresh, 30000);
+    return () => { clearTimeout(timer); clearInterval(interval); };
   }, [refresh]);
 
   const handleFixWithClaude = async () => {
@@ -66,8 +73,8 @@ export function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCr
 
   if (error) {
     return (
-      <div className="px-3 py-2 shrink-0">
-        <p className="text-xs text-text-tertiary">
+      <div className="px-3 py-2">
+        <p className="text-[11px] text-text-tertiary">
           Could not fetch PR info (is <code className="text-text-secondary">gh</code> installed?)
         </p>
       </div>
@@ -76,23 +83,11 @@ export function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCr
 
   const pr = prStatus?.pr;
   const checks = prStatus?.checks ?? [];
-  const failedChecks = checks.filter(
-    (c) => c.conclusion === "FAILURE" || c.status === "FAILURE"
-  );
-  const passingChecks = checks.filter(
-    (c) => c.conclusion === "SUCCESS" || c.status === "SUCCESS"
-  );
-  const pendingChecks = checks.filter(
-    (c) =>
-      c.status === "PENDING" ||
-      c.status === "IN_PROGRESS" ||
-      c.status === "QUEUED"
-  );
 
   return (
     <div className="shrink-0">
       {pr ? (
-        <div className="px-4 py-3 space-y-3">
+        <div className="px-3 py-2 space-y-2">
           {/* PR header */}
           <div className="flex items-center gap-2">
             <PrStateBadge state={pr.state} draft={pr.draft} />
@@ -100,99 +95,155 @@ export function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCr
               href={pr.url}
               target="_blank"
               rel="noopener"
-              className="text-xs text-accent hover:text-accent-hover truncate"
+              className="text-[11px] text-accent hover:text-accent-hover truncate flex-1"
             >
               #{pr.number} {pr.title}
             </a>
             <button
               onClick={refresh}
-              className="ml-auto text-text-tertiary hover:text-text-secondary transition-colors shrink-0"
-              title="Refresh PR status"
+              className="text-text-tertiary hover:text-text-secondary transition-colors shrink-0"
+              title="Refresh"
             >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path
-                  d="M1 6a5 5 0 019-3M11 6a5 5 0 01-9 3"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                />
+              <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                <path d="M1 6a5 5 0 019-3M11 6a5 5 0 01-9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               </svg>
             </button>
           </div>
 
-          {/* Checks summary */}
+          {/* Check runs — vertical list */}
           {checks.length > 0 && (
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-3 text-[11px]">
-                {passingChecks.length > 0 && (
-                  <span className="text-success">
-                    {passingChecks.length} passed
-                  </span>
-                )}
-                {failedChecks.length > 0 && (
-                  <span className="text-error">
-                    {failedChecks.length} failed
-                  </span>
-                )}
-                {pendingChecks.length > 0 && (
-                  <span className="text-warning">
-                    {pendingChecks.length} pending
-                  </span>
-                )}
-              </div>
-
-              {failedChecks.length > 0 && (
-                <div className="space-y-1">
-                  {failedChecks.map((check) => (
-                    <div
-                      key={check.name}
-                      className="flex items-center gap-2 text-xs"
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
-                      <span className="text-text-secondary truncate">
-                        {check.name}
-                      </span>
-                      {check.url && (
-                        <a
-                          href={check.url}
-                          target="_blank"
-                          rel="noopener"
-                          className="text-text-tertiary hover:text-text-secondary text-[10px] shrink-0"
-                        >
-                          view
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                  <button
-                    onClick={handleFixWithClaude}
-                    className="mt-1.5 px-3 py-1 text-xs font-medium bg-accent/20 text-accent hover:bg-accent/30 rounded transition-colors"
-                  >
-                    Fix with Claude
-                  </button>
+            <div className="space-y-0.5">
+              <div className="text-[10px] text-text-tertiary font-medium mb-1">Checks</div>
+              {checks.map((check) => (
+                <div key={check.name} className="flex items-center gap-1.5 text-[11px]">
+                  <CheckStatusIcon status={check.conclusion ?? check.status} />
+                  <span className="truncate flex-1 text-text-secondary">{check.name}</span>
+                  {check.url && (
+                    <a href={check.url} target="_blank" rel="noopener" className="text-text-tertiary hover:text-text-secondary text-[10px] shrink-0">
+                      view
+                    </a>
+                  )}
                 </div>
+              ))}
+              {checks.some((c) => (c.conclusion ?? c.status) === "FAILURE") && (
+                <button
+                  onClick={handleFixWithClaude}
+                  className="mt-1 px-2 py-0.5 text-[10px] font-medium bg-accent/20 text-accent hover:bg-accent/30 rounded transition-colors"
+                >
+                  Fix with Claude
+                </button>
               )}
+            </div>
+          )}
+
+          {/* Comments */}
+          {comments.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-[10px] text-text-tertiary font-medium">
+                Comments ({comments.length})
+              </div>
+              {comments.map((c) => (
+                <CommentCard
+                  key={c.id}
+                  comment={c}
+                  onFixWithClaude={() => {
+                    const context = c.path
+                      ? `PR review comment by ${c.author} on ${c.path}${c.line ? `:${c.line}` : ""}:\n\n${c.body}`
+                      : `PR comment by ${c.author}:\n\n${c.body}`;
+                    onFixWithClaude(context);
+                  }}
+                />
+              ))}
             </div>
           )}
         </div>
       ) : (
-        <div className="px-4 py-3">
+        <div className="px-3 py-2">
           <div className="flex items-center gap-3">
             <button
               onClick={onCreatePrWithClaude}
-              className="text-xs text-accent hover:text-accent-hover transition-colors"
+              className="text-[11px] text-accent hover:text-accent-hover transition-colors"
             >
               Create PR with Claude
             </button>
             <button
               onClick={refresh}
-              className="text-xs text-text-tertiary hover:text-text-secondary transition-colors"
+              className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors"
             >
               Refresh
             </button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CheckStatusIcon({ status }: { status: string }) {
+  switch (status) {
+    case "SUCCESS":
+      return (
+        <svg width="10" height="10" viewBox="0 0 10 10" className="text-success shrink-0">
+          <circle cx="5" cy="5" r="4" fill="currentColor" opacity="0.2" />
+          <path d="M3 5l1.5 1.5L7 3.5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case "FAILURE":
+      return (
+        <svg width="10" height="10" viewBox="0 0 10 10" className="text-error shrink-0">
+          <circle cx="5" cy="5" r="4" fill="currentColor" opacity="0.2" />
+          <path d="M3.5 3.5l3 3M6.5 3.5l-3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+      );
+    case "PENDING":
+    case "QUEUED":
+      return (
+        <svg width="10" height="10" viewBox="0 0 10 10" className="text-text-tertiary shrink-0">
+          <circle cx="5" cy="5" r="4" stroke="currentColor" strokeWidth="1" fill="none" opacity="0.4" />
+          <circle cx="5" cy="5" r="1.5" fill="currentColor" opacity="0.4" />
+        </svg>
+      );
+    case "IN_PROGRESS":
+      return (
+        <svg width="10" height="10" viewBox="0 0 10 10" className="text-warning shrink-0 animate-spin">
+          <circle cx="5" cy="5" r="4" stroke="currentColor" strokeWidth="1" fill="none" opacity="0.25" />
+          <path d="M5 1a4 4 0 012.83 1.17" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+      );
+    default:
+      return (
+        <svg width="10" height="10" viewBox="0 0 10 10" className="text-text-tertiary shrink-0">
+          <circle cx="5" cy="5" r="4" stroke="currentColor" strokeWidth="1" fill="none" opacity="0.3" />
+        </svg>
+      );
+  }
+}
+
+function CommentCard({ comment, onFixWithClaude }: { comment: PrComment; onFixWithClaude: () => void }) {
+  return (
+    <div className="bg-bg-tertiary rounded px-2 py-1.5 space-y-1">
+      <div className="flex items-center gap-1.5 text-[10px]">
+        <span className="text-text-primary font-medium">{comment.author}</span>
+        {comment.path && (
+          <span className="text-text-tertiary font-mono truncate">
+            {comment.path}{comment.line ? `:${comment.line}` : ""}
+          </span>
+        )}
+        <a href={comment.url} target="_blank" rel="noopener" className="ml-auto text-text-tertiary hover:text-text-secondary shrink-0">
+          <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+            <path d="M1 7L7 1M7 1H3M7 1v4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          </svg>
+        </a>
+      </div>
+      <div className="text-[11px] text-text-secondary whitespace-pre-wrap break-words line-clamp-4">
+        {comment.body}
+      </div>
+      <button
+        onClick={onFixWithClaude}
+        className="text-[10px] text-accent hover:text-accent-hover transition-colors"
+      >
+        Fix with Claude
+      </button>
     </div>
   );
 }
@@ -218,4 +269,3 @@ function PrStateBadge({ state, draft }: { state: string; draft: boolean }) {
     </span>
   );
 }
-

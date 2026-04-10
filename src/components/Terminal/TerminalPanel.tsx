@@ -78,10 +78,49 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, keepAliv
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.loadAddon(new WebLinksAddon());
+    term.loadAddon(new WebLinksAddon((_event, uri) => {
+      window.open(uri, "_blank");
+    }));
 
     term.open(container);
     termInstanceRef.current = term;
+
+    // Custom copy handler: strip wrapped-line newlines and trailing spaces
+    term.attachCustomKeyEventHandler((e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "c" && term.hasSelection()) {
+        const buffer = term.buffer.active;
+
+        // Get selection line range
+        const selRange = (term as unknown as { _core: { _selectionService: { selectionStart: [number, number] | undefined; selectionEnd: [number, number] | undefined } } })
+          ?._core?._selectionService;
+
+        if (selRange?.selectionStart && selRange?.selectionEnd) {
+          const startRow = selRange.selectionStart[1];
+          const endRow = selRange.selectionEnd[1];
+          const lines: string[] = [];
+
+          for (let i = startRow; i <= endRow; i++) {
+            const line = buffer.getLine(i);
+            if (!line) continue;
+            const text = line.translateToString(true); // true = trim trailing whitespace
+            const isWrapped = line.isWrapped;
+
+            if (isWrapped && lines.length > 0) {
+              // Append to previous line (no newline — it was a soft wrap)
+              lines[lines.length - 1] += text;
+            } else {
+              lines.push(text);
+            }
+          }
+
+          const cleaned = lines.join("\n");
+          navigator.clipboard.writeText(cleaned);
+          e.preventDefault();
+          return false;
+        }
+      }
+      return true;
+    });
 
     // Listen for output from backend
     const unlistenOutput = listen<string>(`pty-output-${sessionId}`, (event) => {

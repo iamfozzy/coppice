@@ -142,16 +142,30 @@ export function DiffViewer({ cwd, file, mode, baseBranch }: Props) {
           options={{
             readOnly: mode === "pr",
             renderSideBySide: true,
-            minimap: { enabled: false },
+            minimap: { enabled: true },
             fontSize: 12,
             lineHeight: 18,
             scrollBeyondLastLine: false,
             automaticLayout: true,
-            renderOverviewRuler: false,
+            renderOverviewRuler: true,
             diffWordWrap: "on",
             originalEditable: false,
           }}
           beforeMount={(monaco) => {
+            // Disable all diagnostics so imports etc don't show errors
+            monaco.languages.typescript?.typescriptDefaults?.setDiagnosticsOptions({
+              noSemanticValidation: true,
+              noSyntaxValidation: true,
+            });
+            monaco.languages.typescript?.javascriptDefaults?.setDiagnosticsOptions({
+              noSemanticValidation: true,
+              noSyntaxValidation: true,
+            });
+            // Disable JSON validation too
+            monaco.languages.json?.jsonDefaults?.setDiagnosticsOptions({
+              validate: false,
+            });
+
             // Define dark theme matching Coppice
             monaco.editor.defineTheme("coppice-dark", {
               base: "vs-dark",

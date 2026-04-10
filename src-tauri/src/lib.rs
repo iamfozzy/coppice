@@ -47,6 +47,7 @@ pub fn run() {
             commands::github::get_pr_for_branch,
             commands::github::create_pr,
             commands::github::get_failed_action_logs,
+            commands::github::get_pr_comments,
             // External tool commands
             commands::external::open_in_vscode,
             commands::external::open_in_terminal,

@@ -253,3 +253,83 @@ pub fn get_failed_action_logs(
         pr_number, checks_text, truncated
     ))
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrComment {
+    pub id: i64,
+    pub author: String,
+    pub body: String,
+    pub path: Option<String>,
+    pub line: Option<i64>,
+    pub created_at: String,
+    pub url: String,
+}
+
+#[tauri::command]
+pub fn get_pr_comments(
+    db: State<'_, Database>,
+    project_id: String,
+    pr_number: i64,
+) -> Result<Vec<PrComment>, String> {
+    let cwd = get_project_path(&db, &project_id)?;
+
+    // Get review comments (inline code comments)
+    let review_output = Command::new("gh")
+        .args([
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/pulls/{}/comments", pr_number),
+            "--jq", r#"[.[] | {id: .id, author: .user.login, body: .body, path: .path, line: (.line // .original_line), created_at: .created_at, url: .html_url}]"#,
+        ])
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("Failed to get review comments: {}", e))?;
+
+    let mut comments: Vec<PrComment> = Vec::new();
+
+    if review_output.status.success() {
+        let items: Vec<serde_json::Value> =
+            serde_json::from_slice(&review_output.stdout).unwrap_or_default();
+        for item in &items {
+            comments.push(PrComment {
+                id: item["id"].as_i64().unwrap_or(0),
+                author: item["author"].as_str().unwrap_or("").to_string(),
+                body: item["body"].as_str().unwrap_or("").to_string(),
+                path: item["path"].as_str().map(|s| s.to_string()),
+                line: item["line"].as_i64(),
+                created_at: item["created_at"].as_str().unwrap_or("").to_string(),
+                url: item["url"].as_str().unwrap_or("").to_string(),
+            });
+        }
+    }
+
+    // Get issue comments (general PR comments)
+    let issue_output = Command::new("gh")
+        .args([
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/issues/{}/comments", pr_number),
+            "--jq", r#"[.[] | {id: .id, author: .user.login, body: .body, path: null, line: null, created_at: .created_at, url: .html_url}]"#,
+        ])
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("Failed to get issue comments: {}", e))?;
+
+    if issue_output.status.success() {
+        let items: Vec<serde_json::Value> =
+            serde_json::from_slice(&issue_output.stdout).unwrap_or_default();
+        for item in &items {
+            comments.push(PrComment {
+                id: item["id"].as_i64().unwrap_or(0),
+                author: item["author"].as_str().unwrap_or("").to_string(),
+                body: item["body"].as_str().unwrap_or("").to_string(),
+                path: None,
+                line: None,
+                created_at: item["created_at"].as_str().unwrap_or("").to_string(),
+                url: item["url"].as_str().unwrap_or("").to_string(),
+            });
+        }
+    }
+
+    // Sort by created_at
+    comments.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    Ok(comments)
+}

@@ -194,3 +194,20 @@ export async function getFailedActionLogs(
 ): Promise<string> {
   return invoke("get_failed_action_logs", { projectId, prNumber });
 }
+
+export interface PrComment {
+  id: number;
+  author: string;
+  body: string;
+  path: string | null;
+  line: number | null;
+  created_at: string;
+  url: string;
+}
+
+export async function getPrComments(
+  projectId: string,
+  prNumber: number
+): Promise<PrComment[]> {
+  return invoke("get_pr_comments", { projectId, prNumber });
+}
