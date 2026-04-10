@@ -375,18 +375,33 @@ pub async fn get_unpushed_count(path: String) -> Result<u32, String> {
         .unwrap_or(false);
 
     if !has_remote {
-        // No remote tracking branch — count all commits on this branch
-        // (everything is unpushed)
-        let output = user_command("git")
-            .args(["rev-list", "--count", "HEAD"])
-            .current_dir(&path)
-            .output()
-            .map_err(|e| format!("Failed to count commits: {}", e))?;
-        let count = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .parse::<u32>()
-            .unwrap_or(0);
-        return Ok(count);
+        // No remote tracking branch — count commits since fork point from main
+        // Try common base branch names to find where this branch diverged
+        for base in &["origin/main", "origin/master", "main", "master"] {
+            let merge_base = user_command("git")
+                .args(["merge-base", base, "HEAD"])
+                .current_dir(&path)
+                .output();
+            if let Ok(mb) = merge_base {
+                if mb.status.success() {
+                    let mb_sha = String::from_utf8_lossy(&mb.stdout).trim().to_string();
+                    if !mb_sha.is_empty() {
+                        let output = user_command("git")
+                            .args(["rev-list", "--count", &format!("{}..HEAD", mb_sha)])
+                            .current_dir(&path)
+                            .output()
+                            .map_err(|e| format!("Failed to count commits: {}", e))?;
+                        let count = String::from_utf8_lossy(&output.stdout)
+                            .trim()
+                            .parse::<u32>()
+                            .unwrap_or(0);
+                        return Ok(count);
+                    }
+                }
+            }
+        }
+        // Could not determine base — report 0
+        return Ok(0);
     }
 
     let output = user_command("git")
