@@ -357,6 +357,51 @@ pub async fn get_pr_file_diff(path: String, file: String, base_branch: Option<St
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+#[tauri::command]
+pub async fn get_unpushed_count(path: String) -> Result<u32, String> {
+    let branch = user_command("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&path)
+        .output()
+        .map_err(|e| format!("Failed to get branch: {}", e))?;
+    let branch = String::from_utf8_lossy(&branch.stdout).trim().to_string();
+
+    // Check if remote tracking branch exists
+    let has_remote = user_command("git")
+        .args(["rev-parse", "--verify", &format!("origin/{}", branch)])
+        .current_dir(&path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !has_remote {
+        // No remote tracking branch — count all commits on this branch
+        // (everything is unpushed)
+        let output = user_command("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(&path)
+            .output()
+            .map_err(|e| format!("Failed to count commits: {}", e))?;
+        let count = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<u32>()
+            .unwrap_or(0);
+        return Ok(count);
+    }
+
+    let output = user_command("git")
+        .args(["rev-list", "--count", &format!("origin/{}..HEAD", branch)])
+        .current_dir(&path)
+        .output()
+        .map_err(|e| format!("Failed to count unpushed: {}", e))?;
+
+    let count = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(0);
+    Ok(count)
+}
+
 fn find_project(db: &Database, project_id: &str) -> Result<Project, String> {
     let projects = db.list_projects().map_err(|e| e.to_string())?;
     projects

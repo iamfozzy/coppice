@@ -37,6 +37,7 @@ pub fn run() {
             commands::worktree::get_file_diff,
             commands::worktree::get_pr_diff_files,
             commands::worktree::get_pr_file_diff,
+            commands::worktree::get_unpushed_count,
             // Terminal commands
             commands::terminal::terminal_spawn,
             commands::terminal::terminal_write,

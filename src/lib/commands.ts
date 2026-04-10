@@ -97,6 +97,10 @@ export async function deleteWorktree(id: string): Promise<void> {
   return invoke("delete_worktree", { id });
 }
 
+export async function getUnpushedCount(path: string): Promise<number> {
+  return invoke("get_unpushed_count", { path });
+}
+
 // Git commands
 export async function listBranches(projectId: string): Promise<string[]> {
   return invoke("list_branches", { projectId });

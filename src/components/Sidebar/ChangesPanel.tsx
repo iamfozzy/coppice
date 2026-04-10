@@ -42,6 +42,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
   const [prFiles, setPrFiles] = useState<GitFileStatus[]>([]);
   const [loadingUncommitted, setLoadingUncommitted] = useState(false);
   const [loadingPr, setLoadingPr] = useState(false);
+  const [unpushedCount, setUnpushedCount] = useState(0);
 
   // Use refs for async operations to avoid stale closures and dependency churn
   const wtPathRef = useRef(worktree?.path);
@@ -51,7 +52,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
   wtIdRef.current = worktree?.id;
   baseBranchRef.current = worktree?.target_branch || project?.base_branch || "main";
 
-  // Deferred uncommitted refresh
+  // Deferred uncommitted refresh + unpushed count
   useEffect(() => {
     if (!worktree) return;
     let cancelled = false;
@@ -60,10 +61,19 @@ export const ChangesPanel = memo(function ChangesPanel() {
       if (!wtPathRef.current) return;
       setLoadingUncommitted(true);
       try {
-        const status = await commands.getGitStatus(wtPathRef.current);
-        if (!cancelled) setUncommittedFiles(status);
+        const [status, count] = await Promise.all([
+          commands.getGitStatus(wtPathRef.current),
+          commands.getUnpushedCount(wtPathRef.current).catch(() => 0),
+        ]);
+        if (!cancelled) {
+          setUncommittedFiles(status);
+          setUnpushedCount(count);
+        }
       } catch {
-        if (!cancelled) setUncommittedFiles([]);
+        if (!cancelled) {
+          setUncommittedFiles([]);
+          setUnpushedCount(0);
+        }
       } finally {
         if (!cancelled) setLoadingUncommitted(false);
       }
@@ -99,17 +109,40 @@ export const ChangesPanel = memo(function ChangesPanel() {
   if (!worktree || !project) return null;
 
   const baseBranch = baseBranchRef.current;
+  const hasLocalChanges = uncommittedFiles.length > 0 || unpushedCount > 0;
+
+  const handlePush = () => {
+    if (uncommittedFiles.length > 0) {
+      requestClaudeTab(
+        `claude "Commit all the changes in this worktree with a clear, descriptive commit message, then push to origin."`
+      );
+    } else {
+      requestClaudeTab(
+        `claude "Push the current branch to origin."`
+      );
+    }
+  };
 
   return (
     <div className="border-t border-border-primary flex flex-col min-h-0 shrink-0" style={{ maxHeight: "40%" }}>
-      <div className="flex items-center gap-0 px-2 h-7 bg-bg-tertiary shrink-0">
-        <TabButton label={`Changes${uncommittedFiles.length > 0 ? ` (${uncommittedFiles.length})` : ""}`} active={tab === "uncommitted"} onClick={() => setTab("uncommitted")} />
-        <TabButton label={`PR Files${prFiles.length > 0 ? ` (${prFiles.length})` : ""}`} active={tab === "pr-changes"} onClick={() => setTab("pr-changes")} />
-        <TabButton
-          label="PR"
-          active={tab === "pr-status"}
-          onClick={() => setTab("pr-status")}
-        />
+      <div className="flex items-center gap-0 px-2 h-7 bg-bg-tertiary shrink-0 overflow-hidden">
+        <div className="flex items-center min-w-0 shrink">
+          <TabButton label={`Changes${uncommittedFiles.length > 0 ? ` (${uncommittedFiles.length})` : ""}`} active={tab === "uncommitted"} onClick={() => setTab("uncommitted")} />
+          <TabButton label={`Files${prFiles.length > 0 ? ` (${prFiles.length})` : ""}`} active={tab === "pr-changes"} onClick={() => setTab("pr-changes")} />
+          <TabButton
+            label="PR"
+            active={tab === "pr-status"}
+            onClick={() => setTab("pr-status")}
+          />
+        </div>
+        {hasLocalChanges && (
+          <button
+            className="ml-auto px-2 py-0.5 text-[11px] rounded bg-accent text-white hover:brightness-110 transition-all whitespace-nowrap shrink-0"
+            onClick={handlePush}
+          >
+            {uncommittedFiles.length > 0 ? "Commit & Push" : `Push (${unpushedCount})`}
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0">
@@ -160,7 +193,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
 function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
-      className={`px-2 py-0.5 text-[11px] rounded-t transition-colors ${
+      className={`px-2 py-0.5 text-[11px] rounded-t transition-colors whitespace-nowrap truncate ${
         active ? "text-text-primary bg-bg-secondary" : "text-text-tertiary hover:text-text-secondary"
       }`}
       onClick={onClick}

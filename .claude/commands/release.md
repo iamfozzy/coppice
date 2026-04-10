@@ -21,11 +21,9 @@ Create a new release for Stuductor/Coppice.
    git commit -m "Release v<VERSION>"
    ```
 
-6. **Tag and push:**
+6. **Push to main:**
    ```
-   git tag v<VERSION>
    git push origin main
-   git push origin v<VERSION>
    ```
 
-7. Tell the user the release is underway and that the `Build & Release` GitHub Actions workflow will create the GitHub Release with binaries once CI completes.
+7. Tell the user the release is underway. The `Build & Release` CI workflow will automatically detect the new version, create the `v<VERSION>` tag, and publish a GitHub Release with binaries once the build completes.
