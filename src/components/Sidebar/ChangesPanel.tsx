@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef, memo, useDeferredValue } from "react";
 import { useAppStore } from "../../stores/appStore";
 import { PRPanel } from "../PRStatus/PRPanel";
 import * as commands from "../../lib/commands";
@@ -6,7 +6,7 @@ import type { GitFileStatus } from "../../lib/commands";
 
 type Tab = "uncommitted" | "pr-changes" | "pr-status";
 
-export function ChangesPanel() {
+export const ChangesPanel = memo(function ChangesPanel() {
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
   const selectedWorktreeId = useAppStore((s) => s.selectedWorktreeId);
   const worktreesByProject = useAppStore((s) => s.worktreesByProject);
@@ -21,111 +21,91 @@ export function ChangesPanel() {
   const worktree = worktrees.find((w) => w.id === selectedWorktreeId);
 
   const [tab, setTab] = useState<Tab>("uncommitted");
+
+  // Defer the worktree ID so heavy content (PR panel) renders after the UI updates
+  const deferredWtId = useDeferredValue(worktree?.id);
+  const isStale = deferredWtId !== worktree?.id;
   const [uncommittedFiles, setUncommittedFiles] = useState<GitFileStatus[]>([]);
   const [prFiles, setPrFiles] = useState<GitFileStatus[]>([]);
   const [loadingUncommitted, setLoadingUncommitted] = useState(false);
   const [loadingPr, setLoadingPr] = useState(false);
 
-  const refreshUncommitted = useCallback(async () => {
-    if (!worktree) return;
-    setLoadingUncommitted(true);
-    try {
-      const status = await commands.getGitStatus(worktree.path);
-      setUncommittedFiles(status);
-    } catch {
-      setUncommittedFiles([]);
-    } finally {
-      setLoadingUncommitted(false);
-    }
-  }, [worktree?.path]);
+  // Use refs for async operations to avoid stale closures and dependency churn
+  const wtPathRef = useRef(worktree?.path);
+  const wtIdRef = useRef(worktree?.id);
+  const baseBranchRef = useRef(worktree?.target_branch || project?.base_branch || "main");
+  wtPathRef.current = worktree?.path;
+  wtIdRef.current = worktree?.id;
+  baseBranchRef.current = worktree?.target_branch || project?.base_branch || "main";
 
-  const baseBranch = worktree?.target_branch || project?.base_branch || "main";
-
-  const refreshPrFiles = useCallback(async () => {
-    if (!worktree) return;
-    setLoadingPr(true);
-    try {
-      const files = await commands.getPrDiffFiles(worktree.path, baseBranch);
-      setPrFiles(files);
-    } catch {
-      setPrFiles([]);
-    } finally {
-      setLoadingPr(false);
-    }
-  }, [worktree?.path, baseBranch]);
-
-  // Auto-refresh uncommitted on worktree change and every 5 seconds
+  // Deferred uncommitted refresh
   useEffect(() => {
     if (!worktree) return;
-    refreshUncommitted();
-    const interval = setInterval(refreshUncommitted, 5000);
-    return () => clearInterval(interval);
-  }, [worktree?.id, refreshUncommitted]);
+    let cancelled = false;
 
-  // Load PR files when that tab is selected
+    const refresh = async () => {
+      if (!wtPathRef.current) return;
+      setLoadingUncommitted(true);
+      try {
+        const status = await commands.getGitStatus(wtPathRef.current);
+        if (!cancelled) setUncommittedFiles(status);
+      } catch {
+        if (!cancelled) setUncommittedFiles([]);
+      } finally {
+        if (!cancelled) setLoadingUncommitted(false);
+      }
+    };
+
+    const timer = setTimeout(refresh, 500);
+    const interval = setInterval(refresh, 5000);
+    return () => { cancelled = true; clearTimeout(timer); clearInterval(interval); };
+  }, [worktree?.id]);
+
+  // PR files — only when tab is active
   useEffect(() => {
-    if (tab === "pr-changes" && worktree) {
-      refreshPrFiles();
-    }
+    if (tab !== "pr-changes" || !worktree) return;
+    let cancelled = false;
+
+    const refresh = async () => {
+      if (!wtPathRef.current) return;
+      setLoadingPr(true);
+      try {
+        const files = await commands.getPrDiffFiles(wtPathRef.current, baseBranchRef.current);
+        if (!cancelled) setPrFiles(files);
+      } catch {
+        if (!cancelled) setPrFiles([]);
+      } finally {
+        if (!cancelled) setLoadingPr(false);
+      }
+    };
+
+    const timer = setTimeout(refresh, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [tab, worktree?.id]);
 
   if (!worktree || !project) return null;
 
-  const handleFileClick = (file: string, mode: "uncommitted" | "pr") => {
-    openDiffTab(worktree.id, file, worktree.path, mode, mode === "pr" ? baseBranch : undefined);
-  };
+  const baseBranch = baseBranchRef.current;
 
   return (
     <div className="border-t border-border-primary flex flex-col min-h-0 shrink-0" style={{ maxHeight: "40%" }}>
-      {/* Tab bar */}
       <div className="flex items-center gap-0 px-2 h-7 bg-bg-tertiary shrink-0">
-        <TabButton
-          label={`Changes${uncommittedFiles.length > 0 ? ` (${uncommittedFiles.length})` : ""}`}
-          active={tab === "uncommitted"}
-          onClick={() => setTab("uncommitted")}
-        />
-        <TabButton
-          label={`PR Files${prFiles.length > 0 ? ` (${prFiles.length})` : ""}`}
-          active={tab === "pr-changes"}
-          onClick={() => setTab("pr-changes")}
-        />
+        <TabButton label={`Changes${uncommittedFiles.length > 0 ? ` (${uncommittedFiles.length})` : ""}`} active={tab === "uncommitted"} onClick={() => setTab("uncommitted")} />
+        <TabButton label={`PR Files${prFiles.length > 0 ? ` (${prFiles.length})` : ""}`} active={tab === "pr-changes"} onClick={() => setTab("pr-changes")} />
         <TabButton
           label="PR"
           active={tab === "pr-status"}
           onClick={() => setTab("pr-status")}
         />
-        {tab === "uncommitted" && (
-          <button
-            onClick={refreshUncommitted}
-            className="ml-auto text-text-tertiary hover:text-text-secondary transition-colors"
-            title="Refresh"
-          >
-            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-              <path d="M1 6a5 5 0 019-3M11 6a5 5 0 01-9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-            </svg>
-          </button>
-        )}
-        {tab === "pr-changes" && (
-          <button
-            onClick={refreshPrFiles}
-            className="ml-auto text-text-tertiary hover:text-text-secondary transition-colors"
-            title="Refresh"
-          >
-            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-              <path d="M1 6a5 5 0 019-3M11 6a5 5 0 01-9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-            </svg>
-          </button>
-        )}
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0" style={{ opacity: isStale ? 0.5 : 1, transition: "opacity 100ms" }}>
         {tab === "uncommitted" && (
           <FileList
             files={uncommittedFiles}
             loading={loadingUncommitted}
             emptyMessage="No uncommitted changes"
-            onFileClick={(f) => handleFileClick(f, "uncommitted")}
+            onFileClick={(f) => openDiffTab(worktree.id, f, worktree.path, "uncommitted")}
           />
         )}
         {tab === "pr-changes" && (
@@ -133,7 +113,7 @@ export function ChangesPanel() {
             files={prFiles}
             loading={loadingPr}
             emptyMessage={`No PR changes (or no common ancestor with ${baseBranch})`}
-            onFileClick={(f) => handleFileClick(f, "pr")}
+            onFileClick={(f) => openDiffTab(worktree.id, f, worktree.path, "pr", baseBranch)}
           />
         )}
         {tab === "pr-status" && (
@@ -150,7 +130,6 @@ export function ChangesPanel() {
             }}
             onCreatePrWithClaude={() => {
               if (project.pr_create_skill) {
-                // Use custom skill/command
                 requestClaudeTab(project.pr_create_skill);
               } else {
                 requestClaudeTab(
@@ -163,15 +142,13 @@ export function ChangesPanel() {
       </div>
     </div>
   );
-}
+});
 
 function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
       className={`px-2 py-0.5 text-[11px] rounded-t transition-colors ${
-        active
-          ? "text-text-primary bg-bg-secondary"
-          : "text-text-tertiary hover:text-text-secondary"
+        active ? "text-text-primary bg-bg-secondary" : "text-text-tertiary hover:text-text-secondary"
       }`}
       onClick={onClick}
     >
@@ -180,23 +157,14 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
   );
 }
 
-function FileList({
-  files,
-  loading,
-  emptyMessage,
-  onFileClick,
-}: {
+function FileList({ files, loading, emptyMessage, onFileClick }: {
   files: GitFileStatus[];
   loading: boolean;
   emptyMessage: string;
   onFileClick: (file: string) => void;
 }) {
-  if (loading && files.length === 0) {
-    return <div className="px-3 py-2 text-[11px] text-text-tertiary">Loading...</div>;
-  }
-  if (files.length === 0) {
-    return <div className="px-3 py-2 text-[11px] text-text-tertiary">{emptyMessage}</div>;
-  }
+  if (loading && files.length === 0) return <div className="px-3 py-2 text-[11px] text-text-tertiary">Loading...</div>;
+  if (files.length === 0) return <div className="px-3 py-2 text-[11px] text-text-tertiary">{emptyMessage}</div>;
   return (
     <div className="py-0.5">
       {files.map((f) => (
@@ -214,17 +182,6 @@ function FileList({
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    M: "text-warning",
-    A: "text-success",
-    D: "text-error",
-    R: "text-accent",
-    "??": "text-text-tertiary",
-  };
-  const color = colors[status] ?? "text-text-tertiary";
-  return (
-    <span className={`${color} font-mono w-4 text-center shrink-0`}>
-      {status}
-    </span>
-  );
+  const colors: Record<string, string> = { M: "text-warning", A: "text-success", D: "text-error", R: "text-accent", "??": "text-text-tertiary" };
+  return <span className={`${colors[status] ?? "text-text-tertiary"} font-mono w-4 text-center shrink-0`}>{status}</span>;
 }

@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef, memo } from "react";
 import * as commands from "../../lib/commands";
 import type { PrStatusResult, PrComment } from "../../lib/commands";
+import { cacheGet, cacheGetStale, cacheSet } from "../../lib/cache";
 
 interface Props {
   projectId: string;
@@ -10,44 +11,80 @@ interface Props {
   onCreatePrWithClaude?: () => void;
 }
 
-export function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCreatePrWithClaude }: Props) {
+export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCreatePrWithClaude }: Props) {
+  const cacheKey = `pr-${projectId}-${worktreePath}`;
+  const commentsCacheKey = `pr-comments-${projectId}-${worktreePath}`;
+
   const [prStatus, setPrStatus] = useState<PrStatusResult | null>(null);
   const [comments, setComments] = useState<PrComment[]>([]);
   const [checked, setChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setError(null);
+  // Single effect for everything — keyed on cacheKey so it restarts on worktree switch
+  const generationRef = useRef(0);
+
+  const refresh = useCallback(async (generation: number) => {
     try {
       let liveBranch = branch;
       try {
         liveBranch = await commands.getCurrentBranch(worktreePath);
       } catch { /* fall back */ }
+      if (generationRef.current !== generation) return; // stale
+
+      const ck = `pr-${projectId}-${worktreePath}`;
+      const cck = `pr-comments-${projectId}-${worktreePath}`;
+
+      // Use fresh cache if available
+      const fresh = cacheGet<PrStatusResult>(ck, 15000);
+      if (fresh) {
+        setPrStatus(fresh);
+        setChecked(true);
+        return;
+      }
+
       const status = await commands.getPrForBranch(projectId, liveBranch);
+      if (generationRef.current !== generation) return; // stale
       setPrStatus(status);
+      cacheSet(ck, status);
       setChecked(true);
 
-      // Fetch comments if PR exists
       if (status.pr) {
         try {
           const c = await commands.getPrComments(projectId, status.pr.number);
+          if (generationRef.current !== generation) return;
           setComments(c);
+          cacheSet(cck, c);
         } catch {
-          setComments([]);
+          if (generationRef.current === generation) setComments([]);
         }
+      } else {
+        if (generationRef.current === generation) setComments([]);
       }
     } catch (e) {
-      setError(String(e));
-      setChecked(true);
+      if (generationRef.current === generation) {
+        setError(String(e));
+        setChecked(true);
+      }
     }
   }, [projectId, branch, worktreePath]);
 
-  // Auto-check after 300ms, then poll every 30s
+  // On worktree change: restore cache, bump generation, schedule refresh
   useEffect(() => {
-    const timer = setTimeout(refresh, 300);
-    const interval = setInterval(refresh, 30000);
+    const gen = ++generationRef.current;
+
+    // Restore from cache immediately
+    const cached = cacheGetStale<PrStatusResult>(cacheKey);
+    const cachedC = cacheGetStale<PrComment[]>(commentsCacheKey);
+    setPrStatus(cached);
+    setComments(cachedC ?? []);
+    setChecked(cached !== null);
+    setError(null);
+
+    // Refresh after delay, then poll
+    const timer = setTimeout(() => refresh(gen), 800);
+    const interval = setInterval(() => refresh(gen), 30000);
     return () => { clearTimeout(timer); clearInterval(interval); };
-  }, [refresh]);
+  }, [cacheKey, commentsCacheKey, refresh]);
 
   const handleFixWithClaude = async () => {
     if (!prStatus?.pr) return;
@@ -100,7 +137,7 @@ export function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCr
               #{pr.number} {pr.title}
             </a>
             <button
-              onClick={refresh}
+              onClick={() => refresh(generationRef.current)}
               className="text-text-tertiary hover:text-text-secondary transition-colors shrink-0"
               title="Refresh"
             >
@@ -167,7 +204,7 @@ export function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCr
               Create PR with Claude
             </button>
             <button
-              onClick={refresh}
+              onClick={() => refresh(generationRef.current)}
               className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors"
             >
               Refresh
@@ -177,7 +214,7 @@ export function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCr
       )}
     </div>
   );
-}
+});
 
 function CheckStatusIcon({ status }: { status: string }) {
   switch (status) {
