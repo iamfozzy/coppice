@@ -80,6 +80,65 @@ function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  // Tab keyboard shortcuts — capture phase so xterm and the webview's native
+  // Ctrl+W / Ctrl+T don't get a chance to consume them first.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = (e.ctrlKey || e.metaKey) && !e.altKey;
+      if (!mod) return;
+      const state = useAppStore.getState();
+      const wt = state.selectedWorktreeId;
+      if (!wt) return;
+
+      // Ctrl+Tab / Ctrl+Shift+Tab — cycle tabs. Handled first so the Shift
+      // branch below doesn't fight with Ctrl+Shift+Tab.
+      if (e.key === "Tab") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        state.cycleTab(wt, e.shiftKey ? -1 : 1);
+        return;
+      }
+
+      // Use e.code for letter combos so non-US layouts that remap Shift+T
+      // still work.
+      if (e.shiftKey) {
+        if (e.code === "KeyT") {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          state.newClaudeTab(wt);
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case "PageDown":
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          state.cycleTab(wt, 1);
+          break;
+        case "PageUp":
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          state.cycleTab(wt, -1);
+          break;
+        case "w":
+        case "W":
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          state.closeActiveTab(wt);
+          break;
+        case "t":
+        case "T":
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          state.newTerminalTab(wt);
+          break;
+      }
+    };
+    document.addEventListener("keydown", onKey, { capture: true });
+    return () => document.removeEventListener("keydown", onKey, { capture: true });
+  }, []);
+
   return (
     <div className="flex h-full">
       <Sidebar />

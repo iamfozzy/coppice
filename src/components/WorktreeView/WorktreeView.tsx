@@ -13,6 +13,8 @@ export function WorktreeView() {
   const addTab = useAppStore((s) => s.addTab);
   const closeTab = useAppStore((s) => s.closeTab);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const newTerminalTab = useAppStore((s) => s.newTerminalTab);
+  const newClaudeTab = useAppStore((s) => s.newClaudeTab);
   const setWorktreeTargetBranch = useAppStore((s) => s.setWorktreeTargetBranch);
   const pendingClaudeCommand = useAppStore((s) => s.pendingClaudeCommand);
   const consumeClaudeCommand = useAppStore((s) => s.consumeClaudeCommand);
@@ -135,8 +137,8 @@ export function WorktreeView() {
         <div className="flex shrink-0">
           <button
             className="flex items-center justify-center w-10 h-full text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-colors outline-none"
-            onClick={() => addTab(wtId, "terminal", worktree.path)}
-            title="New terminal"
+            onClick={() => newTerminalTab(wtId)}
+            title="New terminal (Ctrl+T)"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M2 4l4 3-4 3M7 10h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
@@ -144,8 +146,8 @@ export function WorktreeView() {
           </button>
           <button
             className="flex items-center justify-center w-10 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none"
-            onClick={() => addTab(wtId, "claude", worktree.path, claudeCmd)}
-            title="New Claude session"
+            onClick={() => newClaudeTab(wtId)}
+            title="New Claude session (Ctrl+Shift+T)"
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
               <rect x="2" y="6" width="12" height="8" rx="2" />

@@ -82,6 +82,10 @@ interface AppState {
   openDiffTab: (worktreeId: string, file: string, cwd: string, mode: "uncommitted" | "pr", baseBranch?: string) => void;
   closeTab: (worktreeId: string, tabId: string) => void;
   setActiveTab: (worktreeId: string, tabId: string) => void;
+  cycleTab: (worktreeId: string, direction: 1 | -1) => void;
+  closeActiveTab: (worktreeId: string) => void;
+  newTerminalTab: (worktreeId: string) => void;
+  newClaudeTab: (worktreeId: string) => void;
 
   // Actions — runners
   expandRunner: (worktreeId: string, key: string, command: string, cwd: string) => void;
@@ -292,6 +296,43 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({
       activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: tabId },
     }));
+  },
+
+  cycleTab: (worktreeId, direction) => {
+    const s = get();
+    const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    if (tabs.length < 2) return;
+    const activeId = s.activeTabByWorktree[worktreeId];
+    const idx = tabs.findIndex((t) => t.id === activeId);
+    const next = ((idx === -1 ? 0 : idx) + direction + tabs.length) % tabs.length;
+    set({
+      activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: tabs[next].id },
+    });
+  },
+
+  closeActiveTab: (worktreeId) => {
+    const activeId = get().activeTabByWorktree[worktreeId];
+    if (activeId) get().closeTab(worktreeId, activeId);
+  },
+
+  newTerminalTab: (worktreeId) => {
+    const path = get().getWorktreePath(worktreeId);
+    if (!path) return;
+    get().addTab(worktreeId, "terminal", path);
+  },
+
+  newClaudeTab: (worktreeId) => {
+    const s = get();
+    const path = s.getWorktreePath(worktreeId);
+    if (!path) return;
+    // Find the project that owns this worktree to resolve its claude_command override.
+    let projectId: string | null = null;
+    for (const [pid, wts] of Object.entries(s.worktreesByProject)) {
+      if (wts.some((w) => w.id === worktreeId)) { projectId = pid; break; }
+    }
+    const project = projectId ? s.projects.find((p) => p.id === projectId) : undefined;
+    const claudeCmd = project?.claude_command || s.appSettings?.claude_command || "claude";
+    s.addTab(worktreeId, "claude", path, claudeCmd);
   },
 
   // ── Runners ──
