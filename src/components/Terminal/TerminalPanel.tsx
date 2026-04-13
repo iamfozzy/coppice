@@ -87,31 +87,35 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
 
     termInstanceRef.current = term;
 
-    // Custom copy handler: strip wrapped-line newlines and trailing spaces
+    // Custom copy handler: strip newlines that xterm.js inserts between
+    // soft-wrapped rows, so copying a wrapped long line yields one line.
+    // We must preserve column boundaries — use term.getSelection() (which
+    // already respects them) and only post-process wrapped-row joins.
     term.attachCustomKeyEventHandler((e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "c" && term.hasSelection()) {
         const buffer = term.buffer.active;
 
-        // Get selection line range
         const selRange = (term as unknown as { _core: { _selectionService: { selectionStart: [number, number] | undefined; selectionEnd: [number, number] | undefined } } })
           ?._core?._selectionService;
 
+        const selection = term.getSelection();
+        if (!selection) return true;
+
         if (selRange?.selectionStart && selRange?.selectionEnd) {
           const startRow = selRange.selectionStart[1];
-          const endRow = selRange.selectionEnd[1];
+          const selLines = selection.split("\n");
           const lines: string[] = [];
 
-          for (let i = startRow; i <= endRow; i++) {
-            const line = buffer.getLine(i);
-            if (!line) continue;
-            const text = line.translateToString(true); // true = trim trailing whitespace
-            const isWrapped = line.isWrapped;
+          for (let idx = 0; idx < selLines.length; idx++) {
+            const rowIdx = startRow + idx;
+            const line = buffer.getLine(rowIdx);
+            // Only rows beyond the first can be "wrapped" (wrapped === continuation of prior row)
+            const isWrapped = idx > 0 && !!line?.isWrapped;
 
             if (isWrapped && lines.length > 0) {
-              // Append to previous line (no newline — it was a soft wrap)
-              lines[lines.length - 1] += text;
+              lines[lines.length - 1] += selLines[idx];
             } else {
-              lines.push(text);
+              lines.push(selLines[idx]);
             }
           }
 
@@ -120,6 +124,11 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
           e.preventDefault();
           return false;
         }
+
+        // Fallback: internal selection service shape changed — copy raw selection.
+        navigator.clipboard.writeText(selection);
+        e.preventDefault();
+        return false;
       }
       return true;
     });
