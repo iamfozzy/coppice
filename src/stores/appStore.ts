@@ -180,12 +180,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectProject: (id) => set({ selectedProjectId: id }),
   selectWorktree: (id) => {
     set({ selectedWorktreeId: id });
-    // Clear idle indicator on the active tab of the newly selected worktree
+    // Clear idle indicators on ALL claude tabs in the newly selected worktree
+    // so the sidebar dot disappears when the user navigates here.
     if (id) {
       const s = get();
-      const activeTabId = s.activeTabByWorktree[id];
-      if (activeTabId && s.claudeStatusByTab[activeTabId] === "idle") {
-        get().removeClaudeStatus(activeTabId);
+      const tabs = s.tabsByWorktree[id] ?? [];
+      const idleTabs = tabs.filter(
+        (t) => t.type === "claude" && s.claudeStatusByTab[t.id] === "idle",
+      );
+      if (idleTabs.length > 0) {
+        const updated = { ...s.claudeStatusByTab };
+        for (const t of idleTabs) delete updated[t.id];
+        set({ claudeStatusByTab: updated });
       }
     }
   },
@@ -389,9 +395,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     const activeId = s.activeTabByWorktree[worktreeId];
     const idx = tabs.findIndex((t) => t.id === activeId);
     const next = ((idx === -1 ? 0 : idx) + direction + tabs.length) % tabs.length;
-    set({
-      activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: tabs[next].id },
-    });
+    const nextId = tabs[next].id;
+    // Clear "idle" indicator when cycling to an idle claude tab
+    if (s.claudeStatusByTab[nextId] === "idle") {
+      const updated = { ...s.claudeStatusByTab };
+      delete updated[nextId];
+      set({
+        activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: nextId },
+        claudeStatusByTab: updated,
+      });
+    } else {
+      set({
+        activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: nextId },
+      });
+    }
   },
 
   closeActiveTab: (worktreeId) => {
