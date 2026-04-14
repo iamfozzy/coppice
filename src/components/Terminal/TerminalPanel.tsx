@@ -208,6 +208,14 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       }, 1000);
     }
 
+    // Clear terminal buffer when a runner is restarted
+    const onClear = (e: Event) => {
+      if ((e as CustomEvent).detail === sessionId) {
+        term.reset();
+      }
+    };
+    window.addEventListener("terminal-clear", onClear);
+
     // Send input to backend
     const dataDisposable = term.onData((data) => {
       commands.terminalWrite(sessionId, data).catch(() => {});
@@ -256,6 +264,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       aborted = true;
       resizeObserver.disconnect();
       dataDisposable.dispose();
+      window.removeEventListener("terminal-clear", onClear);
       unlistenOutput.then((fn) => fn());
       unlistenExit.then((fn) => fn());
       if (idleInterval) clearInterval(idleInterval);

@@ -476,6 +476,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       // This avoids React removing/adding DOM nodes which crashes the reparenting.
       await commands.terminalKill(old.id).catch(() => {});
 
+      // Tell the TerminalPanel to clear its buffer before the new run starts.
+      window.dispatchEvent(new CustomEvent("terminal-clear", { detail: old.id }));
+
       // Mark as running, keep same ID
       set((s2) => ({
         runnersByWorktree: {
