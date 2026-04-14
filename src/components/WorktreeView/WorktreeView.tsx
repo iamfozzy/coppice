@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useAppStore } from "../../stores/appStore";
+import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
+import { useShallow } from "zustand/shallow";
 import { DiffViewer } from "../DiffViewer/DiffViewer";
 import * as commands from "../../lib/commands";
 
@@ -20,6 +21,7 @@ export function WorktreeView() {
   const consumeClaudeCommand = useAppStore((s) => s.consumeClaudeCommand);
 
   const appSettings = useAppStore((s) => s.appSettings);
+  const prCommentsByProject = useAppStore((s) => s.prCommentsByProject);
   const project = projects.find((p) => p.id === selectedProjectId);
   const claudeCmd = project?.claude_command || appSettings?.claude_command || "claude";
   const worktrees = selectedProjectId
@@ -30,6 +32,20 @@ export function WorktreeView() {
   const wtId = worktree?.id ?? "";
   const tabs = tabsByWorktree[wtId] ?? [];
   const activeTabId = activeTabByWorktree[wtId] ?? null;
+
+  // Only subscribe to Claude statuses for tabs in the current worktree.
+  // useShallow ensures re-render only when the picked values change.
+  const claudeStatusByTab = useAppStore(
+    useShallow((s) => {
+      const result: Record<string, ClaudeStatus> = {};
+      for (const t of tabs) {
+        if (t.type !== "claude") continue;
+        const st = s.claudeStatusByTab[t.id];
+        if (st) result[t.id] = st;
+      }
+      return result;
+    })
+  );
 
   const [liveBranch, setLiveBranch] = useState<string | null>(null);
   const [lastBranchWtId, setLastBranchWtId] = useState<string | null>(null);
@@ -129,6 +145,7 @@ export function WorktreeView() {
               label={tab.label}
               type={tab.type}
               active={tab.id === activeTabId}
+              claudeStatus={tab.type === "claude" ? claudeStatusByTab[tab.id] ?? null : null}
               onClick={() => setActiveTab(wtId, tab.id)}
               onClose={() => closeTab(wtId, tab.id)}
             />
@@ -172,6 +189,11 @@ export function WorktreeView() {
         {(() => {
           const activeTab = tabs.find((t) => t.id === activeTabId);
           if (activeTab?.type === "diff" && activeTab.diffFile && activeTab.diffMode) {
+            const fileComments = activeTab.diffMode === "pr" && selectedProjectId
+              ? (prCommentsByProject[selectedProjectId] ?? []).filter(
+                  (c) => c.path === activeTab.diffFile
+                )
+              : [];
             return (
               <div className="absolute inset-0 z-10">
                 <DiffViewer
@@ -179,6 +201,7 @@ export function WorktreeView() {
                   file={activeTab.diffFile}
                   mode={activeTab.diffMode}
                   baseBranch={activeTab.diffBaseBranch}
+                  comments={fileComments}
                 />
               </div>
             );
@@ -194,17 +217,26 @@ function Tab({
   label,
   type,
   active,
+  claudeStatus,
   onClick,
   onClose,
 }: {
   label: string;
   type: "terminal" | "claude" | "diff";
   active: boolean;
+  claudeStatus: ClaudeStatus | null;
   onClick: () => void;
   onClose: () => void;
 }) {
-  const dotColor =
-    type === "claude" ? "bg-accent" : type === "diff" ? "bg-warning" : "bg-text-tertiary";
+  const getDotColor = () => {
+    if (type !== "claude") return type === "diff" ? "bg-warning" : "bg-text-tertiary";
+    if (claudeStatus === "active") return "bg-accent";
+    if (claudeStatus === "idle") return "bg-warning";
+    return "bg-accent";
+  };
+
+  const dotColor = getDotColor();
+  const isAnimated = type === "claude" && claudeStatus === "active";
 
   return (
     <div
@@ -219,7 +251,14 @@ function Tab({
       {active && (
         <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-accent" />
       )}
-      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? dotColor : "bg-text-tertiary/40"}`} />
+      {isAnimated && active ? (
+        <span className="relative flex h-1.5 w-1.5 shrink-0">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-50" />
+          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
+        </span>
+      ) : (
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? dotColor : "bg-text-tertiary/40"}`} />
+      )}
       <span className="truncate max-w-[140px]">{label}</span>
       <span
         className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded hover:bg-text-tertiary/20 transition-all shrink-0 -mr-1"

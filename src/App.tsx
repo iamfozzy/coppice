@@ -20,7 +20,7 @@ function App() {
 
   // Memoize terminal tab list — only recompute when tabs/active/selection change
   const terminalTabs = useMemo(() => {
-    const result: Array<{ id: string; cwd: string; command?: string; visible: boolean }> = [];
+    const result: Array<{ id: string; cwd: string; command?: string; visible: boolean; isClaudeTab: boolean }> = [];
     for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
       const activeTab = activeTabByWorktree[wtId];
       for (const tab of tabs) {
@@ -30,6 +30,7 @@ function App() {
           cwd: tab.cwd,
           command: tab.command,
           visible: wtId === selectedWorktreeId && tab.id === activeTab,
+          isClaudeTab: tab.type === "claude",
         });
       }
     }
@@ -155,7 +156,7 @@ function App() {
                 pointerEvents: t.visible ? "auto" : "none",
               }}
             >
-              <TerminalPanel sessionId={t.id} cwd={t.cwd} command={t.command} fontSize={termFontSize} fontFamily={termFontFamily} keepAlive />
+              <TerminalPanel sessionId={t.id} cwd={t.cwd} command={t.command} fontSize={termFontSize} fontFamily={termFontFamily} keepAlive isClaudeTab={t.isClaudeTab} />
             </div>
           ))}
         </div>

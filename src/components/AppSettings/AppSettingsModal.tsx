@@ -10,6 +10,7 @@ const defaultSettings: AppSettings = {
   terminal_emulator: "",
   shell: "",
   window_decorations: true,
+  notification_sound: true,
 };
 
 export function AppSettingsModal() {
@@ -110,6 +111,12 @@ export function AppSettingsModal() {
             checked={form.window_decorations}
             onChange={(window_decorations) => setForm({ ...form, window_decorations })}
             hint="Show native title bar (disable on tiling window managers)"
+          />
+          <Toggle
+            label="Notification sound"
+            checked={form.notification_sound}
+            onChange={(notification_sound) => setForm({ ...form, notification_sound })}
+            hint="Play a sound when Claude finishes and is waiting for input (background tabs only)"
           />
         </div>
 

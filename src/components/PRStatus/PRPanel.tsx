@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef, memo } from "react";
 import * as commands from "../../lib/commands";
 import type { PrStatusResult, PrComment } from "../../lib/commands";
 import { cacheGet, cacheGetStale, cacheSet } from "../../lib/cache";
+import { useAppStore } from "../../stores/appStore";
 
 interface Props {
   projectId: string;
@@ -9,17 +10,20 @@ interface Props {
   worktreePath: string;
   onFixWithClaude: (context: string) => void;
   onCreatePrWithClaude?: () => void;
+  onOpenFile?: (file: string) => void;
 }
 
-export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCreatePrWithClaude }: Props) {
+export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onCreatePrWithClaude, onOpenFile }: Props) {
   const cacheKey = `pr-${projectId}-${worktreePath}`;
   const commentsCacheKey = `pr-comments-${projectId}-${worktreePath}`;
+  const setPrComments = useAppStore((s) => s.setPrComments);
 
   const [prStatus, setPrStatus] = useState<PrStatusResult | null>(null);
   const [comments, setComments] = useState<PrComment[]>([]);
   const [checked, setChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedComments, setSelectedComments] = useState<Set<number>>(new Set());
 
   // Single effect for everything — keyed on cacheKey so it restarts on worktree switch
   const generationRef = useRef(0);
@@ -56,6 +60,7 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
           const c = await commands.getPrComments(projectId, status.pr.number);
           if (generationRef.current !== generation) return;
           setComments(c);
+          setPrComments(projectId, c);
           cacheSet(cck, c);
         } catch {
           if (generationRef.current === generation) setComments([]);
@@ -76,6 +81,43 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
     await refresh(generationRef.current, true);
     setRefreshing(false);
   }, [refresh]);
+
+  // Keep selection in sync — remove IDs that no longer exist or became resolved
+  useEffect(() => {
+    setSelectedComments((prev) => {
+      const unresolvedIds = new Set(comments.filter((c) => !c.is_resolved).map((c) => c.id));
+      const filtered = new Set([...prev].filter((id) => unresolvedIds.has(id)));
+      if (filtered.size === prev.size) return prev;
+      return filtered;
+    });
+  }, [comments]);
+
+  const unresolvedComments = comments.filter((c) => !c.is_resolved);
+
+  const toggleComment = useCallback((id: number) => {
+    setSelectedComments((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllUnresolved = useCallback(() => {
+    setSelectedComments(new Set(unresolvedComments.map((c) => c.id)));
+  }, [unresolvedComments]);
+
+  const handleFixSelected = useCallback(() => {
+    const selected = comments.filter((c) => selectedComments.has(c.id));
+    if (selected.length === 0) return;
+    const parts = selected.map((c, i) => {
+      const loc = c.path ? ` on ${c.path}${c.line ? `:${c.line}` : ""}` : "";
+      return `${i + 1}. Comment by ${c.author}${loc}:\n${c.body}`;
+    });
+    const context = `Please address the following ${selected.length} PR review comment${selected.length > 1 ? "s" : ""}:\n\n${parts.join("\n\n")}`;
+    onFixWithClaude(context);
+    setSelectedComments(new Set());
+  }, [comments, selectedComments, onFixWithClaude]);
 
   // On worktree change: restore cache, bump generation, schedule refresh
   useEffect(() => {
@@ -205,19 +247,45 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
           {/* Comments */}
           {comments.length > 0 && (
             <div className="space-y-1.5">
-              <div className="text-[10px] text-text-tertiary font-medium">
-                Comments ({comments.length})
+              <div className="flex items-center gap-2 text-[10px] text-text-tertiary font-medium">
+                <span>Comments ({comments.length})</span>
+                {selectedComments.size > 0 ? (
+                  <>
+                    <button
+                      onClick={() => setSelectedComments(new Set())}
+                      className="ml-auto text-text-tertiary hover:text-text-secondary transition-colors"
+                    >
+                      Deselect
+                    </button>
+                    <button
+                      onClick={handleFixSelected}
+                      className="px-2 py-0.5 font-medium bg-accent/20 text-accent hover:bg-accent/30 rounded transition-colors"
+                    >
+                      Fix {selectedComments.size} with Claude
+                    </button>
+                  </>
+                ) : unresolvedComments.length > 1 ? (
+                  <button
+                    onClick={selectAllUnresolved}
+                    className="ml-auto text-text-tertiary hover:text-text-secondary transition-colors"
+                  >
+                    Select all
+                  </button>
+                ) : null}
               </div>
               {comments.map((c) => (
                 <CommentCard
                   key={c.id}
                   comment={c}
+                  selected={selectedComments.has(c.id)}
+                  onToggle={() => toggleComment(c.id)}
                   onFixWithClaude={() => {
                     const context = c.path
                       ? `PR review comment by ${c.author} on ${c.path}${c.line ? `:${c.line}` : ""}:\n\n${c.body}`
                       : `PR comment by ${c.author}:\n\n${c.body}`;
                     onFixWithClaude(context);
                   }}
+                  onOpenFile={c.path && onOpenFile ? () => onOpenFile(c.path!) : undefined}
                 />
               ))}
             </div>
@@ -292,15 +360,61 @@ function CheckStatusIcon({ status }: { status: string }) {
   }
 }
 
-function CommentCard({ comment, onFixWithClaude }: { comment: PrComment; onFixWithClaude: () => void }) {
+function CommentCard({
+  comment,
+  selected,
+  onToggle,
+  onFixWithClaude,
+  onOpenFile,
+}: {
+  comment: PrComment;
+  selected: boolean;
+  onToggle: () => void;
+  onFixWithClaude: () => void;
+  onOpenFile?: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [isTruncated, setIsTruncated] = useState(false);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el) setIsTruncated(el.scrollHeight > el.clientHeight + 1);
+  }, [comment.body]);
+
   return (
-    <div className="bg-bg-tertiary rounded px-2 py-1.5 space-y-1">
+    <div className={`bg-bg-tertiary rounded px-2 py-1.5 space-y-1 ${comment.is_resolved ? "opacity-50" : ""}`}>
       <div className="flex items-center gap-1.5 text-[10px]">
+        {comment.is_resolved ? (
+          <svg width="10" height="10" viewBox="0 0 10 10" className="text-success shrink-0">
+            <path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggle}
+            className="w-3 h-3 shrink-0 accent-accent cursor-pointer"
+          />
+        )}
         <span className="text-text-primary font-medium">{comment.author}</span>
         {comment.path && (
-          <span className="text-text-tertiary font-mono truncate">
-            {comment.path}{comment.line ? `:${comment.line}` : ""}
-          </span>
+          onOpenFile ? (
+            <button
+              onClick={onOpenFile}
+              className="text-accent hover:text-accent-hover font-mono truncate transition-colors"
+              title="Open in diff view"
+            >
+              {comment.path}{comment.line ? `:${comment.line}` : ""}
+            </button>
+          ) : (
+            <span className="text-text-tertiary font-mono truncate">
+              {comment.path}{comment.line ? `:${comment.line}` : ""}
+            </span>
+          )
+        )}
+        {comment.is_resolved && (
+          <span className="text-success text-[9px] font-medium">Resolved</span>
         )}
         <a href={comment.url} target="_blank" rel="noopener" className="ml-auto text-text-tertiary hover:text-text-secondary shrink-0">
           <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
@@ -308,15 +422,30 @@ function CommentCard({ comment, onFixWithClaude }: { comment: PrComment; onFixWi
           </svg>
         </a>
       </div>
-      <div className="text-[11px] text-text-secondary whitespace-pre-wrap break-words line-clamp-4">
+      <div
+        ref={bodyRef}
+        className={`text-[11px] text-text-secondary whitespace-pre-wrap break-words ${expanded ? "" : "line-clamp-4"}`}
+      >
         {comment.body}
       </div>
-      <button
-        onClick={onFixWithClaude}
-        className="text-[10px] text-accent hover:text-accent-hover transition-colors"
-      >
-        Fix with Claude
-      </button>
+      <div className="flex items-center gap-2">
+        {(isTruncated || expanded) && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+          >
+            {expanded ? "Show less" : "Show more"}
+          </button>
+        )}
+        {!comment.is_resolved && (
+          <button
+            onClick={onFixWithClaude}
+            className="text-[10px] text-accent hover:text-accent-hover transition-colors"
+          >
+            Fix with Claude
+          </button>
+        )}
+      </div>
     </div>
   );
 }

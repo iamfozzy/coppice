@@ -227,6 +227,8 @@ export interface PrComment {
   line: number | null;
   created_at: string;
   url: string;
+  is_resolved: boolean;
+  thread_id: string | null;
 }
 
 export async function getPrComments(

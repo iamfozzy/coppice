@@ -263,6 +263,8 @@ pub struct PrComment {
     pub line: Option<i64>,
     pub created_at: String,
     pub url: String,
+    pub is_resolved: bool,
+    pub thread_id: Option<String>,
 }
 
 #[tauri::command]
@@ -298,6 +300,8 @@ pub async fn get_pr_comments(
                 line: item["line"].as_i64(),
                 created_at: item["created_at"].as_str().unwrap_or("").to_string(),
                 url: item["url"].as_str().unwrap_or("").to_string(),
+                is_resolved: false,
+                thread_id: None,
             });
         }
     }
@@ -325,7 +329,66 @@ pub async fn get_pr_comments(
                 line: None,
                 created_at: item["created_at"].as_str().unwrap_or("").to_string(),
                 url: item["url"].as_str().unwrap_or("").to_string(),
+                is_resolved: false,
+                thread_id: None,
             });
+        }
+    }
+
+    // Fetch thread resolution status via GraphQL (best-effort)
+    if let Ok(repo_out) = user_command("gh")
+        .args(["repo", "view", "--json", "owner,name"])
+        .current_dir(&cwd)
+        .output()
+    {
+        if repo_out.status.success() {
+            if let Ok(repo_json) = serde_json::from_slice::<serde_json::Value>(&repo_out.stdout) {
+                let owner = repo_json["owner"]["login"].as_str().unwrap_or("");
+                let name = repo_json["name"].as_str().unwrap_or("");
+
+                if !owner.is_empty() && !name.is_empty() {
+                    let query = r#"query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved comments(first: 100) { nodes { databaseId } } } } } } }"#;
+
+                    if let Ok(gql_out) = user_command("gh")
+                        .args([
+                            "api", "graphql",
+                            "-f", &format!("owner={}", owner),
+                            "-f", &format!("name={}", name),
+                            "-F", &format!("pr={}", pr_number),
+                            "-f", &format!("query={}", query),
+                        ])
+                        .current_dir(&cwd)
+                        .output()
+                    {
+                        if gql_out.status.success() {
+                            if let Ok(gql_json) = serde_json::from_slice::<serde_json::Value>(&gql_out.stdout) {
+                                let threads = &gql_json["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"];
+                                if let Some(thread_array) = threads.as_array() {
+                                    let mut resolution_map: std::collections::HashMap<i64, (bool, String)> =
+                                        std::collections::HashMap::new();
+                                    for thread in thread_array {
+                                        let is_resolved = thread["isResolved"].as_bool().unwrap_or(false);
+                                        let thread_id = thread["id"].as_str().unwrap_or("").to_string();
+                                        if let Some(comment_nodes) = thread["comments"]["nodes"].as_array() {
+                                            for comment in comment_nodes {
+                                                if let Some(db_id) = comment["databaseId"].as_i64() {
+                                                    resolution_map.insert(db_id, (is_resolved, thread_id.clone()));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    for comment in &mut comments {
+                                        if let Some((resolved, tid)) = resolution_map.get(&comment.id) {
+                                            comment.is_resolved = *resolved;
+                                            comment.thread_id = Some(tid.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

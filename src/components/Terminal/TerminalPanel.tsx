@@ -6,7 +6,13 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { listen } from "@tauri-apps/api/event";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import * as commands from "../../lib/commands";
+import { useAppStore } from "../../stores/appStore";
 import "@xterm/xterm/css/xterm.css";
+
+const CLAUDE_IDLE_THRESHOLD_MS = 3000;
+// Grace period after spawn — ignore all activity during startup so the
+// welcome banner + initial prompt don't trigger a false notification.
+const CLAUDE_STARTUP_GRACE_MS = 8000;
 
 interface Props {
   sessionId: string;
@@ -15,11 +21,25 @@ interface Props {
   fontSize?: number;
   fontFamily?: string;
   keepAlive?: boolean;
+  isClaudeTab?: boolean;
 }
 
-export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFamily, keepAlive = false }: Props) {
+// Minimum bytes of output within the activity window to count as genuinely active.
+// Prevents tab switches or cursor repositions from triggering false "active" state.
+const CLAUDE_ACTIVE_BYTE_THRESHOLD = 200;
+// How long the activity byte counter accumulates before resetting.
+const CLAUDE_ACTIVITY_WINDOW_MS = 2000;
+
+export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFamily, keepAlive = false, isClaudeTab = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termInstanceRef = useRef<Terminal | null>(null);
+  const lastOutputRef = useRef<number>(0);
+  const claudeStatusRef = useRef<"active" | "idle" | null>(null);
+  const outputBytesRef = useRef<number>(0);
+  const activityWindowStartRef = useRef<number>(0);
+  // Ignore startup output — the first idle after spawn is always Claude's
+  // welcome banner settling, not a real active→idle transition.
+  const spawnedAtRef = useRef<number>(0);
 
   // Focus terminal when the parent visibility changes (tab switching)
   useEffect(() => {
@@ -134,13 +154,59 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     });
 
     // Listen for output from backend
+    spawnedAtRef.current = Date.now();
     const unlistenOutput = listen<string>(`pty-output-${sessionId}`, (event) => {
       term.write(event.payload);
+      if (isClaudeTab) {
+        const now = Date.now();
+        lastOutputRef.current = now;
+
+        // Ignore startup output — Claude's welcome banner and initial prompt
+        // render would otherwise look like an active→idle transition.
+        if (now - spawnedAtRef.current < CLAUDE_STARTUP_GRACE_MS) return;
+
+        // Track output volume within a rolling window. Only transition to
+        // "active" once we've seen enough bytes — small blips from cursor
+        // moves, status-line refreshes, or tab-switch reflows are ignored.
+        if (now - activityWindowStartRef.current > CLAUDE_ACTIVITY_WINDOW_MS) {
+          outputBytesRef.current = 0;
+          activityWindowStartRef.current = now;
+        }
+        outputBytesRef.current += event.payload.length;
+
+        if (
+          claudeStatusRef.current !== "active" &&
+          outputBytesRef.current >= CLAUDE_ACTIVE_BYTE_THRESHOLD
+        ) {
+          claudeStatusRef.current = "active";
+          useAppStore.getState().setClaudeStatus(sessionId, "active");
+        }
+      }
     });
 
     const unlistenExit = listen(`pty-exit-${sessionId}`, () => {
       term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
+      if (isClaudeTab) {
+        claudeStatusRef.current = null;
+        useAppStore.getState().removeClaudeStatus(sessionId);
+      }
     });
+
+    // Idle detection for Claude tabs
+    let idleInterval: ReturnType<typeof setInterval> | null = null;
+    if (isClaudeTab) {
+      idleInterval = setInterval(() => {
+        if (
+          lastOutputRef.current > 0 &&
+          Date.now() - lastOutputRef.current > CLAUDE_IDLE_THRESHOLD_MS &&
+          claudeStatusRef.current === "active"
+        ) {
+          claudeStatusRef.current = "idle";
+          outputBytesRef.current = 0;
+          useAppStore.getState().setClaudeStatus(sessionId, "idle");
+        }
+      }, 1000);
+    }
 
     // Send input to backend
     const dataDisposable = term.onData((data) => {
@@ -192,6 +258,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       dataDisposable.dispose();
       unlistenOutput.then((fn) => fn());
       unlistenExit.then((fn) => fn());
+      if (idleInterval) clearInterval(idleInterval);
       if (!keepAliveCapture) {
         commands.terminalKill(sessionId).catch(() => {});
       }

@@ -56,4 +56,5 @@ export interface AppSettings {
   terminal_emulator: string;
   shell: string;
   window_decorations: boolean;
+  notification_sound: boolean;
 }

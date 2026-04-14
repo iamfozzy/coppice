@@ -12,6 +12,7 @@ pub struct AppSettings {
     pub terminal_emulator: String,
     pub shell: String,
     pub window_decorations: bool,
+    pub notification_sound: bool,
 }
 
 impl Default for AppSettings {
@@ -24,6 +25,7 @@ impl Default for AppSettings {
             terminal_emulator: String::new(),
             shell: String::new(),
             window_decorations: true,
+            notification_sound: true,
         }
     }
 }
