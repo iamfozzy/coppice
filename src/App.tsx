@@ -64,6 +64,29 @@ function App() {
   const termFontFamily = appSettings?.terminal_font_family || undefined;
   const termFontSize = appSettings?.terminal_font_size || undefined;
 
+  // When the window regains focus, clear idle indicators on the currently
+  // visible Claude tab. Without this, if Claude goes idle while Coppice is
+  // in the background the indicator persists because no tab/worktree switch
+  // fires to clear it.
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) return;
+      const s = useAppStore.getState();
+      const wtId = s.selectedWorktreeId;
+      if (!wtId) return;
+      const tabs = s.tabsByWorktree[wtId] ?? [];
+      const idleTabs = tabs.filter(
+        (t) => t.type === "claude" && s.claudeStatusByTab[t.id] === "idle",
+      );
+      if (idleTabs.length > 0) {
+        const updated = { ...s.claudeStatusByTab };
+        for (const t of idleTabs) delete updated[t.id];
+        useAppStore.setState({ claudeStatusByTab: updated });
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
   // Single window-level file drop handler — routes to active session only
   useEffect(() => {
     const unlisten = getCurrentWindow().onDragDropEvent((event) => {
