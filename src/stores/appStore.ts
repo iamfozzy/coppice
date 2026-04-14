@@ -300,8 +300,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   addTab: (worktreeId, type, cwd, command) => {
     const tabs = get().tabsByWorktree[worktreeId] ?? [];
-    const count = tabs.filter((t) => t.type === type).length + 1;
-    const label = type === "claude" ? `Claude #${count}` : `Terminal #${count}`;
+    const prefix = type === "claude" ? "Claude" : "Terminal";
+    // Use max existing number + 1 to avoid duplicates after closing tabs
+    let maxNum = 0;
+    for (const t of tabs) {
+      if (t.type !== type) continue;
+      const m = t.label.match(/^(?:Claude|Terminal) #(\d+)$/);
+      if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+    }
+    const label = `${prefix} #${maxNum + 1}`;
     const tab: TabInfo = {
       id: `${type}-${worktreeId}-${Date.now()}`,
       type,
