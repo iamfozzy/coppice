@@ -129,7 +129,7 @@ export function ProjectSettingsModal() {
               setForm({ ...form, local_path });
               // Auto-fill project name from folder name if empty
               if (!form.name && local_path) {
-                const name = local_path.split("/").pop() || "";
+                const name = local_path.split(/[/\\]/).pop() || "";
                 setForm((prev) => ({
                   ...prev,
                   local_path,
