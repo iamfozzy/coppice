@@ -79,18 +79,19 @@ export function WorktreeView() {
     }
   }, [pendingClaudeCommand, worktree, consumeClaudeCommand, addTab]);
 
-  // Auto-create a Claude tab if worktree has no tabs, after a short delay
+  // Auto-create a Claude tab if worktree has no Claude tabs, after a short delay
+  const hasClaude = tabs.some((t) => t.type === "claude");
   useEffect(() => {
-    if (!worktree || tabs.length > 0) return;
+    if (!worktree || hasClaude) return;
     const timer = setTimeout(() => {
-      // Re-check in case tabs were added during the delay
-      const currentTabs = useAppStore.getState().tabsByWorktree[worktree.id];
-      if (!currentTabs || currentTabs.length === 0) {
+      // Re-check current store state in case a tab was added during the delay
+      const currentTabs = useAppStore.getState().tabsByWorktree[worktree.id] ?? [];
+      if (!currentTabs.some((t) => t.type === "claude")) {
         addTab(worktree.id, "claude", worktree.path, claudeCmd);
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [worktree?.id, tabs.length === 0]);
+  }, [worktree?.id, hasClaude]);
 
   if (!worktree || !project) {
     return (

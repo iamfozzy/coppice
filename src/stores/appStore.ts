@@ -180,12 +180,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectProject: (id) => set({ selectedProjectId: id }),
   selectWorktree: (id) => {
     set({ selectedWorktreeId: id });
-    // Clear idle indicator on the active tab of the newly selected worktree
+    // Clear idle indicators on ALL claude tabs in the newly selected worktree
+    // so the sidebar dot disappears when the user navigates here.
     if (id) {
       const s = get();
-      const activeTabId = s.activeTabByWorktree[id];
-      if (activeTabId && s.claudeStatusByTab[activeTabId] === "idle") {
-        get().removeClaudeStatus(activeTabId);
+      const tabs = s.tabsByWorktree[id] ?? [];
+      const idleTabs = tabs.filter(
+        (t) => t.type === "claude" && s.claudeStatusByTab[t.id] === "idle",
+      );
+      if (idleTabs.length > 0) {
+        const updated = { ...s.claudeStatusByTab };
+        for (const t of idleTabs) delete updated[t.id];
+        set({ claudeStatusByTab: updated });
       }
     }
   },
@@ -294,8 +300,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   addTab: (worktreeId, type, cwd, command) => {
     const tabs = get().tabsByWorktree[worktreeId] ?? [];
-    const count = tabs.filter((t) => t.type === type).length + 1;
-    const label = type === "claude" ? `Claude #${count}` : `Terminal #${count}`;
+    const prefix = type === "claude" ? "Claude" : "Terminal";
+    // Use max existing number + 1 to avoid duplicates after closing tabs
+    let maxNum = 0;
+    for (const t of tabs) {
+      if (t.type !== type) continue;
+      const m = t.label.match(/^(?:Claude|Terminal) #(\d+)$/);
+      if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+    }
+    const label = `${prefix} #${maxNum + 1}`;
     const tab: TabInfo = {
       id: `${type}-${worktreeId}-${Date.now()}`,
       type,
@@ -389,9 +402,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     const activeId = s.activeTabByWorktree[worktreeId];
     const idx = tabs.findIndex((t) => t.id === activeId);
     const next = ((idx === -1 ? 0 : idx) + direction + tabs.length) % tabs.length;
-    set({
-      activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: tabs[next].id },
-    });
+    const nextId = tabs[next].id;
+    // Clear "idle" indicator when cycling to an idle claude tab
+    if (s.claudeStatusByTab[nextId] === "idle") {
+      const updated = { ...s.claudeStatusByTab };
+      delete updated[nextId];
+      set({
+        activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: nextId },
+        claudeStatusByTab: updated,
+      });
+    } else {
+      set({
+        activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: nextId },
+      });
+    }
   },
 
   closeActiveTab: (worktreeId) => {
@@ -458,6 +482,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Reuse same ID — kill old PTY, then respawn with same session ID.
       // This avoids React removing/adding DOM nodes which crashes the reparenting.
       await commands.terminalKill(old.id).catch(() => {});
+
+      // Tell the TerminalPanel to clear its buffer before the new run starts.
+      window.dispatchEvent(new CustomEvent("terminal-clear", { detail: old.id }));
 
       // Mark as running, keep same ID
       set((s2) => ({
