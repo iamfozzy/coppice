@@ -54,6 +54,7 @@ pub fn run() {
             commands::github::create_pr,
             commands::github::get_failed_action_logs,
             commands::github::get_pr_comments,
+            commands::github::resolve_pr_comment,
             // Settings commands
             commands::settings::get_settings,
             commands::settings::update_settings,

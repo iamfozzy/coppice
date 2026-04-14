@@ -204,6 +204,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
                   .substring(0, 5000)}\n\nPlease analyze and fix the failures."`
               );
             }}
+            onOpenFile={(file) => openDiffTab(worktree.id, file, worktree.path, "pr", baseBranch)}
             onCreatePrWithClaude={() => {
               if (project.pr_create_skill) {
                 requestClaudeTab(project.pr_create_skill);

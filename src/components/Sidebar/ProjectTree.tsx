@@ -1,7 +1,8 @@
 import { useState, startTransition } from "react";
-import { useAppStore } from "../../stores/appStore";
+import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
 import { CreateWorktreeModal } from "./CreateWorktreeModal";
 import type { Project, Worktree } from "../../lib/types";
+import { useShallow } from "zustand/shallow";
 
 export function ProjectTree() {
   const projects = useAppStore((s) => s.projects);
@@ -14,6 +15,28 @@ export function ProjectTree() {
   const deletingWorktreeIds = useAppStore((s) => s.deletingWorktreeIds);
   const renameWorktree = useAppStore((s) => s.renameWorktree);
   const runnersByWorktree = useAppStore((s) => s.runnersByWorktree);
+  // Derive per-worktree Claude status inside the selector so the component
+  // only re-renders when a worktree's aggregate status actually changes,
+  // not on every individual PTY output event.
+  const claudeStatusByWorktree = useAppStore(
+    useShallow((s) => {
+      const result: Record<string, ClaudeStatus | null> = {};
+      for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
+        let hasActive = false;
+        let hasIdle = false;
+        for (const t of tabs) {
+          if (t.type !== "claude") continue;
+          const st = s.claudeStatusByTab[t.id];
+          if (st === "active") { hasActive = true; break; }
+          if (st === "idle") hasIdle = true;
+        }
+        if (hasActive) result[wtId] = "active";
+        else if (hasIdle) result[wtId] = "idle";
+        else result[wtId] = null;
+      }
+      return result;
+    })
+  );
   const [creatingWorktreeForProject, setCreatingWorktreeForProject] =
     useState<string | null>(null);
 
@@ -43,6 +66,7 @@ export function ProjectTree() {
           }}
           deletingIds={deletingWorktreeIds}
           runnersByWorktree={runnersByWorktree}
+          claudeStatusByWorktree={claudeStatusByWorktree}
           onDeleteWorktree={(wt) => {
             if (confirm(`Delete worktree "${wt.name}"? This will remove the directory from disk.`)) {
               deleteWorktree(wt.id, project.id);
@@ -71,6 +95,7 @@ function ProjectNode({
   selectedWorktreeId,
   deletingIds,
   runnersByWorktree,
+  claudeStatusByWorktree,
   onSelectWorktree,
   onDeleteWorktree,
   onRenameWorktree,
@@ -82,6 +107,7 @@ function ProjectNode({
   selectedWorktreeId: string | null;
   deletingIds: Set<string>;
   runnersByWorktree: Record<string, Record<string, import("../../stores/appStore").RunnerInfo>>;
+  claudeStatusByWorktree: Record<string, ClaudeStatus | null>;
   onSelectWorktree: (wt: Worktree) => void;
   onDeleteWorktree: (wt: Worktree) => void;
   onRenameWorktree: (wt: Worktree, name: string) => void;
@@ -153,6 +179,7 @@ function ProjectNode({
             worktrees.map((wt) => {
               const isDeleting = deletingIds.has(wt.id);
               const hasRunningRunner = runnersByWorktree[wt.id]?.["run"]?.status === "running";
+              const claudeStatus = claudeStatusByWorktree[wt.id] ?? null;
               const isSelected = selectedWorktreeId === wt.id;
               return (
               <div
@@ -211,6 +238,7 @@ function ProjectNode({
                     </>
                   )}
                 </div>
+                {claudeStatus && !isDeleting && <ClaudeIndicator status={claudeStatus} />}
                 {hasRunningRunner && !isDeleting && <RunningIndicator />}
                 {!isDeleting && <span
                   className="opacity-0 group-hover/wt:opacity-100 text-text-tertiary hover:text-error transition-opacity shrink-0"
@@ -231,6 +259,22 @@ function ProjectNode({
         </div>
       )}
     </div>
+  );
+}
+
+function ClaudeIndicator({ status }: { status: ClaudeStatus }) {
+  if (status === "active") {
+    return (
+      <span className="shrink-0 relative flex h-2 w-2" title="Claude is working">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-50" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
+      </span>
+    );
+  }
+  return (
+    <span className="shrink-0 relative flex h-2 w-2" title="Claude is waiting for input">
+      <span className="relative inline-flex rounded-full h-2 w-2 bg-warning" />
+    </span>
   );
 }
 

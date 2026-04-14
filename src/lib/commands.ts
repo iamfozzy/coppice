@@ -227,6 +227,8 @@ export interface PrComment {
   line: number | null;
   created_at: string;
   url: string;
+  is_resolved: boolean;
+  thread_id: string | null;
 }
 
 export async function getPrComments(
@@ -234,4 +236,12 @@ export async function getPrComments(
   prNumber: number
 ): Promise<PrComment[]> {
   return invoke("get_pr_comments", { projectId, prNumber });
+}
+
+export async function resolvePrComment(
+  projectId: string,
+  threadId: string,
+  resolve: boolean
+): Promise<void> {
+  return invoke("resolve_pr_comment", { projectId, threadId, resolve });
 }

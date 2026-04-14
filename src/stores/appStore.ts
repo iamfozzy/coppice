@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import type { Project, Worktree, AppSettings } from "../lib/types";
 import * as commands from "../lib/commands";
+import { playNotificationSound } from "../lib/sounds";
+
+export type ClaudeStatus = "active" | "idle";
 
 // ── Session types ──
 
@@ -46,6 +49,12 @@ interface AppState {
   activeTabByWorktree: Record<string, string | null>;
   runnersByWorktree: Record<string, Record<string, RunnerInfo>>;
 
+  // Claude tab activity status (keyed by tab ID)
+  claudeStatusByTab: Record<string, ClaudeStatus>;
+
+  // PR comments (keyed by project ID)
+  prCommentsByProject: Record<string, import("../lib/commands").PrComment[]>;
+
   // Actions — settings
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
@@ -76,6 +85,13 @@ interface AppState {
   editingAppSettings: boolean;
   openAppSettings: () => void;
   closeAppSettings: () => void;
+
+  // Actions — PR comments
+  setPrComments: (projectId: string, comments: import("../lib/commands").PrComment[]) => void;
+
+  // Actions — Claude status
+  setClaudeStatus: (tabId: string, status: ClaudeStatus) => void;
+  removeClaudeStatus: (tabId: string) => void;
 
   // Actions — tabs
   addTab: (worktreeId: string, type: "terminal" | "claude", cwd: string, command?: string) => void;
@@ -112,6 +128,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   tabsByWorktree: {},
   activeTabByWorktree: {},
   runnersByWorktree: {},
+  claudeStatusByTab: {},
+  prCommentsByProject: {},
   editingAppSettings: false,
 
   // ── Settings ──
@@ -160,7 +178,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectProject: (id) => set({ selectedProjectId: id }),
-  selectWorktree: (id) => set({ selectedWorktreeId: id }),
+  selectWorktree: (id) => {
+    set({ selectedWorktreeId: id });
+    // Clear idle indicator on the active tab of the newly selected worktree
+    if (id) {
+      const s = get();
+      const activeTabId = s.activeTabByWorktree[id];
+      if (activeTabId && s.claudeStatusByTab[activeTabId] === "idle") {
+        get().removeClaudeStatus(activeTabId);
+      }
+    }
+  },
 
   openProjectSettings: (mode) => set({ editingProject: mode }),
   closeProjectSettings: () => set({ editingProject: null }),
@@ -216,6 +244,50 @@ export const useAppStore = create<AppState>((set, get) => ({
       next.delete(id);
       return { deletingWorktreeIds: next };
     });
+  },
+
+  // ── PR comments ──
+
+  setPrComments: (projectId, comments) => {
+    set((s) => ({
+      prCommentsByProject: { ...s.prCommentsByProject, [projectId]: comments },
+    }));
+  },
+
+  // ── Claude status ──
+
+  setClaudeStatus: (tabId, status) => {
+    const prev = get().claudeStatusByTab[tabId];
+    if (prev === status) return;
+
+    set((s) => ({
+      claudeStatusByTab: { ...s.claudeStatusByTab, [tabId]: status },
+    }));
+
+    // Play notification sound when Claude becomes idle and the tab is not visible
+    if (status === "idle" && prev === "active") {
+      const s = get();
+      if (!s.appSettings?.notification_sound) return;
+
+      // Find which worktree owns this tab
+      let isVisible = false;
+      for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
+        if (tabs.some((t) => t.id === tabId)) {
+          isVisible = s.selectedWorktreeId === wtId && s.activeTabByWorktree[wtId] === tabId;
+          break;
+        }
+      }
+      if (!isVisible) {
+        playNotificationSound();
+      }
+    }
+  },
+
+  removeClaudeStatus: (tabId) => {
+    const s = get();
+    if (!(tabId in s.claudeStatusByTab)) return;
+    const { [tabId]: _, ...rest } = s.claudeStatusByTab;
+    set({ claudeStatusByTab: rest });
   },
 
   // ── Tabs ──
@@ -286,16 +358,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (activeTab === tabId) {
       newActive = next.length > 0 ? next[next.length - 1].id : null;
     }
+    const claudeStatus = tabId in s.claudeStatusByTab
+      ? (() => { const { [tabId]: _, ...rest } = s.claudeStatusByTab; return rest; })()
+      : s.claudeStatusByTab;
     set({
       tabsByWorktree: { ...s.tabsByWorktree, [worktreeId]: next },
       activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: newActive },
+      claudeStatusByTab: claudeStatus,
     });
   },
 
   setActiveTab: (worktreeId, tabId) => {
-    set((s) => ({
-      activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: tabId },
-    }));
+    set((s) => {
+      const update: Partial<AppState> = {
+        activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: tabId },
+      };
+      // Clear "idle" indicator when the user switches to that tab
+      if (s.claudeStatusByTab[tabId] === "idle") {
+        const { [tabId]: _, ...rest } = s.claudeStatusByTab;
+        update.claudeStatusByTab = rest;
+      }
+      return update;
+    });
   },
 
   cycleTab: (worktreeId, direction) => {
@@ -381,7 +465,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...s2.runnersByWorktree,
           [worktreeId]: {
             ...(s2.runnersByWorktree[worktreeId] ?? {}),
-            [key]: { ...old, open: true, status: "running", command, cwd },
+            [key]: { ...old, status: "running", command, cwd },
           },
         },
       }));
@@ -401,7 +485,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       const runner: RunnerInfo = {
         id,
-        open: true,
+        open: old?.open ?? false,
         status: "running",
         command,
         cwd,
