@@ -327,7 +327,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }));
       return;
     }
-    const shortName = file.split("/").pop() ?? file;
+    const shortName = file.split(/[/\\]/).pop() ?? file;
     const tab: TabInfo = {
       id: `diff-${worktreeId}-${Date.now()}`,
       type: "diff",

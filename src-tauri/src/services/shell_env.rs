@@ -12,7 +12,7 @@ pub fn get_user_path() -> &'static str {
             return std::env::var("PATH").unwrap_or_default();
         }
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
 
         // Run a login interactive shell to get the PATH after sourcing profiles
         let output = Command::new(&shell)

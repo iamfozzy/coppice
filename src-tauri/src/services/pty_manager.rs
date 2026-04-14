@@ -73,7 +73,8 @@ impl PtyManager {
                 CommandBuilder::new(&shell)
             }
         } else {
-            // On macOS/Linux, use the user's preferred shell
+            // macOS + Linux: use the user's preferred shell ($SHELL), falling
+            // back to /bin/bash which is available on both platforms.
             let shell = shell_override
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
@@ -306,16 +307,19 @@ impl PtyManager {
 
 /// Check if an executable exists on the system PATH.
 fn which_exists(name: &str) -> bool {
-    if cfg!(target_os = "windows") {
-        std::process::Command::new("where")
+    #[cfg(target_os = "windows")]
+    {
+        crate::services::shell_env::user_command("where")
             .arg(name)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
-    } else {
-        std::process::Command::new("which")
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        crate::services::shell_env::user_command("which")
             .arg(name)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
