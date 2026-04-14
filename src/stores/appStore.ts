@@ -80,6 +80,7 @@ interface AppState {
   renameWorktree: (id: string, projectId: string, name: string) => Promise<void>;
   setWorktreeTargetBranch: (id: string, projectId: string, targetBranch: string | null) => Promise<void>;
   deleteWorktree: (id: string, projectId: string) => Promise<void>;
+  updateWorktreeBranch: (worktreeId: string, branch: string) => void;
 
   // Actions — app settings modal
   editingAppSettings: boolean;
@@ -249,6 +250,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       const next = new Set(s.deletingWorktreeIds);
       next.delete(id);
       return { deletingWorktreeIds: next };
+    });
+  },
+
+  updateWorktreeBranch: (worktreeId, branch) => {
+    set((s) => {
+      const updated: Record<string, typeof s.worktreesByProject[string]> = {};
+      for (const [pid, wts] of Object.entries(s.worktreesByProject)) {
+        const idx = wts.findIndex((w) => w.id === worktreeId);
+        if (idx !== -1 && wts[idx].branch !== branch) {
+          const copy = [...wts];
+          copy[idx] = { ...copy[idx], branch };
+          updated[pid] = copy;
+        }
+      }
+      if (Object.keys(updated).length === 0) return s;
+      return { worktreesByProject: { ...s.worktreesByProject, ...updated } };
     });
   },
 

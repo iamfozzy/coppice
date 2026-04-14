@@ -55,13 +55,18 @@ export function WorktreeView() {
     setLastBranchWtId(wtId);
   }
 
+  const updateWorktreeBranch = useAppStore((s) => s.updateWorktreeBranch);
+
   // Poll the actual git branch every 3 seconds
   useEffect(() => {
     if (!worktree) return;
     let cancelled = false;
     const check = () => {
       commands.getCurrentBranch(worktree.path).then((branch) => {
-        if (!cancelled) setLiveBranch(branch);
+        if (!cancelled) {
+          setLiveBranch(branch);
+          updateWorktreeBranch(worktree.id, branch);
+        }
       }).catch(() => {});
     };
     check();

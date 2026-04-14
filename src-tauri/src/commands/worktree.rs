@@ -203,7 +203,7 @@ pub async fn get_current_branch(path: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn get_git_status(path: String) -> Result<Vec<GitFileStatus>, String> {
     let output = user_command("git")
-        .args(["status", "--porcelain=v1"])
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
         .current_dir(&path)
         .output()
         .map_err(|e| format!("Failed to run git status: {}", e))?;
@@ -215,11 +215,23 @@ pub async fn get_git_status(path: String) -> Result<Vec<GitFileStatus>, String> 
 
     let statuses = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter(|line| !line.is_empty())
+        .filter(|line| line.len() >= 4)
         .map(|line| {
             let status = line[..2].trim().to_string();
-            let file = line[3..].to_string();
-            GitFileStatus { status, file }
+            let raw_file = &line[3..];
+            // For renames/copies (R/C), format is "old -> new" — use the new path
+            let file = if raw_file.contains(" -> ") {
+                raw_file.rsplit(" -> ").next().unwrap_or(raw_file)
+            } else {
+                raw_file
+            };
+            // Strip C-style quotes git uses for paths with special characters
+            let file = if file.starts_with('"') && file.ends_with('"') {
+                &file[1..file.len() - 1]
+            } else {
+                file
+            };
+            GitFileStatus { status, file: file.to_string() }
         })
         .collect();
 
@@ -319,12 +331,17 @@ pub async fn get_pr_diff_files(path: String, base_branch: Option<String>) -> Res
         .lines()
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(2, '\t').collect();
-            if parts.len() == 2 {
-                Some(GitFileStatus {
-                    status: parts[0].to_string(),
-                    file: parts[1].to_string(),
-                })
+            let parts: Vec<&str> = line.splitn(3, '\t').collect();
+            if parts.len() >= 2 {
+                // Strip numeric suffix from status (e.g. "R100" -> "R")
+                let status = parts[0].chars().take_while(|c| c.is_ascii_alphabetic()).collect::<String>();
+                // For renames/copies (R/C), the new path is the third field
+                let file = if parts.len() == 3 {
+                    parts[2].to_string()
+                } else {
+                    parts[1].to_string()
+                };
+                Some(GitFileStatus { status, file })
             } else {
                 None
             }
