@@ -237,3 +237,11 @@ export async function getPrComments(
 ): Promise<PrComment[]> {
   return invoke("get_pr_comments", { projectId, prNumber });
 }
+
+export async function resolvePrComment(
+  projectId: string,
+  threadId: string,
+  resolve: boolean
+): Promise<void> {
+  return invoke("resolve_pr_comment", { projectId, threadId, resolve });
+}

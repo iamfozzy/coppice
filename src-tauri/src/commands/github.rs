@@ -396,3 +396,51 @@ pub async fn get_pr_comments(
     comments.sort_by(|a, b| a.created_at.cmp(&b.created_at));
     Ok(comments)
 }
+
+#[tauri::command]
+pub async fn resolve_pr_comment(
+    db: State<'_, Database>,
+    project_id: String,
+    thread_id: String,
+    resolve: bool,
+) -> Result<(), String> {
+    let cwd = get_project_path(&db, &project_id)?;
+
+    let mutation_name = if resolve {
+        "resolveReviewThread"
+    } else {
+        "unresolveReviewThread"
+    };
+
+    let query = format!(
+        r#"mutation($threadId: ID!) {{ {}(input: {{threadId: $threadId}}) {{ thread {{ id isResolved }} }} }}"#,
+        mutation_name
+    );
+
+    let output = user_command("gh")
+        .args([
+            "api", "graphql",
+            "-f", &format!("threadId={}", thread_id),
+            "-f", &format!("query={}", query),
+        ])
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("Failed to {} thread: {}", mutation_name, e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to {} thread: {}", mutation_name, stderr));
+    }
+
+    // Check for GraphQL errors in the response
+    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+        if let Some(errors) = json["errors"].as_array() {
+            if !errors.is_empty() {
+                let msg = errors[0]["message"].as_str().unwrap_or("Unknown error");
+                return Err(format!("GraphQL error: {}", msg));
+            }
+        }
+    }
+
+    Ok(())
+}

@@ -107,6 +107,30 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
     setSelectedComments(new Set(unresolvedComments.map((c) => c.id)));
   }, [unresolvedComments]);
 
+  const handleResolve = useCallback(async (threadId: string, resolve: boolean) => {
+    // Optimistic update
+    setComments((prev) => {
+      const updated = prev.map((c) =>
+        c.thread_id === threadId ? { ...c, is_resolved: resolve } : c
+      );
+      setPrComments(projectId, updated);
+      return updated;
+    });
+
+    try {
+      await commands.resolvePrComment(projectId, threadId, resolve);
+    } catch (e) {
+      // Revert on failure
+      setComments((prev) => {
+        const reverted = prev.map((c) =>
+          c.thread_id === threadId ? { ...c, is_resolved: !resolve } : c
+        );
+        setPrComments(projectId, reverted);
+        return reverted;
+      });
+    }
+  }, [projectId, setPrComments]);
+
   const handleFixSelected = useCallback(() => {
     const selected = comments.filter((c) => selectedComments.has(c.id));
     if (selected.length === 0) return;
@@ -285,6 +309,7 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
                       : `PR comment by ${c.author}:\n\n${c.body}`;
                     onFixWithClaude(context);
                   }}
+                  onResolve={c.thread_id ? (resolve) => handleResolve(c.thread_id!, resolve) : undefined}
                   onOpenFile={c.path && onOpenFile ? () => onOpenFile(c.path!) : undefined}
                 />
               ))}
@@ -365,12 +390,14 @@ function CommentCard({
   selected,
   onToggle,
   onFixWithClaude,
+  onResolve,
   onOpenFile,
 }: {
   comment: PrComment;
   selected: boolean;
   onToggle: () => void;
   onFixWithClaude: () => void;
+  onResolve?: (resolve: boolean) => void;
   onOpenFile?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -390,12 +417,20 @@ function CommentCard({
             <path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         ) : (
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={onToggle}
-            className="w-3 h-3 shrink-0 accent-accent cursor-pointer"
-          />
+          <button
+            onClick={onToggle}
+            className={`w-3.5 h-3.5 shrink-0 rounded-[3px] border flex items-center justify-center cursor-pointer transition-colors ${
+              selected
+                ? "bg-accent border-accent"
+                : "border-border-secondary bg-transparent hover:border-text-tertiary"
+            }`}
+          >
+            {selected && (
+              <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                <path d="M1.5 4L3.25 5.75L6.5 2.25" stroke="white" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </button>
         )}
         <span className="text-text-primary font-medium">{comment.author}</span>
         {comment.path && (
@@ -443,6 +478,14 @@ function CommentCard({
             className="text-[10px] text-accent hover:text-accent-hover transition-colors"
           >
             Fix with Claude
+          </button>
+        )}
+        {onResolve && (
+          <button
+            onClick={() => onResolve(!comment.is_resolved)}
+            className="text-[10px] text-text-tertiary hover:text-text-secondary transition-colors ml-auto"
+          >
+            {comment.is_resolved ? "Unresolve" : "Resolve"}
           </button>
         )}
       </div>
