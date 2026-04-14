@@ -203,10 +203,11 @@ export function WorktreeView() {
             return (
               <div className="absolute inset-0 z-10">
                 <DiffViewer
+                  key={activeTab.id}
                   cwd={activeTab.cwd}
                   file={activeTab.diffFile}
                   mode={activeTab.diffMode}
-                  baseBranch={activeTab.diffBaseBranch}
+                  baseBranch={activeTab.diffMode === "pr" ? activeTab.diffBaseBranch : undefined}
                   comments={fileComments}
                 />
               </div>
