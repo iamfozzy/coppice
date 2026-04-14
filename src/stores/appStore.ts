@@ -178,7 +178,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectProject: (id) => set({ selectedProjectId: id }),
-  selectWorktree: (id) => set({ selectedWorktreeId: id }),
+  selectWorktree: (id) => {
+    set({ selectedWorktreeId: id });
+    // Clear idle indicator on the active tab of the newly selected worktree
+    if (id) {
+      const s = get();
+      const activeTabId = s.activeTabByWorktree[id];
+      if (activeTabId && s.claudeStatusByTab[activeTabId] === "idle") {
+        get().removeClaudeStatus(activeTabId);
+      }
+    }
+  },
 
   openProjectSettings: (mode) => set({ editingProject: mode }),
   closeProjectSettings: () => set({ editingProject: null }),
@@ -359,9 +369,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setActiveTab: (worktreeId, tabId) => {
-    set((s) => ({
-      activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: tabId },
-    }));
+    set((s) => {
+      const update: Partial<AppState> = {
+        activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: tabId },
+      };
+      // Clear "idle" indicator when the user switches to that tab
+      if (s.claudeStatusByTab[tabId] === "idle") {
+        const { [tabId]: _, ...rest } = s.claudeStatusByTab;
+        update.claudeStatusByTab = rest;
+      }
+      return update;
+    });
   },
 
   cycleTab: (worktreeId, direction) => {
