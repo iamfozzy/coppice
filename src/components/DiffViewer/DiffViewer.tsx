@@ -320,7 +320,7 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
       <div className="flex items-center gap-2 px-4 py-1.5 bg-bg-secondary border-b border-border-primary shrink-0">
         <span className="text-xs text-text-primary font-medium font-mono">{file}</span>
         <span className="text-[11px] text-text-tertiary">
-          {mode === "pr" ? `vs ${baseBranch ?? "main"}` : "uncommitted changes"}
+          {mode === "pr" ? `vs ${baseBranch ?? "main"}` : "uncommitted changes (vs HEAD)"}
         </span>
         {commentCount > 0 && (
           <span className="text-[10px] text-accent px-1.5 py-0.5 bg-accent/10 rounded">
