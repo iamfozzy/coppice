@@ -181,18 +181,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectProject: (id) => set({ selectedProjectId: id }),
   selectWorktree: (id) => {
     set({ selectedWorktreeId: id });
-    // Clear idle indicators on ALL claude tabs in the newly selected worktree
-    // so the sidebar dot disappears when the user navigates here.
+    // Clear the idle indicator only on the currently-active claude tab of the
+    // selected worktree — the tab the user can now actually see. Other claude
+    // tabs in this worktree keep their idle status so the tab-bar dot (and the
+    // aggregated sidebar dot) still point the user at the specific tab that
+    // fired the notification.
     if (id) {
       const s = get();
-      const tabs = s.tabsByWorktree[id] ?? [];
-      const idleTabs = tabs.filter(
-        (t) => t.type === "claude" && s.claudeStatusByTab[t.id] === "idle",
-      );
-      if (idleTabs.length > 0) {
-        const updated = { ...s.claudeStatusByTab };
-        for (const t of idleTabs) delete updated[t.id];
-        set({ claudeStatusByTab: updated });
+      const activeId = s.activeTabByWorktree[id];
+      if (activeId && s.claudeStatusByTab[activeId] === "idle") {
+        const { [activeId]: _, ...rest } = s.claudeStatusByTab;
+        set({ claudeStatusByTab: rest });
       }
     }
   },

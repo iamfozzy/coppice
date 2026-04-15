@@ -235,15 +235,31 @@ function Tab({
   onClick: () => void;
   onClose: () => void;
 }) {
-  const getDotColor = () => {
-    if (type !== "claude") return type === "diff" ? "bg-warning" : "bg-text-tertiary";
-    if (claudeStatus === "active") return "bg-accent";
-    if (claudeStatus === "idle") return "bg-warning";
-    return "bg-accent";
-  };
+  // Claude tabs render a status-aware dot on every tab (active or not) so the
+  // user can tell at a glance which tab fired a notification. Non-Claude tabs
+  // keep the original behavior: colored when active, dim when not.
+  const claudeActive = type === "claude" && claudeStatus === "active";
+  const claudeIdle = type === "claude" && claudeStatus === "idle";
 
-  const dotColor = getDotColor();
-  const isAnimated = type === "claude" && claudeStatus === "active";
+  let dotNode: React.ReactNode;
+  if (claudeActive) {
+    dotNode = (
+      <span className="relative flex h-1.5 w-1.5 shrink-0">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-50" />
+        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
+      </span>
+    );
+  } else if (claudeIdle) {
+    dotNode = <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-warning" />;
+  } else {
+    const activeColor =
+      type === "claude" ? "bg-accent" : type === "diff" ? "bg-warning" : "bg-text-tertiary";
+    dotNode = (
+      <span
+        className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? activeColor : "bg-text-tertiary/40"}`}
+      />
+    );
+  }
 
   return (
     <div
@@ -258,14 +274,7 @@ function Tab({
       {active && (
         <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-accent" />
       )}
-      {isAnimated && active ? (
-        <span className="relative flex h-1.5 w-1.5 shrink-0">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-50" />
-          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
-        </span>
-      ) : (
-        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? dotColor : "bg-text-tertiary/40"}`} />
-      )}
+      {dotNode}
       <span className="truncate max-w-[140px]">{label}</span>
       <span
         className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded hover:bg-text-tertiary/20 transition-all shrink-0 -mr-1"
