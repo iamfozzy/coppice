@@ -10,6 +10,21 @@ interface Props {
 
 type Mode = "existing" | "new";
 
+// Strip characters that are illegal in Windows filenames so the worktree
+// folder name is portable. Backend also validates, but sanitizing here
+// avoids surprising "invalid name" errors on submit.
+//   < > : " | ? * \  → replaced with `-`
+//   /                → replaced with `-` (path separator)
+//   control chars    → removed
+//   trailing . or ␠  → trimmed
+function sanitizeWorktreeName(input: string): string {
+  return input
+    .replace(/[<>:"|?*\\/]/g, "-")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f]/g, "")
+    .replace(/[. ]+$/, "");
+}
+
 export function CreateWorktreeModal({ projectId, onClose }: Props) {
   const [branches, setBranches] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -78,7 +93,7 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
   const handleSelectBranch = (branch: string) => {
     setSelectedBranch(branch);
     if (mode === "existing") {
-      const name = branch.replace(/^origin\//, "").replace(/\//g, "-");
+      const name = sanitizeWorktreeName(branch.replace(/^origin\//, ""));
       setWorktreeName(name);
     }
   };
@@ -282,7 +297,7 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
                     value={newBranchName}
                     onChange={(e) => {
                       setNewBranchName(e.target.value);
-                      setWorktreeName(e.target.value.replace(/\//g, "-"));
+                      setWorktreeName(sanitizeWorktreeName(e.target.value));
                     }}
                     placeholder="feature/my-feature"
                     autoComplete="off"
@@ -299,7 +314,7 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
                 <input
                   type="text"
                   value={worktreeName}
-                  onChange={(e) => setWorktreeName(e.target.value)}
+                  onChange={(e) => setWorktreeName(sanitizeWorktreeName(e.target.value))}
                   autoComplete="off"
                   autoCorrect="off"
                   spellCheck={false}
