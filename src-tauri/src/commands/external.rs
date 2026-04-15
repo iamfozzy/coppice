@@ -45,10 +45,16 @@ pub async fn open_in_editor(state: tauri::State<'_, SettingsState>, path: String
         // name are already trusted (user-configured setting).
         let direct = Command::new(&ed).arg(&path).spawn();
         if direct.is_err() {
+            // Hide the transient cmd.exe window while it launches the editor.
+            // The editor itself is a GUI app and creates its own window
+            // independently of cmd's console, so the user only sees the editor.
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             Command::new("cmd")
                 .arg("/c")
                 .arg(&ed)
                 .arg(&path)
+                .creation_flags(CREATE_NO_WINDOW)
                 .spawn()
                 .map_err(|e| format!("Failed to open editor '{}': {}", ed, e))?;
         }
