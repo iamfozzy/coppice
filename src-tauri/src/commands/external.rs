@@ -34,16 +34,23 @@ pub async fn open_in_editor(state: tauri::State<'_, SettingsState>, path: String
 
     #[cfg(target_os = "windows")]
     {
-        if editor.is_empty() {
+        let ed = if editor.is_empty() { "code".to_string() } else { editor };
+        // Try direct invocation first — safer than routing through `cmd /c`,
+        // which reinterprets `&`, `|`, `^`, `%` in the path. Many editor
+        // launchers are .exe (Sublime, IntelliJ, Cursor) and work directly.
+        //
+        // If the launcher is a batch file (VS Code ships as `code.cmd`),
+        // CreateProcessW can't execute it without a full path, so fall back
+        // to `cmd /c` — at that point metacharacters in the editor binary
+        // name are already trusted (user-configured setting).
+        let direct = Command::new(&ed).arg(&path).spawn();
+        if direct.is_err() {
             Command::new("cmd")
-                .args(["/c", "code", &path])
+                .arg("/c")
+                .arg(&ed)
+                .arg(&path)
                 .spawn()
-                .map_err(|e| format!("Failed to open editor: {}", e))?;
-        } else {
-            Command::new("cmd")
-                .args(["/c", &editor, &path])
-                .spawn()
-                .map_err(|e| format!("Failed to open editor '{}': {}", editor, e))?;
+                .map_err(|e| format!("Failed to open editor '{}': {}", ed, e))?;
         }
     }
 
@@ -114,15 +121,27 @@ pub async fn open_in_terminal(state: tauri::State<'_, SettingsState>, path: Stri
 
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd")
-            .args(["/c", "start", "wt", "-d", &format!("\"{}\"", path)])
-            .spawn()
-            .or_else(|_| {
-                Command::new("cmd")
-                    .args(["/c", "start", "cmd", "/k", &format!("cd /d \"{}\"", path)])
-                    .spawn()
-            })
-            .map_err(|e| format!("Failed to open terminal: {}", e))?;
+        // Prefer Windows Terminal invoked directly: Rust's Command properly
+        // escapes args per CommandLineToArgvW, and wt.exe handles spaces and
+        // special chars in the -d path without going through cmd.
+        let wt = Command::new("wt")
+            .args(["-d", &path])
+            .spawn();
+
+        if wt.is_err() {
+            // Fallback: spawn cmd.exe directly in its own console window using
+            // current_dir. Avoids the `start` + path-in-string approach, which
+            // has cmd's metacharacter-reinterpretation and the
+            // "first-quoted-arg-is-window-title" footgun.
+            use std::os::windows::process::CommandExt;
+            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+            Command::new("cmd.exe")
+                .arg("/k")
+                .current_dir(&path)
+                .creation_flags(CREATE_NEW_CONSOLE)
+                .spawn()
+                .map_err(|e| format!("Failed to open terminal: {}", e))?;
+        }
     }
 
     Ok(())

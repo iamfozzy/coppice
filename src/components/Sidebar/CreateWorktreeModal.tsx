@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../../stores/appStore";
 import * as commands from "../../lib/commands";
@@ -10,13 +10,28 @@ interface Props {
 
 type Mode = "existing" | "new";
 
+// Strip characters that are illegal in Windows filenames so the worktree
+// folder name is portable. Backend also validates, but sanitizing here
+// avoids surprising "invalid name" errors on submit.
+//   < > : " | ? * \  → replaced with `-`
+//   /                → replaced with `-` (path separator)
+//   control chars    → removed
+//   trailing . or ␠  → trimmed
+function sanitizeWorktreeName(input: string): string {
+  return input
+    .replace(/[<>:"|?*\\/]/g, "-")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f]/g, "")
+    .replace(/[. ]+$/, "");
+}
+
 export function CreateWorktreeModal({ projectId, onClose }: Props) {
   const [branches, setBranches] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [progressMsg, setProgressMsg] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>("existing");
+  const [mode, setMode] = useState<Mode>("new");
   const [selectedBranch, setSelectedBranch] = useState("");
   const [newBranchName, setNewBranchName] = useState("");
   const [worktreeName, setWorktreeName] = useState("");
@@ -24,6 +39,7 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
   const createWorktree = useAppStore((s) => s.createWorktree);
   const project = useAppStore((s) => s.projects.find((p) => p.id === projectId));
   const baseBranch = project?.base_branch;
+  const selectedBranchRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     commands
@@ -49,14 +65,35 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
     if (match) setSelectedBranch(match);
   }, [mode, loading, branches, baseBranch, selectedBranch]);
 
-  const filteredBranches = branches.filter((b) =>
-    b.toLowerCase().includes(filter.toLowerCase())
-  );
+  // The effective default branch in "new" mode — matches either the local or origin/ form
+  const defaultBranch = useMemo(() => {
+    if (mode !== "new" || !baseBranch) return null;
+    if (branches.includes(baseBranch)) return baseBranch;
+    if (branches.includes(`origin/${baseBranch}`)) return `origin/${baseBranch}`;
+    return null;
+  }, [mode, baseBranch, branches]);
+
+  const filteredBranches = useMemo(() => {
+    const matched = branches.filter((b) =>
+      b.toLowerCase().includes(filter.toLowerCase())
+    );
+    // Hoist the default branch to the top so the prefilled selection is obvious
+    if (defaultBranch && matched.includes(defaultBranch)) {
+      return [defaultBranch, ...matched.filter((b) => b !== defaultBranch)];
+    }
+    return matched;
+  }, [branches, filter, defaultBranch]);
+
+  // Scroll the selected branch into view when the list updates or selection changes
+  useEffect(() => {
+    if (!selectedBranch || loading) return;
+    selectedBranchRef.current?.scrollIntoView({ block: "nearest" });
+  }, [selectedBranch, loading, filter, mode]);
 
   const handleSelectBranch = (branch: string) => {
     setSelectedBranch(branch);
     if (mode === "existing") {
-      const name = branch.replace(/^origin\//, "").replace(/\//g, "-");
+      const name = sanitizeWorktreeName(branch.replace(/^origin\//, ""));
       setWorktreeName(name);
     }
   };
@@ -162,21 +199,6 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
         <div className="flex px-5 pt-3 pb-2 gap-1 shrink-0">
           <button
             className={`px-3 py-1 text-xs rounded transition-colors ${
-              mode === "existing"
-                ? "bg-accent/20 text-accent"
-                : "text-text-tertiary hover:text-text-secondary"
-            }`}
-            onClick={() => {
-              setMode("existing");
-              setSelectedBranch("");
-              setWorktreeName("");
-              setNewBranchName("");
-            }}
-          >
-            Existing branch
-          </button>
-          <button
-            className={`px-3 py-1 text-xs rounded transition-colors ${
               mode === "new"
                 ? "bg-accent/20 text-accent"
                 : "text-text-tertiary hover:text-text-secondary"
@@ -189,6 +211,21 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
             }}
           >
             New branch
+          </button>
+          <button
+            className={`px-3 py-1 text-xs rounded transition-colors ${
+              mode === "existing"
+                ? "bg-accent/20 text-accent"
+                : "text-text-tertiary hover:text-text-secondary"
+            }`}
+            onClick={() => {
+              setMode("existing");
+              setSelectedBranch("");
+              setWorktreeName("");
+              setNewBranchName("");
+            }}
+          >
+            Existing branch
           </button>
         </div>
 
@@ -227,14 +264,20 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
             filteredBranches.map((branch) => (
               <button
                 key={branch}
-                className={`w-full text-left px-5 py-1.5 text-xs transition-colors ${
+                ref={selectedBranch === branch ? selectedBranchRef : undefined}
+                className={`w-full text-left px-5 py-1.5 text-xs transition-colors flex items-center justify-between gap-2 ${
                   selectedBranch === branch
                     ? "bg-accent-muted text-accent-hover"
                     : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                 }`}
                 onClick={() => handleSelectBranch(branch)}
               >
-                <span className="font-mono">{branch}</span>
+                <span className="font-mono truncate">{branch}</span>
+                {branch === defaultBranch && (
+                  <span className="text-[10px] uppercase tracking-wide text-text-tertiary shrink-0">
+                    default
+                  </span>
+                )}
               </button>
             ))
           )}
@@ -254,7 +297,7 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
                     value={newBranchName}
                     onChange={(e) => {
                       setNewBranchName(e.target.value);
-                      setWorktreeName(e.target.value.replace(/\//g, "-"));
+                      setWorktreeName(sanitizeWorktreeName(e.target.value));
                     }}
                     placeholder="feature/my-feature"
                     autoComplete="off"
@@ -271,7 +314,7 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
                 <input
                   type="text"
                   value={worktreeName}
-                  onChange={(e) => setWorktreeName(e.target.value)}
+                  onChange={(e) => setWorktreeName(sanitizeWorktreeName(e.target.value))}
                   autoComplete="off"
                   autoCorrect="off"
                   spellCheck={false}

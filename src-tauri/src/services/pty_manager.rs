@@ -44,33 +44,71 @@ impl PtyManager {
             .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
         let mut cmd = if cfg!(target_os = "windows") {
-            // On Windows, prefer pwsh (PowerShell 7+/Core), then
-            // powershell.exe (Windows PowerShell 5.1), then cmd.exe.
-            let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
-            let ps_exe = if which_exists("pwsh") {
-                Some("pwsh")
-            } else if which_exists("powershell.exe") {
-                Some("powershell.exe")
+            // Windows shell resolution:
+            //   - cmd.exe: fall back to COMSPEC, else resolve via System32 so we
+            //     don't rely on PATH containing System32 (containers/minimal
+            //     envs may not).
+            //   - pwsh (PowerShell 7+/Core): preferred for interactive shells.
+            //   - powershell.exe (Windows PowerShell 5.1): available as an
+            //     interactive fallback, but NOT used to run piped commands —
+            //     it does not support the `&&` operator (PS 7+ only), so
+            //     compound commands like `npm i && npm test` would fail.
+            let cmd_exe = resolve_cmd_exe();
+            let pwsh_exe = if which_exists("pwsh") {
+                Some("pwsh".to_string())
+            } else if which_exists("pwsh.exe") {
+                Some("pwsh.exe".to_string())
+            } else {
+                None
+            };
+            let powershell_exe = if which_exists("powershell.exe") {
+                Some("powershell.exe".to_string())
+            } else if which_exists("powershell") {
+                Some("powershell".to_string())
             } else {
                 None
             };
 
-            if let Some(command) = command {
-                if let Some(ps) = ps_exe {
+            // User-configured shell override wins on all platforms.
+            if let Some(custom) = shell_override {
+                let mut cmd = CommandBuilder::new(custom);
+                if let Some(command) = command {
+                    // Best-effort: most Windows shells accept `-c <cmd>`.
+                    // cmd.exe wants `/c` — if the override path looks like
+                    // cmd.exe, use that flag.
+                    if custom.to_lowercase().ends_with("cmd.exe") {
+                        cmd.args(["/c", command]);
+                    } else {
+                        cmd.args(["-c", command]);
+                    }
+                }
+                cmd
+            } else if let Some(command) = command {
+                // Command execution: prefer pwsh (handles &&), else fall back
+                // to cmd.exe (also handles &&). Skip powershell.exe to avoid
+                // the `&&` incompatibility.
+                if let Some(ps) = pwsh_exe {
                     let mut cmd = CommandBuilder::new(ps);
                     cmd.args(["-NoLogo", "-Command", command]);
                     cmd
                 } else {
-                    let mut cmd = CommandBuilder::new(&shell);
+                    let mut cmd = CommandBuilder::new(&cmd_exe);
                     cmd.args(["/c", command]);
                     cmd
                 }
-            } else if let Some(ps) = ps_exe {
-                let mut cmd = CommandBuilder::new(ps);
-                cmd.arg("-NoLogo");
-                cmd
             } else {
-                CommandBuilder::new(&shell)
+                // Interactive shell: pwsh > powershell.exe > cmd.exe.
+                if let Some(ps) = pwsh_exe {
+                    let mut cmd = CommandBuilder::new(ps);
+                    cmd.arg("-NoLogo");
+                    cmd
+                } else if let Some(ps) = powershell_exe {
+                    let mut cmd = CommandBuilder::new(ps);
+                    cmd.arg("-NoLogo");
+                    cmd
+                } else {
+                    CommandBuilder::new(&cmd_exe)
+                }
             }
         } else {
             // macOS + Linux: use the user's preferred shell ($SHELL), falling
@@ -191,10 +229,12 @@ impl PtyManager {
                 };
 
                 if valid_up_to > 0 {
-                    let data = unsafe {
-                        std::str::from_utf8_unchecked(&buf[..valid_up_to])
-                    };
-                    let _ = app_flush.emit(&event_name_flush, data);
+                    // Safe: valid_up_to is the longest prefix of valid UTF-8
+                    // (either the full buffer or the boundary returned by
+                    // Utf8Error::valid_up_to()). String::from_utf8_lossy on a
+                    // valid prefix is a zero-copy borrow.
+                    let data = String::from_utf8_lossy(&buf[..valid_up_to]).to_string();
+                    let _ = app_flush.emit(&event_name_flush, &data);
                     buf.drain(..valid_up_to);
                 }
 
@@ -303,6 +343,29 @@ impl PtyManager {
         }
         Ok(())
     }
+}
+
+/// Resolve cmd.exe to an absolute path, preferring %COMSPEC%, falling back to
+/// %SystemRoot%\System32\cmd.exe, and finally the bare "cmd.exe" name.
+#[cfg(target_os = "windows")]
+fn resolve_cmd_exe() -> String {
+    if let Ok(p) = std::env::var("COMSPEC") {
+        if !p.is_empty() {
+            return p;
+        }
+    }
+    let sysroot = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let abs = format!("{}\\System32\\cmd.exe", sysroot);
+    if std::path::Path::new(&abs).exists() {
+        return abs;
+    }
+    "cmd.exe".to_string()
+}
+
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+fn resolve_cmd_exe() -> String {
+    "cmd.exe".to_string()
 }
 
 /// Check if an executable exists on the system PATH.

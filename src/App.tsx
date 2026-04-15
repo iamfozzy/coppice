@@ -64,25 +64,22 @@ function App() {
   const termFontFamily = appSettings?.terminal_font_family || undefined;
   const termFontSize = appSettings?.terminal_font_size || undefined;
 
-  // When the window regains focus, clear idle indicators on the currently
-  // visible Claude tab. Without this, if Claude goes idle while Coppice is
-  // in the background the indicator persists because no tab/worktree switch
-  // fires to clear it.
+  // When the window regains focus, clear the idle indicator on the currently
+  // visible Claude tab only. Without this, if Claude goes idle while Coppice
+  // is in the background the indicator persists on the tab the user is
+  // already looking at. Other idle Claude tabs stay lit so the user can see
+  // which specific tab needs attention.
   useEffect(() => {
     const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (!focused) return;
       const s = useAppStore.getState();
       const wtId = s.selectedWorktreeId;
       if (!wtId) return;
-      const tabs = s.tabsByWorktree[wtId] ?? [];
-      const idleTabs = tabs.filter(
-        (t) => t.type === "claude" && s.claudeStatusByTab[t.id] === "idle",
-      );
-      if (idleTabs.length > 0) {
-        const updated = { ...s.claudeStatusByTab };
-        for (const t of idleTabs) delete updated[t.id];
-        useAppStore.setState({ claudeStatusByTab: updated });
-      }
+      const activeId = s.activeTabByWorktree[wtId];
+      if (!activeId) return;
+      if (s.claudeStatusByTab[activeId] !== "idle") return;
+      const { [activeId]: _, ...rest } = s.claudeStatusByTab;
+      useAppStore.setState({ claudeStatusByTab: rest });
     });
     return () => { unlisten.then((fn) => fn()); };
   }, []);

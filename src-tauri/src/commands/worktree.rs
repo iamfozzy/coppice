@@ -24,6 +24,7 @@ pub async fn create_worktree(
     name: String,
 ) -> Result<Worktree, String> {
     let project = find_project(&db, &project_id)?;
+    validate_worktree_name(&name)?;
     let worktree_path = build_worktree_path(&project, &name);
 
     // Prune stale worktree references first
@@ -77,6 +78,7 @@ pub async fn create_worktree_new_branch(
     name: String,
 ) -> Result<Worktree, String> {
     let project = find_project(&db, &project_id)?;
+    validate_worktree_name(&name)?;
     let worktree_path = build_worktree_path(&project, &name);
 
     // Prune stale worktree references first
@@ -569,6 +571,41 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
         } else {
             std::fs::copy(&src_path, &dst_path)?;
         }
+    }
+    Ok(())
+}
+
+/// Validate a worktree folder name. Rejects characters and reserved names
+/// that are illegal on Windows (`< > : " | ? * \`, control chars, CON/PRN/…)
+/// so worktree creation fails fast with a clear message rather than
+/// producing cryptic git errors on the target platform.
+fn validate_worktree_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Worktree name cannot be empty".to_string());
+    }
+    // Illegal on Windows filesystems (and confusing elsewhere).
+    const ILLEGAL: &[char] = &['<', '>', ':', '"', '|', '?', '*', '\\', '/'];
+    if let Some(c) = trimmed.chars().find(|c| ILLEGAL.contains(c) || (*c as u32) < 0x20) {
+        return Err(format!(
+            "Worktree name contains invalid character '{}'. Avoid: {}",
+            c,
+            "< > : \" | ? * \\ /"
+        ));
+    }
+    // Windows disallows a trailing dot or space in any path component.
+    if trimmed.ends_with('.') || trimmed.ends_with(' ') {
+        return Err("Worktree name cannot end with '.' or a space".to_string());
+    }
+    // Windows reserved device names (case-insensitive, with or without extension).
+    let stem = trimmed.split('.').next().unwrap_or(trimmed).to_ascii_uppercase();
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if RESERVED.iter().any(|r| *r == stem) {
+        return Err(format!("'{}' is a reserved name on Windows", trimmed));
     }
     Ok(())
 }
