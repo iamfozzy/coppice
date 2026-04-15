@@ -29,6 +29,11 @@ interface Props {
 const CLAUDE_ACTIVE_BYTE_THRESHOLD = 200;
 // How long the activity byte counter accumulates before resetting.
 const CLAUDE_ACTIVITY_WINDOW_MS = 2000;
+// After a PTY resize (SIGWINCH), Claude redraws its full UI — those bytes are
+// a reaction to our own resize, not real activity. Ignore output for a brief
+// window so background tabs don't flip "active→idle" when window/sidebar
+// resizes ripple through every mounted terminal.
+const CLAUDE_RESIZE_GRACE_MS = 3000;
 
 export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFamily, keepAlive = false, isClaudeTab = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,6 +45,9 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
   // Ignore startup output — the first idle after spawn is always Claude's
   // welcome banner settling, not a real active→idle transition.
   const spawnedAtRef = useRef<number>(0);
+  // Timestamp of the most recent PTY resize. Used to suppress activity
+  // tracking for the post-resize redraw flood.
+  const lastResizeAtRef = useRef<number>(0);
 
   // Focus terminal when the parent visibility changes (tab switching)
   useEffect(() => {
@@ -165,6 +173,15 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
         // render would otherwise look like an active→idle transition.
         if (now - spawnedAtRef.current < CLAUDE_STARTUP_GRACE_MS) return;
 
+        // Ignore post-resize redraws. Every mounted terminal resizes when the
+        // window/sidebar changes size (even hidden ones), and Claude responds
+        // to SIGWINCH by redrawing its full UI — that's not real activity.
+        if (now - lastResizeAtRef.current < CLAUDE_RESIZE_GRACE_MS) {
+          outputBytesRef.current = 0;
+          activityWindowStartRef.current = now;
+          return;
+        }
+
         // Track output volume within a rolling window. Only transition to
         // "active" once we've seen enough bytes — small blips from cursor
         // moves, status-line refreshes, or tab-switch reflows are ignored.
@@ -222,13 +239,25 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     });
 
     let aborted = false;
-    const resizeObserver = new ResizeObserver(() => {
+    const doFit = () => {
       fitAddon.fit();
       const { rows, cols } = term;
       if (rows > 0 && cols > 0) {
+        lastResizeAtRef.current = Date.now();
         commands.terminalResize(sessionId, rows, cols).catch(() => {});
       }
+    };
+    const resizeObserver = new ResizeObserver(() => {
+      // Skip expensive fit + IPC while the sidebar is mid-drag. We re-sync
+      // once on "sidebar-resize-end" so the drag itself stays smooth.
+      if (document.body.dataset.resizingSidebar) return;
+      doFit();
     });
+    const onSidebarResizeEnd = () => {
+      if (aborted) return;
+      doFit();
+    };
+    window.addEventListener("sidebar-resize-end", onSidebarResizeEnd);
 
     // Wait for bundled JetBrains Mono to load before opening the terminal
     // so xterm.js measures character cell widths with the correct font.
@@ -263,6 +292,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     return () => {
       aborted = true;
       resizeObserver.disconnect();
+      window.removeEventListener("sidebar-resize-end", onSidebarResizeEnd);
       dataDisposable.dispose();
       window.removeEventListener("terminal-clear", onClear);
       unlistenOutput.then((fn) => fn());

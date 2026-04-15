@@ -22,12 +22,27 @@ export function Sidebar() {
     isResizing.current = true;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
+    // Signal heavy components (xterm fit, terminalResize IPC, etc.) to skip
+    // layout work while the sidebar is being dragged. They re-sync on
+    // "sidebar-resize-end".
+    document.body.dataset.resizingSidebar = "1";
+
+    let pendingWidth: number | null = null;
+    let rafId: number | null = null;
+
+    const flush = () => {
+      rafId = null;
+      if (pendingWidth !== null && sidebarRef.current) {
+        sidebarRef.current.style.width = `${pendingWidth}px`;
+      }
+      pendingWidth = null;
+    };
 
     const onMouseMove = (e: MouseEvent) => {
       if (!isResizing.current) return;
-      const width = Math.max(310, Math.min(500, e.clientX));
-      if (sidebarRef.current) {
-        sidebarRef.current.style.width = `${width}px`;
+      pendingWidth = Math.max(310, Math.min(500, e.clientX));
+      if (rafId === null) {
+        rafId = requestAnimationFrame(flush);
       }
     };
 
@@ -35,10 +50,21 @@ export function Sidebar() {
       isResizing.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      delete document.body.dataset.resizingSidebar;
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
       const finalWidth = Math.max(310, Math.min(500, e.clientX));
+      if (sidebarRef.current) {
+        sidebarRef.current.style.width = `${finalWidth}px`;
+      }
       setSidebarWidth(finalWidth);
+      // Let suppressed components run one final layout now that the drag
+      // has settled.
+      window.dispatchEvent(new Event("sidebar-resize-end"));
     };
 
     document.addEventListener("mousemove", onMouseMove);
