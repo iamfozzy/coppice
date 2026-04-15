@@ -43,6 +43,17 @@ impl PtyManager {
             })
             .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
+        // Commands containing double quotes can't be safely passed as a
+        // shell argument on Windows — many common CLIs ship as `.cmd` shims
+        // (e.g. npm-installed `claude.cmd`), and cmd.exe mangles quoted
+        // arguments when invoking them, so `claude "Commit all the changes…"`
+        // reaches Claude as just the word "Commit". Fall back to spawning an
+        // interactive shell and typing the command into it after the prompt
+        // appears — the shell then parses the line with its own rules, which
+        // handle quotes correctly. See `windows_deferred_type_command` below.
+        let defer_type_command = cfg!(target_os = "windows")
+            && command.map(|c| c.contains('"')).unwrap_or(false);
+
         let mut cmd = if cfg!(target_os = "windows") {
             // Windows shell resolution:
             //   - cmd.exe: fall back to COMSPEC, else resolve via System32 so we
@@ -73,17 +84,19 @@ impl PtyManager {
             if let Some(custom) = shell_override {
                 let mut cmd = CommandBuilder::new(custom);
                 if let Some(command) = command {
-                    // Best-effort: most Windows shells accept `-c <cmd>`.
-                    // cmd.exe wants `/c` — if the override path looks like
-                    // cmd.exe, use that flag.
-                    if custom.to_lowercase().ends_with("cmd.exe") {
-                        cmd.args(["/c", command]);
-                    } else {
-                        cmd.args(["-c", command]);
+                    if !defer_type_command {
+                        // Best-effort: most Windows shells accept `-c <cmd>`.
+                        // cmd.exe wants `/c` — if the override path looks like
+                        // cmd.exe, use that flag.
+                        if custom.to_lowercase().ends_with("cmd.exe") {
+                            cmd.args(["/c", command]);
+                        } else {
+                            cmd.args(["-c", command]);
+                        }
                     }
                 }
                 cmd
-            } else if let Some(command) = command {
+            } else if let Some(command) = command.filter(|_| !defer_type_command) {
                 // Command execution: prefer pwsh (handles &&), else fall back
                 // to cmd.exe (also handles &&). Skip powershell.exe to avoid
                 // the `&&` incompatibility.
@@ -98,6 +111,8 @@ impl PtyManager {
                 }
             } else {
                 // Interactive shell: pwsh > powershell.exe > cmd.exe.
+                // Used both for plain interactive sessions and for the deferred
+                // "type the command in" path for quoted commands.
                 if let Some(ps) = pwsh_exe {
                     let mut cmd = CommandBuilder::new(ps);
                     cmd.arg("-NoLogo");
@@ -293,6 +308,28 @@ impl PtyManager {
             .lock()
             .unwrap()
             .insert(session_id.to_string(), session);
+
+        // Windows deferred-type-command: when the requested command contains
+        // double quotes, we spawned an interactive shell above instead of
+        // passing the command as a shell arg (to dodge cmd.exe's .cmd-shim
+        // quote mangling). Type the command into the PTY once the shell has
+        // had time to render its prompt. 800ms covers pwsh cold start on
+        // slower machines while still feeling responsive.
+        #[cfg(target_os = "windows")]
+        if defer_type_command {
+            if let Some(command_str) = command {
+                let sessions = self.sessions.clone();
+                let sid = session_id.to_string();
+                let bytes = format!("{}\r", command_str).into_bytes();
+                thread::spawn(move || {
+                    thread::sleep(std::time::Duration::from_millis(800));
+                    if let Some(session) = sessions.lock().unwrap().get_mut(&sid) {
+                        let _ = session.writer.write_all(&bytes);
+                        let _ = session.writer.flush();
+                    }
+                });
+            }
+        }
 
         Ok(())
     }
