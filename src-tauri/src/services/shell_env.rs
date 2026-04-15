@@ -14,7 +14,8 @@ pub fn get_user_path() -> &'static str {
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
 
-        // Run a login interactive shell to get the PATH after sourcing profiles
+        // Run a login interactive shell to get the PATH after sourcing profiles.
+        // (Unix-only branch — Windows returned above.)
         let output = Command::new(&shell)
             .args(["-li", "-c", "echo $PATH"])
             .output();
@@ -36,6 +37,14 @@ pub fn get_user_path() -> &'static str {
 
 /// Create a Command that has the user's full PATH set and AppImage library
 /// path pollution removed so child processes use system libraries.
+///
+/// On Windows, this also suppresses the console window that would otherwise
+/// flash up for each child process. Coppice is a GUI app with no attached
+/// console, so Windows allocates a fresh conhost window per spawn by default —
+/// visible as a blink for every `git status`, `gh pr list`, etc. Setting
+/// `CREATE_NO_WINDOW` keeps these background calls invisible. Commands that
+/// *do* want a visible window (editor/terminal launchers) go through
+/// `commands::external`, not this helper.
 pub fn user_command(program: &str) -> Command {
     let mut cmd = Command::new(program);
     cmd.env("PATH", get_user_path());
@@ -47,6 +56,13 @@ pub fn user_command(program: &str) -> Command {
     // so children resolve via the system's default linker search path.
     #[cfg(target_os = "linux")]
     cmd.env_remove("LD_LIBRARY_PATH");
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
 
     cmd
 }
