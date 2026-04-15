@@ -48,6 +48,13 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
   // Timestamp of the most recent PTY resize. Used to suppress activity
   // tracking for the post-resize redraw flood.
   const lastResizeAtRef = useRef<number>(0);
+  // Last dimensions sent to the backend. On Windows, ConPTY re-emits the
+  // visible screen as VT sequences on every resize — those replays land in
+  // xterm's scrollback and look like duplicate content (e.g. Claude's
+  // welcome banner appearing multiple times when scrolling up). Guarding on
+  // "actually changed" prevents spurious ResizeObserver fires (initial
+  // observation, font-load layout, etc.) from triggering ConPTY redraws.
+  const lastSentSizeRef = useRef<{ rows: number; cols: number } | null>(null);
 
   // Focus terminal when the parent visibility changes (tab switching)
   useEffect(() => {
@@ -243,6 +250,14 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       fitAddon.fit();
       const { rows, cols } = term;
       if (rows > 0 && cols > 0) {
+        const last = lastSentSizeRef.current;
+        if (last && last.rows === rows && last.cols === cols) {
+          // Size unchanged — skip the IPC. On Windows this matters: ConPTY
+          // treats every resize as a reason to replay its screen buffer,
+          // and those replays pollute xterm's scrollback.
+          return;
+        }
+        lastSentSizeRef.current = { rows, cols };
         lastResizeAtRef.current = Date.now();
         commands.terminalResize(sessionId, rows, cols).catch(() => {});
       }
@@ -273,6 +288,12 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       const { rows, cols } = term;
       const exists = await commands.terminalExists(sessionId).catch(() => false);
       if (aborted) return;
+
+      // Seed the last-sent size so the ResizeObserver's initial-observation
+      // callback (which fires once with the same dimensions we're spawning
+      // at) is skipped — no redundant ConPTY resize, no scrollback pollution.
+      lastSentSizeRef.current = { rows, cols };
+      lastResizeAtRef.current = Date.now();
 
       if (exists) {
         commands.terminalResize(sessionId, rows, cols).catch(() => {});
