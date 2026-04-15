@@ -22,6 +22,8 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
   const [worktreeName, setWorktreeName] = useState("");
   const [filter, setFilter] = useState("");
   const createWorktree = useAppStore((s) => s.createWorktree);
+  const project = useAppStore((s) => s.projects.find((p) => p.id === projectId));
+  const baseBranch = project?.base_branch;
 
   useEffect(() => {
     commands
@@ -35,6 +37,17 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
         setLoading(false);
       });
   }, [projectId]);
+
+  // Prefill base branch when switching to "new" mode
+  useEffect(() => {
+    if (mode !== "new" || loading || selectedBranch || !baseBranch) return;
+    const match = branches.includes(baseBranch)
+      ? baseBranch
+      : branches.includes(`origin/${baseBranch}`)
+        ? `origin/${baseBranch}`
+        : null;
+    if (match) setSelectedBranch(match);
+  }, [mode, loading, branches, baseBranch, selectedBranch]);
 
   const filteredBranches = branches.filter((b) =>
     b.toLowerCase().includes(filter.toLowerCase())
@@ -121,7 +134,15 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-bg-secondary border border-border-primary rounded-lg w-[480px] max-h-[70vh] flex flex-col shadow-2xl">
+      <div
+        className="bg-bg-secondary border border-border-primary rounded-lg w-[480px] max-h-[70vh] flex flex-col shadow-2xl"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && canCreate && !creating) {
+            e.preventDefault();
+            handleCreate();
+          }
+        }}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-primary shrink-0">
           <h2 className="text-sm font-semibold text-text-primary">
