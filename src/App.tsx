@@ -6,6 +6,7 @@ import { ProjectSettingsModal } from "./components/ProjectSettings/ProjectSettin
 import { AppSettingsModal } from "./components/AppSettings/AppSettingsModal";
 import { TerminalPanel } from "./components/Terminal/TerminalPanel";
 import { useAppStore } from "./stores/appStore";
+import { setWindowFocused } from "./lib/windowFocus";
 import * as commands from "./lib/commands";
 
 function App() {
@@ -64,13 +65,21 @@ function App() {
   const termFontFamily = appSettings?.terminal_font_family || undefined;
   const termFontSize = appSettings?.terminal_font_size || undefined;
 
-  // When the window regains focus, clear the idle indicator on the currently
-  // visible Claude tab only. Without this, if Claude goes idle while Coppice
-  // is in the background the indicator persists on the tab the user is
-  // already looking at. Other idle Claude tabs stay lit so the user can see
-  // which specific tab needs attention.
+  // Track window focus + clear idle on focus-regain. Two things happen here:
+  //   1. setWindowFocused() keeps the shared flag in sync so the store's
+  //      notification gating (appStore.setClaudeStatus) knows whether the
+  //      user can actually see the visible tab.
+  //   2. When focus is regained, clear the idle indicator on the currently
+  //      visible Claude tab (the tab the user can now actually see). Other
+  //      idle Claude tabs stay lit so the user can tell which specific tab
+  //      needs attention.
   useEffect(() => {
+    // Seed the shared flag with the real window state on mount, in case
+    // the first onFocusChanged event lags behind our first PTY output.
+    getCurrentWindow().isFocused().then(setWindowFocused).catch(() => {});
+
     const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      setWindowFocused(focused);
       if (!focused) return;
       const s = useAppStore.getState();
       const wtId = s.selectedWorktreeId;

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Project, Worktree, AppSettings } from "../lib/types";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
+import { isWindowFocused } from "../lib/windowFocus";
 
 export type ClaudeStatus = "active" | "idle";
 
@@ -279,27 +280,46 @@ export const useAppStore = create<AppState>((set, get) => ({
   // ── Claude status ──
 
   setClaudeStatus: (tabId, status) => {
-    const prev = get().claudeStatusByTab[tabId];
+    const s = get();
+    const prev = s.claudeStatusByTab[tabId];
     if (prev === status) return;
 
-    set((s) => ({
-      claudeStatusByTab: { ...s.claudeStatusByTab, [tabId]: status },
+    // Determine whether the user is already watching this specific tab.
+    // "Visible" means the tab is the active tab of the selected worktree;
+    // "focused" means the whole window is in the foreground. Both must be
+    // true for us to consider the user present.
+    let isVisible = false;
+    for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
+      if (tabs.some((t) => t.id === tabId)) {
+        isVisible = s.selectedWorktreeId === wtId && s.activeTabByWorktree[wtId] === tabId;
+        break;
+      }
+    }
+    const userIsWatching = isVisible && isWindowFocused();
+
+    // If the user is actively looking at this tab, there's nothing to
+    // notify them about — skip the idle transition entirely. Without this,
+    // the warning dot briefly flashes onto a tab the user is already
+    // viewing (setActiveTab / focus handlers only clear when something
+    // changed, not when the user was already there).
+    if (status === "idle" && userIsWatching) {
+      if (prev !== undefined) {
+        const { [tabId]: _, ...rest } = s.claudeStatusByTab;
+        set({ claudeStatusByTab: rest });
+      }
+      return;
+    }
+
+    set((state) => ({
+      claudeStatusByTab: { ...state.claudeStatusByTab, [tabId]: status },
     }));
 
-    // Play notification sound when Claude becomes idle and the tab is not visible
+    // Play notification sound when Claude becomes idle and the user can't
+    // see the tab. "Can't see" = tab is not the active tab of the selected
+    // worktree, OR the window is backgrounded.
     if (status === "idle" && prev === "active") {
-      const s = get();
       if (!s.appSettings?.notification_sound) return;
-
-      // Find which worktree owns this tab
-      let isVisible = false;
-      for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
-        if (tabs.some((t) => t.id === tabId)) {
-          isVisible = s.selectedWorktreeId === wtId && s.activeTabByWorktree[wtId] === tabId;
-          break;
-        }
-      }
-      if (!isVisible) {
+      if (!userIsWatching) {
         playNotificationSound();
       }
     }

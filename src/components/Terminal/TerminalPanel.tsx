@@ -10,8 +10,11 @@ import { useAppStore } from "../../stores/appStore";
 import "@xterm/xterm/css/xterm.css";
 
 const CLAUDE_IDLE_THRESHOLD_MS = 3000;
-// Grace period after spawn — ignore all activity during startup so the
-// welcome banner + initial prompt don't trigger a false notification.
+// Grace period after Claude's first output — ignore all activity during
+// startup so the welcome banner + initial prompt don't trigger a false
+// notification. Measured from FIRST OUTPUT (not from component mount) so
+// slow cold starts (auth flow, first-time `claude` download, slow machine)
+// don't effectively skip the grace.
 const CLAUDE_STARTUP_GRACE_MS = 8000;
 
 interface Props {
@@ -24,9 +27,11 @@ interface Props {
   isClaudeTab?: boolean;
 }
 
-// Minimum bytes of output within the activity window to count as genuinely active.
-// Prevents tab switches or cursor repositions from triggering false "active" state.
-const CLAUDE_ACTIVE_BYTE_THRESHOLD = 200;
+// Minimum bytes of output within the activity window to count as genuinely
+// active. Prevents tab switches or cursor repositions from triggering false
+// "active" state. Low enough that a short Claude reply (e.g. "Done.") plus
+// the prompt-box redraw still clears it.
+const CLAUDE_ACTIVE_BYTE_THRESHOLD = 40;
 // How long the activity byte counter accumulates before resetting.
 const CLAUDE_ACTIVITY_WINDOW_MS = 2000;
 // After a PTY resize (SIGWINCH), Claude redraws its full UI — those bytes are
@@ -38,16 +43,25 @@ const CLAUDE_RESIZE_GRACE_MS = 3000;
 export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFamily, keepAlive = false, isClaudeTab = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termInstanceRef = useRef<Terminal | null>(null);
-  const lastOutputRef = useRef<number>(0);
-  const claudeStatusRef = useRef<"active" | "idle" | null>(null);
   const outputBytesRef = useRef<number>(0);
   const activityWindowStartRef = useRef<number>(0);
-  // Ignore startup output — the first idle after spawn is always Claude's
-  // welcome banner settling, not a real active→idle transition.
+  // Set on the FIRST PTY output (not at component mount), so the startup
+  // grace actually covers Claude's banner regardless of how long the shell
+  // took to print its first byte.
   const spawnedAtRef = useRef<number>(0);
   // Timestamp of the most recent PTY resize. Used to suppress activity
   // tracking for the post-resize redraw flood.
   const lastResizeAtRef = useRef<number>(0);
+  // Scheduled idle-check timer. Rescheduled on every PTY output event so it
+  // always fires exactly CLAUDE_IDLE_THRESHOLD_MS after the last byte — no
+  // polling, no CPU use during long idles, no drift.
+  const idleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirror props that are read inside the long-lived PTY-output listener
+  // into refs. Keeps the main effect's dep array tight (so we don't tear
+  // down the terminal when these change) while still letting changes take
+  // effect mid-session.
+  const isClaudeTabRef = useRef<boolean>(isClaudeTab);
+  const keepAliveRef = useRef<boolean>(keepAlive);
   // Last dimensions sent to the backend. On Windows, ConPTY re-emits the
   // visible screen as VT sequences on every resize — those replays land in
   // xterm's scrollback and look like duplicate content (e.g. Claude's
@@ -55,6 +69,12 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
   // "actually changed" prevents spurious ResizeObserver fires (initial
   // observation, font-load layout, etc.) from triggering ConPTY redraws.
   const lastSentSizeRef = useRef<{ rows: number; cols: number } | null>(null);
+
+  // Keep prop-mirror refs in sync without retriggering the big init effect.
+  useEffect(() => {
+    isClaudeTabRef.current = isClaudeTab;
+    keepAliveRef.current = keepAlive;
+  }, [isClaudeTab, keepAlive]);
 
   // Focus terminal when the parent visibility changes (tab switching)
   useEffect(() => {
@@ -168,69 +188,77 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       return true;
     });
 
+    // Fire the idle transition if the tab is currently "active" in the
+    // store. We read from the store rather than a local ref so external
+    // clears (setActiveTab, cycleTab, selectWorktree, focus handler) can't
+    // leave us with a desynced view of reality.
+    const fireIdleCheck = () => {
+      idleTimeoutRef.current = null;
+      const store = useAppStore.getState();
+      if (store.claudeStatusByTab[sessionId] === "active") {
+        outputBytesRef.current = 0;
+        store.setClaudeStatus(sessionId, "idle");
+      }
+    };
+
     // Listen for output from backend
-    spawnedAtRef.current = Date.now();
     const unlistenOutput = listen<string>(`pty-output-${sessionId}`, (event) => {
       term.write(event.payload);
-      if (isClaudeTab) {
-        const now = Date.now();
-        lastOutputRef.current = now;
+      if (!isClaudeTabRef.current) return;
 
-        // Ignore startup output — Claude's welcome banner and initial prompt
-        // render would otherwise look like an active→idle transition.
-        if (now - spawnedAtRef.current < CLAUDE_STARTUP_GRACE_MS) return;
+      const now = Date.now();
 
-        // Ignore post-resize redraws. Every mounted terminal resizes when the
-        // window/sidebar changes size (even hidden ones), and Claude responds
-        // to SIGWINCH by redrawing its full UI — that's not real activity.
-        if (now - lastResizeAtRef.current < CLAUDE_RESIZE_GRACE_MS) {
-          outputBytesRef.current = 0;
-          activityWindowStartRef.current = now;
-          return;
-        }
+      // Start the startup-grace clock on the FIRST output event, not at
+      // component mount. A slow shell (Windows cold start, auth dance, etc.)
+      // may take >8s to print its first byte; measuring from mount would
+      // effectively skip the grace.
+      if (spawnedAtRef.current === 0) spawnedAtRef.current = now;
 
-        // Track output volume within a rolling window. Only transition to
-        // "active" once we've seen enough bytes — small blips from cursor
-        // moves, status-line refreshes, or tab-switch reflows are ignored.
-        if (now - activityWindowStartRef.current > CLAUDE_ACTIVITY_WINDOW_MS) {
-          outputBytesRef.current = 0;
-          activityWindowStartRef.current = now;
-        }
-        outputBytesRef.current += event.payload.length;
+      // Ignore startup output — Claude's welcome banner and initial prompt
+      // render would otherwise look like an active→idle transition.
+      if (now - spawnedAtRef.current < CLAUDE_STARTUP_GRACE_MS) return;
 
-        if (
-          claudeStatusRef.current !== "active" &&
-          outputBytesRef.current >= CLAUDE_ACTIVE_BYTE_THRESHOLD
-        ) {
-          claudeStatusRef.current = "active";
-          useAppStore.getState().setClaudeStatus(sessionId, "active");
-        }
+      // Ignore post-resize redraws. Every mounted terminal resizes when the
+      // window/sidebar changes size (even hidden ones), and Claude responds
+      // to SIGWINCH by redrawing its full UI — that's not real activity.
+      if (now - lastResizeAtRef.current < CLAUDE_RESIZE_GRACE_MS) {
+        outputBytesRef.current = 0;
+        activityWindowStartRef.current = now;
+        return;
       }
+
+      // Track output volume within a rolling window. Only transition to
+      // "active" once we've seen enough bytes — small blips from cursor
+      // moves, status-line refreshes, or tab-switch reflows are ignored.
+      if (now - activityWindowStartRef.current > CLAUDE_ACTIVITY_WINDOW_MS) {
+        outputBytesRef.current = 0;
+        activityWindowStartRef.current = now;
+      }
+      outputBytesRef.current += event.payload.length;
+
+      const store = useAppStore.getState();
+      const currentStatus = store.claudeStatusByTab[sessionId];
+
+      if (currentStatus !== "active" && outputBytesRef.current >= CLAUDE_ACTIVE_BYTE_THRESHOLD) {
+        store.setClaudeStatus(sessionId, "active");
+      }
+
+      // Reschedule the idle check to fire exactly threshold-ms after this
+      // output. Previous scheduled check (if any) is discarded.
+      if (idleTimeoutRef.current !== null) clearTimeout(idleTimeoutRef.current);
+      idleTimeoutRef.current = setTimeout(fireIdleCheck, CLAUDE_IDLE_THRESHOLD_MS);
     });
 
     const unlistenExit = listen(`pty-exit-${sessionId}`, () => {
       term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
-      if (isClaudeTab) {
-        claudeStatusRef.current = null;
+      if (idleTimeoutRef.current !== null) {
+        clearTimeout(idleTimeoutRef.current);
+        idleTimeoutRef.current = null;
+      }
+      if (isClaudeTabRef.current) {
         useAppStore.getState().removeClaudeStatus(sessionId);
       }
     });
-
-    // Idle detection for Claude tabs
-    let idleInterval: ReturnType<typeof setInterval> | null = null;
-    if (isClaudeTab) {
-      idleInterval = setInterval(() => {
-        if (
-          lastOutputRef.current > 0 &&
-          Date.now() - lastOutputRef.current > CLAUDE_IDLE_THRESHOLD_MS &&
-          claudeStatusRef.current === "active"
-        ) {
-          claudeStatusRef.current = "idle";
-          outputBytesRef.current = 0;
-          useAppStore.getState().setClaudeStatus(sessionId, "idle");
-        }
-      }, 1000);
-    }
 
     // Clear terminal buffer when a runner is restarted
     const onClear = (e: Event) => {
@@ -309,7 +337,6 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     };
     init();
 
-    const keepAliveCapture = keepAlive;
     return () => {
       aborted = true;
       resizeObserver.disconnect();
@@ -318,8 +345,13 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       window.removeEventListener("terminal-clear", onClear);
       unlistenOutput.then((fn) => fn());
       unlistenExit.then((fn) => fn());
-      if (idleInterval) clearInterval(idleInterval);
-      if (!keepAliveCapture) {
+      if (idleTimeoutRef.current !== null) {
+        clearTimeout(idleTimeoutRef.current);
+        idleTimeoutRef.current = null;
+      }
+      // Read keepAlive from the ref so a late prop flip (tab being retired)
+      // is honored at teardown time, not at effect-start time.
+      if (!keepAliveRef.current) {
         commands.terminalKill(sessionId).catch(() => {});
       }
       termInstanceRef.current = null;
