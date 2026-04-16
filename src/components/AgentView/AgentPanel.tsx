@@ -98,10 +98,14 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
         setSdkSessionId(sessionId, msg.sessionId as string);
         // Only show "Session started" for the first init, not on resume
         if (!msg.isResume) {
+          const mcpServers = msg.mcpServers as Array<{ name: string; status: string }> | undefined;
+          const mcpInfo = mcpServers?.length
+            ? ` · MCPs: ${mcpServers.map((s) => `${s.name} (${s.status})`).join(", ")}`
+            : "";
           appendMessage(sessionId, {
             id: nextMsgId(),
             type: "system",
-            content: `Session started (model: ${msg.model || "default"})`,
+            content: `Session started (model: ${msg.model || "default"})${mcpInfo}`,
             timestamp: Date.now(),
           });
         }

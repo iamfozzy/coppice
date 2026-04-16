@@ -283,6 +283,7 @@ function processMessage(message) {
           tools: message.tools || [],
           model: message.model || "",
           permissionMode: message.permissionMode || "",
+          mcpServers: message.mcp_servers || [],
           isResume: !isFirst,
         });
       } else if (message.subtype === "status") {
