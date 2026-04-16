@@ -139,6 +139,79 @@ export function AppSettingsModal() {
             hint="Show a system notification when Claude finishes (visible even when Coppice is minimized)"
           />
 
+          {/* Claude mode selector */}
+          <div className="pt-2 border-t border-border-primary">
+            <label className="block text-xs text-text-secondary mb-1">Claude mode</label>
+            <div className="flex gap-1">
+              {(["terminal", "agent"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setForm({ ...form, default_claude_mode: mode })}
+                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                    form.default_claude_mode === mode
+                      ? "bg-accent text-white"
+                      : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
+                  }`}
+                >
+                  {mode === "terminal" ? "Terminal (CLI)" : "Agent (SDK)"}
+                </button>
+              ))}
+            </div>
+            <p className="mt-0.5 text-[10px] text-text-tertiary">
+              {form.default_claude_mode === "terminal"
+                ? "Runs Claude Code CLI in a PTY terminal (requires claude CLI installed)"
+                : "Runs Claude via the Agent SDK with an interactive UI (requires API key)"}
+            </p>
+          </div>
+
+          {/* Agent SDK settings — only shown when agent mode is selected */}
+          {form.default_claude_mode === "agent" && (
+            <div className="space-y-4 pl-2 border-l-2 border-accent/30">
+              <Field
+                label="Anthropic API key"
+                value={form.agent_api_key}
+                onChange={(agent_api_key) => setForm({ ...form, agent_api_key })}
+                placeholder="sk-ant-..."
+                hint="Your Anthropic API key for the Agent SDK"
+              />
+              <Field
+                label="Default model"
+                value={form.agent_default_model}
+                onChange={(agent_default_model) => setForm({ ...form, agent_default_model })}
+                placeholder="claude-sonnet-4-20250514"
+                hint="Model to use for agent sessions (e.g., claude-sonnet-4-20250514, claude-opus-4-20250514)"
+              />
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Default effort</label>
+                <div className="flex gap-1">
+                  {(["low", "medium", "high", "max"] as const).map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={() => setForm({ ...form, agent_default_effort: level })}
+                      className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
+                        form.agent_default_effort === level
+                          ? "bg-accent text-white"
+                          : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
+                      }`}
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-0.5 text-[10px] text-text-tertiary">Controls how much effort the agent puts into responses</p>
+              </div>
+              <Field
+                label="Node.js path"
+                value={form.agent_node_path}
+                onChange={(agent_node_path) => setForm({ ...form, agent_node_path })}
+                placeholder="(auto-detect)"
+                hint="Path to node binary — only needed if node isn't on your PATH"
+              />
+            </div>
+          )}
+
           {/* Claude Code hooks integration */}
           <div className="pt-2 border-t border-border-primary">
             <label className="block text-xs text-text-secondary mb-1">Claude Code integration</label>
