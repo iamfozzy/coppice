@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
 pub struct PtySession {
@@ -54,6 +55,12 @@ impl PtyManager {
         let defer_type_command = cfg!(target_os = "windows")
             && command.map(|c| c.contains('"')).unwrap_or(false);
 
+        // Tracks whether the shell hosting the deferred-type command uses
+        // cmd.exe syntax (`&` as statement separator) vs PowerShell syntax
+        // (`;`). Only consulted when `defer_type_command` is true.
+        #[cfg(target_os = "windows")]
+        let mut defer_shell_is_cmd = false;
+
         let mut cmd = if cfg!(target_os = "windows") {
             // Windows shell resolution:
             //   - cmd.exe: fall back to COMSPEC, else resolve via System32 so we
@@ -82,13 +89,18 @@ impl PtyManager {
 
             // User-configured shell override wins on all platforms.
             if let Some(custom) = shell_override {
+                let is_cmd = custom.to_lowercase().ends_with("cmd.exe");
+                #[cfg(target_os = "windows")]
+                {
+                    defer_shell_is_cmd = is_cmd;
+                }
                 let mut cmd = CommandBuilder::new(custom);
                 if let Some(command) = command {
                     if !defer_type_command {
                         // Best-effort: most Windows shells accept `-c <cmd>`.
                         // cmd.exe wants `/c` — if the override path looks like
                         // cmd.exe, use that flag.
-                        if custom.to_lowercase().ends_with("cmd.exe") {
+                        if is_cmd {
                             cmd.args(["/c", command]);
                         } else {
                             cmd.args(["-c", command]);
@@ -122,6 +134,10 @@ impl PtyManager {
                     cmd.arg("-NoLogo");
                     cmd
                 } else {
+                    #[cfg(target_os = "windows")]
+                    {
+                        defer_shell_is_cmd = true;
+                    }
                     CommandBuilder::new(&cmd_exe)
                 }
             }
@@ -227,6 +243,12 @@ impl PtyManager {
         let done_reader = done.clone();
         let done_flusher = done.clone();
 
+        // Timestamp of the reader thread's most recent successful read.
+        // Used by the Windows deferred-type path to detect "prompt ready"
+        // (see the defer_type_command block below).
+        let last_output: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+        let last_output_reader = last_output.clone();
+
         let event_name_flush = event_name.clone();
         let app_flush = app.clone();
 
@@ -286,6 +308,8 @@ impl PtyManager {
                     Ok(n) => {
                         let mut buf = shared_buf_reader.lock().unwrap();
                         buf.extend_from_slice(&read_buf[..n]);
+                        drop(buf);
+                        *last_output_reader.lock().unwrap() = Some(Instant::now());
                     }
                     Err(_) => {
                         done_reader.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -313,16 +337,49 @@ impl PtyManager {
         // double quotes, we spawned an interactive shell above instead of
         // passing the command as a shell arg (to dodge cmd.exe's .cmd-shim
         // quote mangling). Type the command into the PTY once the shell has
-        // had time to render its prompt. 800ms covers pwsh cold start on
-        // slower machines while still feeling responsive.
+        // rendered its prompt and is waiting for input.
+        //
+        // Rather than a fixed delay, wait for the "output then idle" signal:
+        // the shell emits its banner + prompt, then goes quiet. When we've
+        // seen output and no new bytes have arrived for ~120ms, the prompt
+        // is drawn and PSReadLine / cmd is listening. Fast machines fire in
+        // ~150–300ms; slow machines wait as long as they need. Capped by a
+        // 3000ms safety net just in case the shell never goes fully idle.
+        //
+        // Prefix with `cls` so the briefly-visible shell prompt + typed
+        // command line is cleared the instant the target process (e.g.
+        // Claude) takes over the terminal. Without this, users saw
+        // `PS C:\path> claude "Commit all the changes…"` stuck at the top
+        // of the view when hitting "Commit & Push" or "Create PR".
         #[cfg(target_os = "windows")]
         if defer_type_command {
             if let Some(command_str) = command {
                 let sessions = self.sessions.clone();
                 let sid = session_id.to_string();
-                let bytes = format!("{}\r", command_str).into_bytes();
+                let separator = if defer_shell_is_cmd { " & " } else { "; " };
+                let bytes = format!("cls{}{}\r", separator, command_str).into_bytes();
+                let last_output_defer = last_output.clone();
                 thread::spawn(move || {
-                    thread::sleep(std::time::Duration::from_millis(800));
+                    const IDLE_THRESHOLD: std::time::Duration =
+                        std::time::Duration::from_millis(120);
+                    const MAX_WAIT: std::time::Duration =
+                        std::time::Duration::from_millis(3000);
+                    const POLL_INTERVAL: std::time::Duration =
+                        std::time::Duration::from_millis(25);
+
+                    let start = Instant::now();
+                    loop {
+                        thread::sleep(POLL_INTERVAL);
+                        let last = *last_output_defer.lock().unwrap();
+                        if let Some(ts) = last {
+                            if ts.elapsed() >= IDLE_THRESHOLD {
+                                break;
+                            }
+                        }
+                        if start.elapsed() >= MAX_WAIT {
+                            break;
+                        }
+                    }
                     if let Some(session) = sessions.lock().unwrap().get_mut(&sid) {
                         let _ = session.writer.write_all(&bytes);
                         let _ = session.writer.flush();
