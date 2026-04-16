@@ -123,6 +123,7 @@ interface AppState {
   newClaudeTab: (worktreeId: string) => void;
   addAgentTab: (worktreeId: string, cwd: string, prompt?: string) => void;
   newAgentTab: (worktreeId: string) => void;
+  renameTab: (worktreeId: string, tabId: string, newLabel: string) => void;
 
   // Actions — agent session state
   appendAgentMessage: (tabId: string, message: AgentMessage) => void;
@@ -336,8 +337,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     // "focused" means the whole window is in the foreground. Both must be
     // true for us to consider the user present.
     let isVisible = false;
+    let tabType: string | undefined;
     for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
-      if (tabs.some((t) => t.id === tabId)) {
+      const tab = tabs.find((t) => t.id === tabId);
+      if (tab) {
+        tabType = tab.type;
         isVisible = s.selectedWorktreeId === wtId && s.activeTabByWorktree[wtId] === tabId;
         break;
       }
@@ -365,12 +369,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     // "Can't see" = tab is not the active tab of the selected worktree,
     // OR the window is backgrounded.
     if (status === "idle" && (prev === "active" || prev === undefined) && !userIsWatching) {
-      // Cooldown: suppress rapid-fire notifications for the same tab.
-      // This prevents chime/popup spam when Claude bounces between active
-      // and idle states (e.g. during tool-use loops).
-      const cooldownExpiry = notificationCooldownUntil.get(tabId) ?? 0;
-      if (Date.now() < cooldownExpiry) return;
-      notificationCooldownUntil.set(tabId, Date.now() + NOTIFICATION_COOLDOWN_MS);
+      // Cooldown: suppress rapid-fire notifications for CLI terminal tabs
+      // where heuristic idle detection bounces between active/idle during
+      // tool-use loops. Agent SDK tabs have clean status transitions and
+      // don't need the cooldown.
+      if (tabType !== "agent") {
+        const cooldownExpiry = notificationCooldownUntil.get(tabId) ?? 0;
+        if (Date.now() < cooldownExpiry) return;
+        notificationCooldownUntil.set(tabId, Date.now() + NOTIFICATION_COOLDOWN_MS);
+      }
 
       if (s.appSettings?.notification_sound) {
         playNotificationSound();
@@ -631,6 +638,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     const path = get().getWorktreePath(worktreeId);
     if (!path) return;
     get().addAgentTab(worktreeId, path);
+  },
+
+  renameTab: (worktreeId, tabId, newLabel) => {
+    set((s) => {
+      const tabs = s.tabsByWorktree[worktreeId];
+      if (!tabs) return s;
+      return {
+        tabsByWorktree: {
+          ...s.tabsByWorktree,
+          [worktreeId]: tabs.map((t) =>
+            t.id === tabId ? { ...t, label: newLabel } : t
+          ),
+        },
+      };
+    });
   },
 
   // ── Agent session state ──
