@@ -68,6 +68,12 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
   // always fires exactly CLAUDE_IDLE_THRESHOLD_MS after the last byte — no
   // polling, no CPU use during long idles, no drift.
   const idleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set to true when the tab first enters "active" state (enough output to
+  // clear the byte threshold). Guards the short-reply and hook idle paths:
+  // Claude's initial prompt looks the same as the post-work prompt, so we
+  // require that real activity was observed before allowing idle transitions
+  // from the "never tracked" (undefined) state.
+  const wasEverActiveRef = useRef<boolean>(false);
   // Mirror props that are read inside the long-lived PTY-output listener
   // into refs. Keeps the main effect's dep array tight (so we don't tear
   // down the terminal when these change) while still letting changes take
@@ -220,8 +226,14 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       // buffer, Claude is waiting for input. This catches replies shorter
       // than CLAUDE_ACTIVE_BYTE_THRESHOLD (e.g. "Done." when the
       // prompt-box redraw bytes were spread across multiple flush windows).
+      //
+      // Guard: require that the tab was "active" at some point in this
+      // session. Without this, the initial Claude prompt (which also shows
+      // box-drawing chars) triggers a false idle notification on freshly
+      // opened sessions before the user has given Claude any work.
       if (
         current === undefined &&
+        wasEverActiveRef.current &&
         termInstanceRef.current &&
         looksLikeClaudePrompt(termInstanceRef.current)
       ) {
@@ -269,6 +281,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       const currentStatus = store.claudeStatusByTab[sessionId];
 
       if (currentStatus !== "active" && outputBytesRef.current >= CLAUDE_ACTIVE_BYTE_THRESHOLD) {
+        wasEverActiveRef.current = true;
         store.setClaudeStatus(sessionId, "active");
       }
 
@@ -297,8 +310,17 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     // the hooks.
     const unlistenHook = listen<string>(`claude-hook-${sessionId}`, (event) => {
       if (!isClaudeTabRef.current) return;
-      const hookEvent = event.payload;
+      const hookEvent = event.payload.toLowerCase();
       if (hookEvent === "stop" || hookEvent === "notification") {
+        // Respect startup grace — Claude fires a "Stop" hook when it
+        // first reaches its initial prompt, which is not actionable work.
+        if (
+          spawnedAtRef.current === 0 ||
+          Date.now() - spawnedAtRef.current < CLAUDE_STARTUP_GRACE_MS
+        ) {
+          return;
+        }
+
         // Cancel any pending heuristic idle timer — the hook is
         // authoritative.
         if (idleTimeoutRef.current !== null) {
@@ -307,10 +329,11 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
         }
         outputBytesRef.current = 0;
         const store = useAppStore.getState();
-        // Only transition if currently active (or if we never tracked
-        // activity — hooks can fire before the byte threshold was reached).
         const current = store.claudeStatusByTab[sessionId];
-        if (current === "active" || current === undefined) {
+        // Transition if currently active, or if status was cleared (user
+        // looked at the tab then walked away) but Claude was previously
+        // active in this session.
+        if (current === "active" || (current === undefined && wasEverActiveRef.current)) {
           store.setClaudeStatus(sessionId, "idle");
         }
       }

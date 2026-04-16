@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { onAction } from "@tauri-apps/plugin-notification";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { WorktreeView } from "./components/WorktreeView/WorktreeView";
 import { ProjectSettingsModal } from "./components/ProjectSettings/ProjectSettingsModal";
@@ -111,6 +112,15 @@ function App() {
       }
     });
     return unsub;
+  }, []);
+
+  // Bring window to foreground when user clicks an OS notification.
+  useEffect(() => {
+    const listener = onAction(() => {
+      getCurrentWindow().unminimize().catch(() => {});
+      getCurrentWindow().setFocus().catch(() => {});
+    });
+    return () => { listener.then((l) => l.unregister()); };
   }, []);
 
   // Single window-level file drop handler — routes to active session only
