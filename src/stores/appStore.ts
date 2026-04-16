@@ -685,13 +685,18 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
-    // Map agent status to claude status for unified notifications
+    // Map agent status to claude status for unified notifications.
+    // "active" = agent is working; "idle" = agent stopped and may need attention.
+    // Permission/input waiting are NOT mapped to idle — they're visible in the
+    // agent UI and shouldn't burn the cooldown that protects the "done" notification.
     const store = get();
-    if (status === "thinking" || status === "tool_use") {
+    if (status === "thinking" || status === "tool_use" || status === "waiting_permission" || status === "waiting_input") {
       store.setClaudeStatus(tabId, "active");
-    } else if (status === "idle" || status === "done" || status === "waiting_permission" || status === "waiting_input") {
+    } else if (status === "done" || status === "error") {
       store.setClaudeStatus(tabId, "idle");
     }
+    // Note: "idle" (initial state before first prompt) is intentionally excluded
+    // so opening an agent tab doesn't trigger a spurious notification.
   },
 
   setAgentModel: (tabId, model) => {
