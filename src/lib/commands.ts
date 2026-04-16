@@ -173,6 +173,19 @@ export async function terminalKill(sessionId: string): Promise<void> {
   return invoke("terminal_kill", { sessionId });
 }
 
+// Claude hooks commands
+export async function checkClaudeHooksInstalled(): Promise<boolean> {
+  return invoke("check_claude_hooks_installed");
+}
+
+export async function installClaudeHooks(): Promise<void> {
+  return invoke("install_claude_hooks");
+}
+
+export async function uninstallClaudeHooks(): Promise<void> {
+  return invoke("uninstall_claude_hooks");
+}
+
 // GitHub commands
 export interface PrInfo {
   number: number;

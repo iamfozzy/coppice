@@ -57,4 +57,5 @@ export interface AppSettings {
   shell: string;
   window_decorations: boolean;
   notification_sound: boolean;
+  notification_popup: boolean;
 }
