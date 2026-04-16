@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAppStore } from "../../stores/appStore";
+import * as commands from "../../lib/commands";
 import type { AppSettings } from "../../lib/types";
 
 const defaultSettings: AppSettings = {
@@ -20,12 +21,19 @@ export function AppSettingsModal() {
 
   const [form, setForm] = useState<AppSettings>(defaultSettings);
   const [saving, setSaving] = useState(false);
+  const [hooksInstalled, setHooksInstalled] = useState<boolean | null>(null);
+  const [hooksLoading, setHooksLoading] = useState(false);
 
   useEffect(() => {
     if (appSettings) {
       setForm({ ...appSettings });
     }
   }, [appSettings]);
+
+  // Check hook installation status when the modal opens.
+  useEffect(() => {
+    commands.checkClaudeHooksInstalled().then(setHooksInstalled).catch(() => {});
+  }, []);
 
   const handleSave = async () => {
     setSaving(true);
@@ -118,6 +126,55 @@ export function AppSettingsModal() {
             onChange={(notification_sound) => setForm({ ...form, notification_sound })}
             hint="Play a sound when Claude finishes and is waiting for input (background tabs only)"
           />
+
+          {/* Claude Code hooks integration */}
+          <div className="pt-2 border-t border-border-primary">
+            <label className="block text-xs text-text-secondary mb-1">Claude Code integration</label>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={hooksLoading || hooksInstalled === null}
+                onClick={async () => {
+                  setHooksLoading(true);
+                  try {
+                    if (hooksInstalled) {
+                      await commands.uninstallClaudeHooks();
+                      setHooksInstalled(false);
+                    } else {
+                      await commands.installClaudeHooks();
+                      setHooksInstalled(true);
+                    }
+                  } catch {
+                    // leave state unchanged
+                  } finally {
+                    setHooksLoading(false);
+                  }
+                }}
+                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                  hooksInstalled
+                    ? "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
+                    : "bg-accent hover:bg-accent-hover text-white"
+                } disabled:opacity-40`}
+              >
+                {hooksLoading
+                  ? "..."
+                  : hooksInstalled
+                    ? "Remove hooks"
+                    : "Install hooks"}
+              </button>
+              <span className="text-[10px] text-text-tertiary">
+                {hooksInstalled === null
+                  ? "Checking..."
+                  : hooksInstalled
+                    ? "Hooks installed — Claude notifies Coppice instantly when it stops"
+                    : "Not installed — using heuristic idle detection"}
+              </span>
+            </div>
+            <p className="mt-1 text-[10px] text-text-tertiary">
+              Adds Stop and Notification hooks to ~/.claude/settings.json for instant,
+              deterministic idle detection. Safe to use alongside your own hooks.
+            </p>
+          </div>
         </div>
 
         {/* Footer */}

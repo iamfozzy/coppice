@@ -10,6 +10,32 @@ import { useAppStore } from "../../stores/appStore";
 import "@xterm/xterm/css/xterm.css";
 
 const CLAUDE_IDLE_THRESHOLD_MS = 3000;
+
+/**
+ * Scan the terminal buffer for Claude Code's prompt-box pattern.
+ * Returns true if the last ~20 lines contain both:
+ *   - An input line:  │ >  (box-drawing vertical bar, then prompt cursor)
+ *   - A box border:   ╭ or ╰ (box-drawing corners)
+ *
+ * Used as a secondary heuristic to catch short replies that don't generate
+ * enough bytes to hit the activity threshold.
+ */
+function looksLikeClaudePrompt(term: Terminal): boolean {
+  const buf = term.buffer.active;
+  const total = buf.length;
+  const start = Math.max(0, total - 20);
+  let hasInputLine = false;
+  let hasBoxBorder = false;
+  for (let i = start; i < total; i++) {
+    const line = buf.getLine(i);
+    if (!line) continue;
+    const text = line.translateToString(true);
+    if (/\u2502\s*>\s/.test(text)) hasInputLine = true;
+    if (text.includes("\u256d") || text.includes("\u2570")) hasBoxBorder = true;
+    if (hasInputLine && hasBoxBorder) return true;
+  }
+  return false;
+}
 // Grace period after Claude's first output — ignore all activity during
 // startup so the welcome banner + initial prompt don't trigger a false
 // notification. Measured from FIRST OUTPUT (not from component mount) so
@@ -188,14 +214,31 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       return true;
     });
 
-    // Fire the idle transition if the tab is currently "active" in the
-    // store. We read from the store rather than a local ref so external
-    // clears (setActiveTab, cycleTab, selectWorktree, focus handler) can't
-    // leave us with a desynced view of reality.
+    // Fire the idle transition. Reads from the store (not a local ref) so
+    // external clears (setActiveTab, cycleTab, selectWorktree, focus) can't
+    // leave the detector desynced from reality.
     const fireIdleCheck = () => {
       idleTimeoutRef.current = null;
       const store = useAppStore.getState();
-      if (store.claudeStatusByTab[sessionId] === "active") {
+      const current = store.claudeStatusByTab[sessionId];
+
+      // Standard path: byte threshold was reached → status is "active" → idle.
+      if (current === "active") {
+        outputBytesRef.current = 0;
+        store.setClaudeStatus(sessionId, "idle");
+        return;
+      }
+
+      // Short-reply path: if we never accumulated enough bytes to enter
+      // "active" state but Claude's prompt box is visible in the terminal
+      // buffer, Claude is waiting for input. This catches replies shorter
+      // than CLAUDE_ACTIVE_BYTE_THRESHOLD (e.g. "Done." when the
+      // prompt-box redraw bytes were spread across multiple flush windows).
+      if (
+        current === undefined &&
+        termInstanceRef.current &&
+        looksLikeClaudePrompt(termInstanceRef.current)
+      ) {
         outputBytesRef.current = 0;
         store.setClaudeStatus(sessionId, "idle");
       }
@@ -257,6 +300,33 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       }
       if (isClaudeTabRef.current) {
         useAppStore.getState().removeClaudeStatus(sessionId);
+      }
+    });
+
+    // Deterministic idle detection via Claude Code hooks. When hooks are
+    // installed, Claude writes a status file that the Rust backend watches
+    // and forwards as a Tauri event. This fires the idle transition
+    // immediately — no heuristic delay, no byte thresholds. The heuristic
+    // path above remains as a fallback for users who haven't installed
+    // the hooks.
+    const unlistenHook = listen<string>(`claude-hook-${sessionId}`, (event) => {
+      if (!isClaudeTabRef.current) return;
+      const hookEvent = event.payload;
+      if (hookEvent === "stop" || hookEvent === "notification") {
+        // Cancel any pending heuristic idle timer — the hook is
+        // authoritative.
+        if (idleTimeoutRef.current !== null) {
+          clearTimeout(idleTimeoutRef.current);
+          idleTimeoutRef.current = null;
+        }
+        outputBytesRef.current = 0;
+        const store = useAppStore.getState();
+        // Only transition if currently active (or if we never tracked
+        // activity — hooks can fire before the byte threshold was reached).
+        const current = store.claudeStatusByTab[sessionId];
+        if (current === "active" || current === undefined) {
+          store.setClaudeStatus(sessionId, "idle");
+        }
       }
     });
 
@@ -345,6 +415,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       window.removeEventListener("terminal-clear", onClear);
       unlistenOutput.then((fn) => fn());
       unlistenExit.then((fn) => fn());
+      unlistenHook.then((fn) => fn());
       if (idleTimeoutRef.current !== null) {
         clearTimeout(idleTimeoutRef.current);
         idleTimeoutRef.current = null;
