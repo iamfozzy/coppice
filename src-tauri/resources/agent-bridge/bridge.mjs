@@ -38,6 +38,7 @@ function nextCallId() {
 
 let activeQuery = null;
 let activeAbort = null;
+let hasInitialized = false;
 
 // ── Stdin reader ──
 
@@ -146,6 +147,13 @@ async function handleCommand(msg) {
 // ── Start agent session ──
 
 async function startSession(msg) {
+  // Abort any existing query before starting a new one
+  if (activeAbort) {
+    activeAbort.abort();
+    activeAbort = null;
+  }
+  activeQuery = null;
+
   const opts = msg.options || {};
   const abortController = new AbortController();
   activeAbort = abortController;
@@ -267,12 +275,15 @@ function processMessage(message) {
   switch (message.type) {
     case "system":
       if (message.subtype === "init") {
+        const isFirst = !hasInitialized;
+        hasInitialized = true;
         emit({
           type: "init",
           sessionId: message.session_id,
           tools: message.tools || [],
           model: message.model || "",
           permissionMode: message.permissionMode || "",
+          isResume: !isFirst,
         });
       } else if (message.subtype === "status") {
         // SDK status updates (e.g. "compacting")

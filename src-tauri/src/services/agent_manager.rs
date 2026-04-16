@@ -21,11 +21,44 @@ impl AgentManager {
         }
     }
 
-    /// Spawn a new agent bridge process for the given session.
+    /// Start an agent query. If a bridge process already exists for this
+    /// session, reuse it by sending a new start command. Otherwise spawn
+    /// a fresh bridge process.
     ///
     /// `bridge_path` is the absolute path to `bridge.mjs`.
     /// `start_msg` is the full JSON start command to write to stdin.
-    pub fn spawn(
+    pub fn start(
+        &self,
+        session_id: &str,
+        bridge_path: &str,
+        start_msg: &str,
+        api_key: Option<&str>,
+        app_handle: &AppHandle,
+    ) -> Result<(), String> {
+        // Check if we already have a running bridge for this session
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            if let Some(session) = sessions.get_mut(session_id) {
+                // Reuse existing bridge process — send new start command
+                let line = format!("{}\n", start_msg);
+                session
+                    .stdin
+                    .write_all(line.as_bytes())
+                    .map_err(|e| format!("Failed to write to agent: {}", e))?;
+                session
+                    .stdin
+                    .flush()
+                    .map_err(|e| format!("Failed to flush agent stdin: {}", e))?;
+                return Ok(());
+            }
+        }
+
+        // No existing bridge — spawn a new one
+        self.spawn(session_id, bridge_path, start_msg, api_key, app_handle)
+    }
+
+    /// Spawn a new agent bridge process for the given session.
+    fn spawn(
         &self,
         session_id: &str,
         bridge_path: &str,

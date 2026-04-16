@@ -96,12 +96,15 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
     switch (type) {
       case "init": {
         setSdkSessionId(sessionId, msg.sessionId as string);
-        appendMessage(sessionId, {
-          id: nextMsgId(),
-          type: "system",
-          content: `Session started (model: ${msg.model || "default"})`,
-          timestamp: Date.now(),
-        });
+        // Only show "Session started" for the first init, not on resume
+        if (!msg.isResume) {
+          appendMessage(sessionId, {
+            id: nextMsgId(),
+            type: "system",
+            content: `Session started (model: ${msg.model || "default"})`,
+            timestamp: Date.now(),
+          });
+        }
         break;
       }
 

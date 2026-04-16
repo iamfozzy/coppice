@@ -100,7 +100,7 @@ pub fn agent_start(
         "options": options,
     });
 
-    agent_manager.spawn(
+    agent_manager.start(
         &session_id,
         &bridge_path,
         &start_msg.to_string(),
