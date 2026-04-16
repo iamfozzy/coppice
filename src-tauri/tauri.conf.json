@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicotsx/tauri/v2/crates/tauri-cli/schema.json",
   "productName": "Coppice",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "identifier": "com.coppice.app",
   "build": {
     "frontendDist": "../dist",
