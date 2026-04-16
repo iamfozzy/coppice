@@ -258,3 +258,95 @@ export async function resolvePrComment(
 ): Promise<void> {
   return invoke("resolve_pr_comment", { projectId, threadId, resolve });
 }
+
+// Agent commands
+export interface AgentStartOptions {
+  model?: string;
+  effort?: string;
+  permissionMode?: string;
+  allowedTools?: string[];
+  maxTurns?: number;
+  maxBudgetUsd?: number;
+  resume?: string;
+  apiKey?: string;
+}
+
+export async function agentStart(
+  sessionId: string,
+  cwd: string,
+  prompt: string,
+  options?: AgentStartOptions
+): Promise<void> {
+  return invoke("agent_start", {
+    sessionId,
+    cwd,
+    prompt,
+    model: options?.model,
+    effort: options?.effort,
+    permissionMode: options?.permissionMode,
+    allowedTools: options?.allowedTools,
+    maxTurns: options?.maxTurns,
+    maxBudgetUsd: options?.maxBudgetUsd,
+    resume: options?.resume,
+    apiKey: options?.apiKey,
+  });
+}
+
+export async function agentSendInput(
+  sessionId: string,
+  text: string
+): Promise<void> {
+  return invoke("agent_send_input", { sessionId, text });
+}
+
+export async function agentInterrupt(sessionId: string): Promise<void> {
+  return invoke("agent_interrupt", { sessionId });
+}
+
+export async function agentToolResponse(
+  sessionId: string,
+  callId: string,
+  behavior: "allow" | "deny",
+  message?: string
+): Promise<void> {
+  return invoke("agent_tool_response", { sessionId, callId, behavior, message });
+}
+
+export async function agentAskResponse(
+  sessionId: string,
+  callId: string,
+  answers: Record<string, string>
+): Promise<void> {
+  return invoke("agent_ask_response", { sessionId, callId, answers });
+}
+
+export async function agentSetModel(
+  sessionId: string,
+  model: string
+): Promise<void> {
+  return invoke("agent_set_model", { sessionId, model });
+}
+
+export async function agentSetPermissionMode(
+  sessionId: string,
+  mode: string
+): Promise<void> {
+  return invoke("agent_set_permission_mode", { sessionId, mode });
+}
+
+export async function agentClose(sessionId: string): Promise<void> {
+  return invoke("agent_close", { sessionId });
+}
+
+export async function agentExists(sessionId: string): Promise<boolean> {
+  return invoke("agent_exists", { sessionId });
+}
+
+export interface AgentAvailability {
+  available: boolean;
+  reason?: string;
+}
+
+export async function agentCheckAvailable(): Promise<AgentAvailability> {
+  return invoke("agent_check_available");
+}

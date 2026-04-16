@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod claude_hooks;
 pub mod project;
 pub mod worktree;

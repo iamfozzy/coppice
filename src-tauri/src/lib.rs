@@ -5,6 +5,7 @@ mod services;
 mod settings;
 
 use db::Database;
+use services::agent_manager::AgentManager;
 use services::claude_hooks::ClaudeHookWatcher;
 use services::pty_manager::PtyManager;
 use tauri::Manager;
@@ -13,6 +14,7 @@ use tauri::Manager;
 pub fn run() {
     let database = Database::new().expect("Failed to initialize database");
     let pty_manager = PtyManager::new();
+    let agent_manager = AgentManager::new();
     let settings_state = settings::SettingsState::new();
 
     // Ensure the hook directory exists and clean up stale status files
@@ -40,6 +42,7 @@ pub fn run() {
         })
         .manage(database)
         .manage(pty_manager)
+        .manage(agent_manager)
         .manage(settings_state)
         .invoke_handler(tauri::generate_handler![
             // Project commands
@@ -88,6 +91,17 @@ pub fn run() {
             commands::external::open_in_editor,
             commands::external::open_in_terminal,
             commands::external::open_in_finder,
+            // Agent commands
+            commands::agent::agent_start,
+            commands::agent::agent_send_input,
+            commands::agent::agent_interrupt,
+            commands::agent::agent_tool_response,
+            commands::agent::agent_ask_response,
+            commands::agent::agent_set_model,
+            commands::agent::agent_set_permission_mode,
+            commands::agent::agent_close,
+            commands::agent::agent_exists,
+            commands::agent::agent_check_available,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

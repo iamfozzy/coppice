@@ -16,9 +16,13 @@ export function WorktreeView() {
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const newTerminalTab = useAppStore((s) => s.newTerminalTab);
   const newClaudeTab = useAppStore((s) => s.newClaudeTab);
+  const newAgentTab = useAppStore((s) => s.newAgentTab);
+  const addAgentTab = useAppStore((s) => s.addAgentTab);
   const setWorktreeTargetBranch = useAppStore((s) => s.setWorktreeTargetBranch);
   const pendingClaudeCommand = useAppStore((s) => s.pendingClaudeCommand);
   const consumeClaudeCommand = useAppStore((s) => s.consumeClaudeCommand);
+  const pendingAgentPrompt = useAppStore((s) => s.pendingAgentPrompt);
+  const consumeAgentPrompt = useAppStore((s) => s.consumeAgentPrompt);
 
   const appSettings = useAppStore((s) => s.appSettings);
   const prCommentsByProject = useAppStore((s) => s.prCommentsByProject);
@@ -39,7 +43,7 @@ export function WorktreeView() {
     useShallow((s) => {
       const result: Record<string, ClaudeStatus> = {};
       for (const t of tabs) {
-        if (t.type !== "claude") continue;
+        if (t.type !== "claude" && t.type !== "agent") continue;
         const st = s.claudeStatusByTab[t.id];
         if (st) result[t.id] = st;
       }
@@ -83,6 +87,16 @@ export function WorktreeView() {
       }
     }
   }, [pendingClaudeCommand, worktree, consumeClaudeCommand, addTab]);
+
+  // Watch for pending Agent prompts
+  useEffect(() => {
+    if (pendingAgentPrompt && worktree) {
+      const prompt = consumeAgentPrompt();
+      if (prompt) {
+        addAgentTab(worktree.id, worktree.path, prompt);
+      }
+    }
+  }, [pendingAgentPrompt, worktree, consumeAgentPrompt, addAgentTab]);
 
   // Auto-create a Claude tab if worktree has no Claude tabs, after a short delay
   const hasClaude = tabs.some((t) => t.type === "claude");
@@ -151,7 +165,7 @@ export function WorktreeView() {
               label={tab.label}
               type={tab.type}
               active={tab.id === activeTabId}
-              claudeStatus={tab.type === "claude" ? claudeStatusByTab[tab.id] ?? null : null}
+              claudeStatus={tab.type === "claude" || tab.type === "agent" ? claudeStatusByTab[tab.id] ?? null : null}
               onClick={() => setActiveTab(wtId, tab.id)}
               onClose={() => closeTab(wtId, tab.id)}
             />
@@ -170,7 +184,7 @@ export function WorktreeView() {
           <button
             className="flex items-center justify-center w-10 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none"
             onClick={() => newClaudeTab(wtId)}
-            title="New Claude session (Ctrl+Shift+T)"
+            title="New Claude terminal (Ctrl+Shift+T)"
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
               <rect x="2" y="6" width="12" height="8" rx="2" />
@@ -180,6 +194,18 @@ export function WorktreeView() {
               <circle cx="10.5" cy="10" r="1" fill="currentColor" stroke="none" />
               <line x1="0.5" y1="9" x2="2" y2="9" />
               <line x1="14" y1="9" x2="15.5" y2="9" />
+            </svg>
+          </button>
+          <button
+            className="flex items-center justify-center w-10 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none"
+            onClick={() => newAgentTab(wtId)}
+            title="New Agent session (Ctrl+Shift+A)"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="8" cy="8" r="6" />
+              <circle cx="6" cy="7" r="1" fill="currentColor" stroke="none" />
+              <circle cx="10" cy="7" r="1" fill="currentColor" stroke="none" />
+              <path d="M5.5 10.5c.7.8 1.5 1 2.5 1s1.8-.2 2.5-1" />
             </svg>
           </button>
         </div>
@@ -229,7 +255,7 @@ function Tab({
   onClose,
 }: {
   label: string;
-  type: "terminal" | "claude" | "diff";
+  type: "terminal" | "claude" | "agent" | "diff";
   active: boolean;
   claudeStatus: ClaudeStatus | null;
   onClick: () => void;
@@ -238,8 +264,9 @@ function Tab({
   // Claude tabs render a status-aware dot on every tab (active or not) so the
   // user can tell at a glance which tab fired a notification. Non-Claude tabs
   // keep the original behavior: colored when active, dim when not.
-  const claudeActive = type === "claude" && claudeStatus === "active";
-  const claudeIdle = type === "claude" && claudeStatus === "idle";
+  const isClaudeType = type === "claude" || type === "agent";
+  const claudeActive = isClaudeType && claudeStatus === "active";
+  const claudeIdle = isClaudeType && claudeStatus === "idle";
 
   let dotNode: React.ReactNode;
   if (claudeActive) {
@@ -253,7 +280,7 @@ function Tab({
     dotNode = <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-warning" />;
   } else {
     const activeColor =
-      type === "claude" ? "bg-accent" : type === "diff" ? "bg-warning" : "bg-text-tertiary";
+      isClaudeType ? "bg-accent" : type === "diff" ? "bg-warning" : "bg-text-tertiary";
     dotNode = (
       <span
         className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? activeColor : "bg-text-tertiary/40"}`}

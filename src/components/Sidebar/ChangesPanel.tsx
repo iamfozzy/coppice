@@ -13,6 +13,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
   const worktreesByProject = useAppStore((s) => s.worktreesByProject);
   const projects = useAppStore((s) => s.projects);
   const requestClaudeTab = useAppStore((s) => s.requestClaudeTab);
+  const requestAgentTab = useAppStore((s) => s.requestAgentTab);
   const openDiffTab = useAppStore((s) => s.openDiffTab);
   const appSettings = useAppStore((s) => s.appSettings);
 
@@ -139,15 +140,20 @@ export const ChangesPanel = memo(function ChangesPanel() {
     }
   };
 
+  const useAgent = appSettings?.default_claude_mode === "agent";
+  const sendToAgent = (prompt: string) => {
+    if (useAgent) {
+      requestAgentTab(prompt);
+    } else {
+      requestClaudeTab(`${claudeCmd} "${prompt}"`);
+    }
+  };
+
   const handlePush = () => {
     if (uncommittedFiles.length > 0) {
-      requestClaudeTab(
-        `${claudeCmd} "Commit all the changes in this worktree with a clear, descriptive commit message, then push to origin."`
-      );
+      sendToAgent("Commit all the changes in this worktree with a clear, descriptive commit message, then push to origin.");
     } else {
-      requestClaudeTab(
-        `${claudeCmd} "Push the current branch to origin."`
-      );
+      sendToAgent("Push the current branch to origin.");
     }
   };
 
@@ -198,19 +204,17 @@ export const ChangesPanel = memo(function ChangesPanel() {
             branch={worktree.branch}
             worktreePath={worktree.path}
             onFixWithClaude={(context) => {
-              requestClaudeTab(
-                `${claudeCmd} "The CI checks have failed. Here are the logs:\n\n${context
-                  .replace(/"/g, '\\"')
-                  .substring(0, 5000)}\n\nPlease analyze and fix the failures."`
+              sendToAgent(
+                `The CI checks have failed. Here are the logs:\n\n${context.substring(0, 5000)}\n\nPlease analyze and fix the failures.`
               );
             }}
             onOpenFile={(file) => openDiffTab(worktree.id, file, worktree.path, "pr", baseBranch)}
             onCreatePrWithClaude={() => {
-              if (project.pr_create_skill) {
+              if (project.pr_create_skill && !useAgent) {
                 requestClaudeTab(project.pr_create_skill);
               } else {
-                requestClaudeTab(
-                  `${claudeCmd} "Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}"`
+                sendToAgent(
+                  `Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}`
                 );
               }
             }}

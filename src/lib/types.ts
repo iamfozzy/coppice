@@ -58,4 +58,65 @@ export interface AppSettings {
   window_decorations: boolean;
   notification_sound: boolean;
   notification_popup: boolean;
+  default_claude_mode: "agent" | "terminal";
+  agent_default_model: string;
+  agent_default_effort: EffortLevel;
+  agent_node_path: string;
+  agent_api_key: string;
+}
+
+// ── Agent SDK types ──
+
+export type AgentStatus = "idle" | "thinking" | "tool_use" | "waiting_permission" | "waiting_input" | "done" | "error";
+export type EffortLevel = "low" | "medium" | "high" | "max";
+export type AgentPermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions";
+
+export interface AgentMessage {
+  id: string;
+  type: "user" | "assistant" | "tool_call" | "tool_result" | "system" | "error";
+  content?: string;
+  toolName?: string;
+  toolInput?: unknown;
+  toolOutput?: string;
+  toolUseId?: string;
+  isError?: boolean;
+  thinkingText?: string;
+  timestamp: number;
+}
+
+export interface AgentPendingPermission {
+  callId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+}
+
+export interface AgentPendingQuestion {
+  callId: string;
+  questions: Array<{
+    question: string;
+    header: string;
+    options: Array<{ label: string; description: string; preview?: string }>;
+    multiSelect: boolean;
+  }>;
+}
+
+export interface AgentCost {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalCostUsd: number;
+}
+
+export interface AgentSessionState {
+  messages: AgentMessage[];
+  status: AgentStatus;
+  model: string;
+  effort: EffortLevel;
+  permissionMode: AgentPermissionMode;
+  cost: AgentCost | null;
+  sdkSessionId: string | null;
+  pendingPermission: AgentPendingPermission | null;
+  pendingQuestion: AgentPendingQuestion | null;
+  streamingText: string;
 }

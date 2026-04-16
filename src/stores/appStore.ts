@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode } from "../lib/types";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
 import { isWindowFocused } from "../lib/windowFocus";
@@ -21,7 +21,7 @@ const notificationCooldownUntil = new Map<string, number>();
 
 export interface TabInfo {
   id: string;
-  type: "terminal" | "claude" | "diff";
+  type: "terminal" | "claude" | "agent" | "diff";
   label: string;
   command?: string;
   cwd: string;
@@ -53,6 +53,7 @@ interface AppState {
   editingProject: "new" | string | null;
   sidebarWidth: number;
   pendingClaudeCommand: string | null;
+  pendingAgentPrompt: string | null;
   pendingRunner: { key: string } | null;
   deletingWorktreeIds: Set<string>;
 
@@ -61,8 +62,11 @@ interface AppState {
   activeTabByWorktree: Record<string, string | null>;
   runnersByWorktree: Record<string, Record<string, RunnerInfo>>;
 
-  // Claude tab activity status (keyed by tab ID)
+  // Claude tab activity status (keyed by tab ID — covers both claude and agent tabs)
   claudeStatusByTab: Record<string, ClaudeStatus>;
+
+  // Agent session state (keyed by tab ID)
+  agentSessionByTab: Record<string, AgentSessionState>;
 
   // PR comments (keyed by project ID)
   prCommentsByProject: Record<string, import("../lib/commands").PrComment[]>;
@@ -81,6 +85,8 @@ interface AppState {
   setSidebarWidth: (width: number) => void;
   requestClaudeTab: (command: string) => void;
   consumeClaudeCommand: () => string | null;
+  requestAgentTab: (prompt: string) => void;
+  consumeAgentPrompt: () => string | null;
   requestRunner: (key: string) => void;
   consumeRunner: () => { key: string } | null;
 
@@ -115,6 +121,22 @@ interface AppState {
   closeActiveTab: (worktreeId: string) => void;
   newTerminalTab: (worktreeId: string) => void;
   newClaudeTab: (worktreeId: string) => void;
+  addAgentTab: (worktreeId: string, cwd: string, prompt?: string) => void;
+  newAgentTab: (worktreeId: string) => void;
+
+  // Actions — agent session state
+  appendAgentMessage: (tabId: string, message: AgentMessage) => void;
+  updateAgentStreamingText: (tabId: string, text: string) => void;
+  clearAgentStreamingText: (tabId: string) => void;
+  setAgentStatus: (tabId: string, status: AgentStatus) => void;
+  setAgentModel: (tabId: string, model: string) => void;
+  setAgentEffort: (tabId: string, effort: EffortLevel) => void;
+  setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
+  setAgentCost: (tabId: string, cost: AgentCost) => void;
+  setAgentSdkSessionId: (tabId: string, id: string) => void;
+  setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
+  setAgentPendingQuestion: (tabId: string, pending: AgentPendingQuestion | null) => void;
+  removeAgentSession: (tabId: string) => void;
 
   // Actions — runners
   expandRunner: (worktreeId: string, key: string, command: string, cwd: string) => void;
@@ -136,12 +158,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   editingProject: null,
   sidebarWidth: 310,
   pendingClaudeCommand: null,
+  pendingAgentPrompt: null,
   pendingRunner: null,
   deletingWorktreeIds: new Set(),
   tabsByWorktree: {},
   activeTabByWorktree: {},
   runnersByWorktree: {},
   claudeStatusByTab: {},
+  agentSessionByTab: {},
   prCommentsByProject: {},
   editingAppSettings: false,
 
@@ -167,6 +191,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const cmd = get().pendingClaudeCommand;
     if (cmd) set({ pendingClaudeCommand: null });
     return cmd;
+  },
+  requestAgentTab: (prompt) => set({ pendingAgentPrompt: prompt }),
+  consumeAgentPrompt: () => {
+    const p = get().pendingAgentPrompt;
+    if (p) set({ pendingAgentPrompt: null });
+    return p;
   },
   requestRunner: (key) => set({ pendingRunner: { key } }),
   consumeRunner: () => {
@@ -459,6 +489,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   closeTab: (worktreeId, tabId) => {
     const s = get();
     const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    const closedTab = tabs.find((t) => t.id === tabId);
     const next = tabs.filter((t) => t.id !== tabId);
     const activeTab = s.activeTabByWorktree[worktreeId];
     let newActive = activeTab;
@@ -468,11 +499,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     const claudeStatus = tabId in s.claudeStatusByTab
       ? (() => { const { [tabId]: _, ...rest } = s.claudeStatusByTab; return rest; })()
       : s.claudeStatusByTab;
+    const agentSession = tabId in s.agentSessionByTab
+      ? (() => { const { [tabId]: _, ...rest } = s.agentSessionByTab; return rest; })()
+      : s.agentSessionByTab;
     set({
       tabsByWorktree: { ...s.tabsByWorktree, [worktreeId]: next },
       activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: newActive },
       claudeStatusByTab: claudeStatus,
+      agentSessionByTab: agentSession,
     });
+    // Close the agent bridge process if this was an agent tab
+    if (closedTab?.type === "agent") {
+      commands.agentClose(tabId).catch(() => {});
+    }
   },
 
   setActiveTab: (worktreeId, tabId) => {
@@ -535,6 +574,216 @@ export const useAppStore = create<AppState>((set, get) => ({
     const project = projectId ? s.projects.find((p) => p.id === projectId) : undefined;
     const claudeCmd = project?.claude_command || s.appSettings?.claude_command || "claude";
     s.addTab(worktreeId, "claude", path, claudeCmd);
+  },
+
+  addAgentTab: (worktreeId, cwd, prompt) => {
+    const s = get();
+    const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    let maxNum = 0;
+    for (const t of tabs) {
+      if (t.type !== "agent") continue;
+      const m = t.label.match(/^Agent #(\d+)$/);
+      if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+    }
+    const label = `Agent #${maxNum + 1}`;
+    const tab: TabInfo = {
+      id: `agent-${worktreeId}-${Date.now()}`,
+      type: "agent",
+      label,
+      command: prompt,
+      cwd,
+    };
+    const sessionState: AgentSessionState = {
+      messages: [],
+      status: "idle",
+      model: s.appSettings?.agent_default_model || "",
+      effort: s.appSettings?.agent_default_effort || "high",
+      permissionMode: "acceptEdits",
+      cost: null,
+      sdkSessionId: null,
+      pendingPermission: null,
+      pendingQuestion: null,
+      streamingText: "",
+    };
+    set((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [worktreeId]: [...(state.tabsByWorktree[worktreeId] ?? []), tab],
+      },
+      activeTabByWorktree: {
+        ...state.activeTabByWorktree,
+        [worktreeId]: tab.id,
+      },
+      agentSessionByTab: {
+        ...state.agentSessionByTab,
+        [tab.id]: sessionState,
+      },
+    }));
+  },
+
+  newAgentTab: (worktreeId) => {
+    const path = get().getWorktreePath(worktreeId);
+    if (!path) return;
+    get().addAgentTab(worktreeId, path);
+  },
+
+  // ── Agent session state ──
+
+  appendAgentMessage: (tabId, message) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, messages: [...session.messages, message] },
+        },
+      };
+    });
+  },
+
+  updateAgentStreamingText: (tabId, text) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, streamingText: session.streamingText + text },
+        },
+      };
+    });
+  },
+
+  clearAgentStreamingText: (tabId) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, streamingText: "" },
+        },
+      };
+    });
+  },
+
+  setAgentStatus: (tabId, status) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, status },
+        },
+      };
+    });
+    // Map agent status to claude status for unified notifications
+    const store = get();
+    if (status === "thinking" || status === "tool_use") {
+      store.setClaudeStatus(tabId, "active");
+    } else if (status === "idle" || status === "done" || status === "waiting_permission" || status === "waiting_input") {
+      store.setClaudeStatus(tabId, "idle");
+    }
+  },
+
+  setAgentModel: (tabId, model) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, model },
+        },
+      };
+    });
+  },
+
+  setAgentEffort: (tabId, effort) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, effort },
+        },
+      };
+    });
+  },
+
+  setAgentPermissionMode: (tabId, mode) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, permissionMode: mode },
+        },
+      };
+    });
+  },
+
+  setAgentCost: (tabId, cost) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, cost },
+        },
+      };
+    });
+  },
+
+  setAgentSdkSessionId: (tabId, id) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, sdkSessionId: id },
+        },
+      };
+    });
+  },
+
+  setAgentPendingPermission: (tabId, pending) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, pendingPermission: pending },
+        },
+      };
+    });
+  },
+
+  setAgentPendingQuestion: (tabId, pending) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, pendingQuestion: pending },
+        },
+      };
+    });
+  },
+
+  removeAgentSession: (tabId) => {
+    set((s) => {
+      const { [tabId]: _, ...rest } = s.agentSessionByTab;
+      return { agentSessionByTab: rest };
+    });
   },
 
   // ── Runners ──

@@ -13,6 +13,11 @@ const defaultSettings: AppSettings = {
   window_decorations: true,
   notification_sound: true,
   notification_popup: true,
+  default_claude_mode: "terminal",
+  agent_default_model: "",
+  agent_default_effort: "high",
+  agent_node_path: "",
+  agent_api_key: "",
 };
 
 export function AppSettingsModal() {
