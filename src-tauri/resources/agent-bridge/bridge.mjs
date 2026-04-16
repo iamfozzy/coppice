@@ -162,7 +162,7 @@ async function startSession(msg) {
     cwd: msg.cwd,
     abortController,
     includePartialMessages: true,
-    settingSources: opts.settingSources || ["project"],
+    settingSources: opts.settingSources || ["user", "project", "local"],
   };
 
   if (opts.model) queryOptions.model = opts.model;
