@@ -1,6 +1,20 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerEntry {
+    pub server_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -19,6 +33,7 @@ pub struct AppSettings {
     pub agent_default_effort: String,
     pub agent_node_path: String,
     pub agent_api_key: String,
+    pub mcp_servers: HashMap<String, McpServerEntry>,
 }
 
 impl Default for AppSettings {
@@ -38,6 +53,7 @@ impl Default for AppSettings {
             agent_default_effort: "high".to_string(),
             agent_node_path: String::new(),
             agent_api_key: String::new(),
+            mcp_servers: HashMap::new(),
         }
     }
 }

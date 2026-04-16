@@ -39,6 +39,7 @@ function nextCallId() {
 let activeQuery = null;
 let activeAbort = null;
 let hasInitialized = false;
+let currentPermissionMode = "default";
 
 // ── Stdin reader ──
 
@@ -99,6 +100,7 @@ async function handleCommand(msg) {
       break;
 
     case "set_permission_mode":
+      currentPermissionMode = msg.mode || "default";
       if (activeQuery) {
         await activeQuery.setPermissionMode(msg.mode).catch((err) => {
           log("setPermissionMode error:", err.message);
@@ -167,45 +169,54 @@ async function startSession(msg) {
 
   if (opts.model) queryOptions.model = opts.model;
   if (opts.effort) queryOptions.effort = opts.effort;
-  if (opts.permissionMode) queryOptions.permissionMode = opts.permissionMode;
+  if (opts.permissionMode) {
+    queryOptions.permissionMode = opts.permissionMode;
+    currentPermissionMode = opts.permissionMode;
+  }
   if (opts.allowedTools) queryOptions.allowedTools = opts.allowedTools;
   if (opts.maxTurns) queryOptions.maxTurns = opts.maxTurns;
   if (opts.maxBudgetUsd) queryOptions.maxBudgetUsd = opts.maxBudgetUsd;
   if (opts.resume) queryOptions.resume = opts.resume;
   if (opts.systemPrompt) queryOptions.systemPrompt = opts.systemPrompt;
+  if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
+    queryOptions.mcpServers = opts.mcpServers;
+  }
 
-  // Permission callback — blocks until frontend responds
+  // Permission callback — blocks until frontend responds (unless bypassed)
   queryOptions.canUseTool = async (toolName, toolInput, context) => {
-    // AskUserQuestion gets special handling
-    if (toolName === "AskUserQuestion") {
-      const callId = nextCallId();
-      emit({
-        type: "ask_user",
-        callId,
-        questions: toolInput.questions || [],
-      });
-
-      const answers = await new Promise((resolve) => {
-        pendingAskResponses.set(callId, { resolve });
-        // Timeout after 5 minutes
-        setTimeout(() => {
-          if (pendingAskResponses.has(callId)) {
-            pendingAskResponses.delete(callId);
-            resolve({});
-          }
-        }, 300_000);
-      });
-
-      return {
-        behavior: "allow",
-        updatedInput: {
-          questions: toolInput.questions,
-          answers,
-        },
-      };
+    // Bypass mode — auto-allow everything without prompting
+    if (currentPermissionMode === "bypassPermissions") {
+      // Still route AskUserQuestion to the frontend for user interaction
+      if (toolName === "AskUserQuestion") {
+        return handleAskUserTool(toolInput);
+      }
+      return { behavior: "allow" };
     }
 
-    // Regular tool permission request
+    // AcceptEdits mode — auto-allow file operations, prompt for the rest
+    if (currentPermissionMode === "acceptEdits") {
+      const autoAllowTools = [
+        "Edit", "Write", "Read", "Glob", "Grep",
+        "NotebookEdit", "MultiEdit",
+      ];
+      if (autoAllowTools.includes(toolName)) {
+        return { behavior: "allow" };
+      }
+      if (toolName === "Bash") {
+        const cmd = (toolInput.command || "").trim();
+        const safePrefixes = /^(ls|cat|head|tail|wc|find|echo|pwd|mkdir|touch|cp|mv)\b/;
+        if (safePrefixes.test(cmd)) {
+          return { behavior: "allow" };
+        }
+      }
+    }
+
+    // AskUserQuestion always routes to the frontend
+    if (toolName === "AskUserQuestion") {
+      return handleAskUserTool(toolInput);
+    }
+
+    // Regular tool permission request — prompt the frontend
     const callId = nextCallId();
     emit({
       type: "tool_permission",
@@ -228,6 +239,34 @@ async function startSession(msg) {
       }, 120_000);
     });
   };
+
+  /** Route AskUserQuestion to the frontend and wait for answers. */
+  async function handleAskUserTool(toolInput) {
+    const callId = nextCallId();
+    emit({
+      type: "ask_user",
+      callId,
+      questions: toolInput.questions || [],
+    });
+
+    const answers = await new Promise((resolve) => {
+      pendingAskResponses.set(callId, { resolve });
+      setTimeout(() => {
+        if (pendingAskResponses.has(callId)) {
+          pendingAskResponses.delete(callId);
+          resolve({});
+        }
+      }, 300_000);
+    });
+
+    return {
+      behavior: "allow",
+      updatedInput: {
+        questions: toolInput.questions,
+        answers,
+      },
+    };
+  }
 
   // Hooks — emit status on Stop/Notification
   queryOptions.hooks = {

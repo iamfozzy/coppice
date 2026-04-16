@@ -63,6 +63,15 @@ export interface AppSettings {
   agent_default_effort: EffortLevel;
   agent_node_path: string;
   agent_api_key: string;
+  mcp_servers: Record<string, McpServerEntry>;
+}
+
+export interface McpServerEntry {
+  server_type: "stdio" | "sse" | "http";
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string>;
 }
 
 // ── Agent SDK types ──

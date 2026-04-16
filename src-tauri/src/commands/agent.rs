@@ -92,6 +92,48 @@ pub fn agent_start(
         options.insert("apiKey".into(), serde_json::Value::String(key.clone()));
     }
 
+    // Pass MCP servers from settings
+    {
+        let s = settings.inner().get();
+        if !s.mcp_servers.is_empty() {
+            let mut servers = serde_json::Map::new();
+            for (name, entry) in &s.mcp_servers {
+                let mut obj = serde_json::Map::new();
+                if entry.server_type == "stdio" {
+                    if let Some(ref cmd) = entry.command {
+                        obj.insert("command".into(), serde_json::Value::String(cmd.clone()));
+                    }
+                    if !entry.args.is_empty() {
+                        let args: Vec<serde_json::Value> = entry
+                            .args
+                            .iter()
+                            .map(|a| serde_json::Value::String(a.clone()))
+                            .collect();
+                        obj.insert("args".into(), serde_json::Value::Array(args));
+                    }
+                    if !entry.env.is_empty() {
+                        let env_obj: serde_json::Map<String, serde_json::Value> = entry
+                            .env
+                            .iter()
+                            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                            .collect();
+                        obj.insert("env".into(), serde_json::Value::Object(env_obj));
+                    }
+                } else {
+                    obj.insert(
+                        "type".into(),
+                        serde_json::Value::String(entry.server_type.clone()),
+                    );
+                    if let Some(ref url) = entry.url {
+                        obj.insert("url".into(), serde_json::Value::String(url.clone()));
+                    }
+                }
+                servers.insert(name.clone(), serde_json::Value::Object(obj));
+            }
+            options.insert("mcpServers".into(), serde_json::Value::Object(servers));
+        }
+    }
+
     let start_msg = serde_json::json!({
         "type": "start",
         "sessionId": session_id,
