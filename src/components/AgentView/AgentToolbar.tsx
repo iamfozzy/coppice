@@ -81,6 +81,31 @@ export function AgentToolbar({
         Plan
       </button>
 
+      {/* Status indicator */}
+      {isWorking && (
+        <div className="flex items-center gap-1.5 text-accent">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
+          </span>
+          <span className="text-[10px] font-medium">
+            {session.status === "tool_use" ? "Running tool" : "Thinking"}
+          </span>
+        </div>
+      )}
+      {session.status === "waiting_permission" && (
+        <div className="flex items-center gap-1.5 text-warning">
+          <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
+          <span className="text-[10px] font-medium">Waiting for approval</span>
+        </div>
+      )}
+      {session.status === "done" && (
+        <div className="flex items-center gap-1.5 text-success">
+          <span className="w-2 h-2 rounded-full bg-success" />
+          <span className="text-[10px] font-medium">Done</span>
+        </div>
+      )}
+
       {/* Spacer */}
       <div className="flex-1" />
 

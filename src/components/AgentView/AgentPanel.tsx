@@ -38,6 +38,8 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
   const startedRef = useRef(false);
   // Track current tool_use blocks to pair with tool_results
   const activeToolsRef = useRef<Map<string, { name: string; input: unknown }>>(new Map());
+  // Track the last assistant message uuid to deduplicate
+  const lastAssistantUuidRef = useRef<string | null>(null);
 
   // Subscribe to agent events from the Rust backend
   useEffect(() => {
@@ -111,6 +113,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
           clearStreaming(sessionId);
         }
 
+        // Track uuid to deduplicate against result event
+        const uuid = msg.uuid as string | undefined;
+        if (uuid) lastAssistantUuidRef.current = uuid;
+
         const content = msg.content as Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }> || [];
         let textContent = "";
         let thinkingText = "";
@@ -171,6 +177,12 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
         break;
       }
 
+      case "tool_progress": {
+        // Update the active tool's elapsed time for visual feedback
+        setStatus(sessionId, "tool_use");
+        break;
+      }
+
       case "tool_permission": {
         setPendingPermission(sessionId, {
           callId: msg.callId as string,
@@ -193,21 +205,23 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
       case "result": {
         // Flush streaming
         clearStreaming(sessionId);
-        const resultText = msg.resultText as string;
-        if (resultText) {
-          appendMessage(sessionId, {
-            id: nextMsgId(),
-            type: "assistant",
-            content: resultText,
-            timestamp: Date.now(),
-          });
-        }
+        // Don't emit resultText as a message — it duplicates the last assistant message.
         const cost = msg.cost as { totalCostUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         if (cost) {
           setCost(sessionId, cost);
         }
+        const subtype = msg.subtype as string;
+        if (subtype && subtype.startsWith("error_")) {
+          appendMessage(sessionId, {
+            id: nextMsgId(),
+            type: "error",
+            content: `Session ended: ${subtype.replace(/_/g, " ")}`,
+            timestamp: Date.now(),
+          });
+        }
         setStatus(sessionId, "done");
         activeToolsRef.current.clear();
+        lastAssistantUuidRef.current = null;
         break;
       }
 
@@ -353,6 +367,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
       <MessageList
         messages={session.messages}
         streamingText={session.streamingText}
+        status={session.status}
       />
 
       {/* Permission dialog */}

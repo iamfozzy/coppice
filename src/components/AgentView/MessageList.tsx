@@ -1,13 +1,14 @@
 import { useRef, useEffect } from "react";
-import type { AgentMessage } from "../../lib/types";
+import type { AgentMessage, AgentStatus } from "../../lib/types";
 import { MessageBubble } from "./MessageBubble";
 
 interface Props {
   messages: AgentMessage[];
   streamingText: string;
+  status: AgentStatus;
 }
 
-export function MessageList({ messages, streamingText }: Props) {
+export function MessageList({ messages, streamingText, status }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
 
@@ -60,6 +61,20 @@ export function MessageList({ messages, streamingText }: Props) {
             {streamingText}
             <span className="inline-block w-1.5 h-4 bg-accent/60 animate-pulse ml-0.5 align-text-bottom" />
           </div>
+        </div>
+      )}
+
+      {/* Thinking/working indicator — shown when agent is active but no streaming text yet */}
+      {!streamingText && (status === "thinking" || status === "tool_use") && (
+        <div className="flex items-center gap-2 py-1">
+          <div className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse [animation-delay:150ms]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse [animation-delay:300ms]" />
+          </div>
+          <span className="text-xs text-text-tertiary">
+            {status === "tool_use" ? "Running tool..." : "Thinking..."}
+          </span>
         </div>
       )}
     </div>

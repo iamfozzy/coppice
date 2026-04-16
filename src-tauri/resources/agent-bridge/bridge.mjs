@@ -274,6 +274,11 @@ function processMessage(message) {
           model: message.model || "",
           permissionMode: message.permissionMode || "",
         });
+      } else if (message.subtype === "status") {
+        // SDK status updates (e.g. "compacting")
+        if (message.status) {
+          emit({ type: "status", status: message.status });
+        }
       }
       break;
 
@@ -304,6 +309,9 @@ function processMessage(message) {
     }
 
     case "user": {
+      // Skip replay messages to prevent duplicates
+      if (message.isReplay) break;
+
       // Tool results come back as user messages
       const content = message.message?.content || [];
       for (const block of content) {
@@ -332,7 +340,6 @@ function processMessage(message) {
       emit({
         type: "result",
         subtype: message.subtype,
-        resultText: message.result || "",
         sessionId: message.session_id,
         cost: {
           totalCostUsd: message.total_cost_usd || 0,
@@ -346,34 +353,39 @@ function processMessage(message) {
       });
       break;
 
-    default:
-      // Forward partial messages for streaming
-      if (
-        message.type === "partial" ||
-        (message.type && message.type.includes("partial"))
-      ) {
-        // SDKPartialAssistantMessage — raw streaming events
-        if (message.event) {
-          const evt = message.event;
-          if (evt.type === "content_block_delta") {
-            if (evt.delta?.type === "text_delta") {
-              emit({
-                type: "partial",
-                delta: { type: "text", text: evt.delta.text },
-              });
-            } else if (evt.delta?.type === "thinking_delta") {
-              emit({
-                type: "partial",
-                delta: { type: "thinking", text: evt.delta.thinking },
-              });
-            }
-          }
+    case "stream_event": {
+      // SDKPartialAssistantMessage — raw streaming events
+      const evt = message.event;
+      if (!evt) break;
+      if (evt.type === "content_block_start") {
+        emit({ type: "status", status: "thinking" });
+      } else if (evt.type === "content_block_delta") {
+        if (evt.delta?.type === "text_delta") {
+          emit({
+            type: "partial",
+            delta: { type: "text", text: evt.delta.text },
+          });
+        } else if (evt.delta?.type === "thinking_delta") {
+          emit({
+            type: "partial",
+            delta: { type: "thinking", text: evt.delta.thinking },
+          });
         }
       }
-      // Status messages
-      if (message.type === "status") {
-        emit({ type: "status", status: message.status || "unknown" });
-      }
+      break;
+    }
+
+    case "tool_progress": {
+      emit({
+        type: "tool_progress",
+        toolUseId: message.tool_use_id,
+        toolName: message.tool_name,
+        elapsed: message.elapsed_time_seconds || 0,
+      });
+      break;
+    }
+
+    default:
       break;
   }
 }
