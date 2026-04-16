@@ -12,6 +12,7 @@ const defaultSettings: AppSettings = {
   shell: "",
   window_decorations: true,
   notification_sound: true,
+  notification_popup: true,
 };
 
 export function AppSettingsModal() {
@@ -124,7 +125,13 @@ export function AppSettingsModal() {
             label="Notification sound"
             checked={form.notification_sound}
             onChange={(notification_sound) => setForm({ ...form, notification_sound })}
-            hint="Play a sound when Claude finishes and is waiting for input (background tabs only)"
+            hint="Play a chime when Claude finishes and is waiting for input"
+          />
+          <Toggle
+            label="OS notifications"
+            checked={form.notification_popup}
+            onChange={(notification_popup) => setForm({ ...form, notification_popup })}
+            hint="Show a system notification when Claude finishes (visible even when Coppice is minimized)"
           />
 
           {/* Claude Code hooks integration */}

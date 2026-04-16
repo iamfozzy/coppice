@@ -3,8 +3,19 @@ import type { Project, Worktree, AppSettings } from "../lib/types";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
 import { isWindowFocused } from "../lib/windowFocus";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 
 export type ClaudeStatus = "active" | "idle";
+
+// Per-tab notification cooldown. After firing a notification for a tab,
+// suppress further notifications for this many ms to prevent chime/popup
+// spam during rapid active→idle→active→idle bouncing.
+const NOTIFICATION_COOLDOWN_MS = 10_000;
+const notificationCooldownUntil = new Map<string, number>();
 
 // ── Session types ──
 
@@ -314,13 +325,60 @@ export const useAppStore = create<AppState>((set, get) => ({
       claudeStatusByTab: { ...state.claudeStatusByTab, [tabId]: status },
     }));
 
-    // Play notification sound when Claude becomes idle and the user can't
-    // see the tab. "Can't see" = tab is not the active tab of the selected
-    // worktree, OR the window is backgrounded.
-    if (status === "idle" && prev === "active") {
-      if (!s.appSettings?.notification_sound) return;
-      if (!userIsWatching) {
+    // Notify when Claude becomes idle and the user can't see the tab.
+    // "Can't see" = tab is not the active tab of the selected worktree,
+    // OR the window is backgrounded.
+    if (status === "idle" && (prev === "active" || prev === undefined) && !userIsWatching) {
+      // Cooldown: suppress rapid-fire notifications for the same tab.
+      // This prevents chime/popup spam when Claude bounces between active
+      // and idle states (e.g. during tool-use loops).
+      const cooldownExpiry = notificationCooldownUntil.get(tabId) ?? 0;
+      if (Date.now() < cooldownExpiry) return;
+      notificationCooldownUntil.set(tabId, Date.now() + NOTIFICATION_COOLDOWN_MS);
+
+      if (s.appSettings?.notification_sound) {
         playNotificationSound();
+      }
+
+      // OS notification — shows even when Coppice is minimized or on
+      // another virtual desktop. Respect the user's toggle and request
+      // permission lazily on first use.
+      if (s.appSettings?.notification_popup) {
+        // Resolve tab label and worktree name for the notification body.
+        let tabLabel = "";
+        let worktreeName = "";
+        for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
+          const tab = tabs.find((t) => t.id === tabId);
+          if (tab) {
+            tabLabel = tab.label;
+            // Find worktree name.
+            for (const wts of Object.values(s.worktreesByProject)) {
+              const wt = wts.find((w) => w.id === wtId);
+              if (wt) { worktreeName = wt.name || wt.branch; break; }
+            }
+            break;
+          }
+        }
+
+        (async () => {
+          try {
+            let granted = await isPermissionGranted();
+            if (!granted) {
+              const perm = await requestPermission();
+              granted = perm === "granted";
+            }
+            if (granted) {
+              sendNotification({
+                title: "Claude is waiting",
+                body: worktreeName
+                  ? `${tabLabel} in ${worktreeName}`
+                  : tabLabel || "A Claude tab needs attention",
+              });
+            }
+          } catch {
+            // Notification API unavailable — fail silently.
+          }
+        })();
       }
     }
   },

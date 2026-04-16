@@ -28,3 +28,4 @@ dirs = "5"
 toml = "0.8"
 portable-pty = "0.8"
 notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
+tauri-plugin-notification = "2"

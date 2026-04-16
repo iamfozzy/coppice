@@ -93,6 +93,26 @@ function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  // Keep the dock/taskbar badge in sync with the number of idle Claude tabs.
+  // macOS: shows a number badge on the dock icon.
+  // Linux: depends on desktop env (Unity, GNOME with extension).
+  // Windows: not supported by set_badge_count (no-op).
+  useEffect(() => {
+    let prevCount = 0;
+    const unsub = useAppStore.subscribe((state) => {
+      const idleCount = Object.values(state.claudeStatusByTab).filter(
+        (s) => s === "idle"
+      ).length;
+      if (idleCount !== prevCount) {
+        prevCount = idleCount;
+        getCurrentWindow()
+          .setBadgeCount(idleCount > 0 ? idleCount : undefined)
+          .catch(() => {});
+      }
+    });
+    return unsub;
+  }, []);
+
   // Single window-level file drop handler — routes to active session only
   useEffect(() => {
     const unlisten = getCurrentWindow().onDragDropEvent((event) => {

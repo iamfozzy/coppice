@@ -6,10 +6,15 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { listen } from "@tauri-apps/api/event";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import * as commands from "../../lib/commands";
+import {
+  CLAUDE_IDLE_THRESHOLD_MS,
+  CLAUDE_STARTUP_GRACE_MS,
+  CLAUDE_ACTIVE_BYTE_THRESHOLD,
+  CLAUDE_ACTIVITY_WINDOW_MS,
+  CLAUDE_RESIZE_GRACE_MS,
+} from "../../lib/claudeDetection";
 import { useAppStore } from "../../stores/appStore";
 import "@xterm/xterm/css/xterm.css";
-
-const CLAUDE_IDLE_THRESHOLD_MS = 3000;
 
 /**
  * Scan the terminal buffer for Claude Code's prompt-box pattern.
@@ -36,12 +41,6 @@ function looksLikeClaudePrompt(term: Terminal): boolean {
   }
   return false;
 }
-// Grace period after Claude's first output — ignore all activity during
-// startup so the welcome banner + initial prompt don't trigger a false
-// notification. Measured from FIRST OUTPUT (not from component mount) so
-// slow cold starts (auth flow, first-time `claude` download, slow machine)
-// don't effectively skip the grace.
-const CLAUDE_STARTUP_GRACE_MS = 8000;
 
 interface Props {
   sessionId: string;
@@ -52,19 +51,6 @@ interface Props {
   keepAlive?: boolean;
   isClaudeTab?: boolean;
 }
-
-// Minimum bytes of output within the activity window to count as genuinely
-// active. Prevents tab switches or cursor repositions from triggering false
-// "active" state. Low enough that a short Claude reply (e.g. "Done.") plus
-// the prompt-box redraw still clears it.
-const CLAUDE_ACTIVE_BYTE_THRESHOLD = 40;
-// How long the activity byte counter accumulates before resetting.
-const CLAUDE_ACTIVITY_WINDOW_MS = 2000;
-// After a PTY resize (SIGWINCH), Claude redraws its full UI — those bytes are
-// a reaction to our own resize, not real activity. Ignore output for a brief
-// window so background tabs don't flip "active→idle" when window/sidebar
-// resizes ripple through every mounted terminal.
-const CLAUDE_RESIZE_GRACE_MS = 3000;
 
 export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFamily, keepAlive = false, isClaudeTab = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);

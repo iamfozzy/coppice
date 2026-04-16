@@ -13,6 +13,7 @@ pub struct AppSettings {
     pub shell: String,
     pub window_decorations: bool,
     pub notification_sound: bool,
+    pub notification_popup: bool,
 }
 
 impl Default for AppSettings {
@@ -26,6 +27,7 @@ impl Default for AppSettings {
             shell: String::new(),
             window_decorations: true,
             notification_sound: true,
+            notification_popup: true,
         }
     }
 }
