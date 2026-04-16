@@ -48,7 +48,7 @@ impl Default for AppSettings {
             window_decorations: true,
             notification_sound: true,
             notification_popup: true,
-            default_claude_mode: "terminal".to_string(),
+            default_claude_mode: "agent".to_string(),
             agent_default_model: String::new(),
             agent_default_effort: "high".to_string(),
             agent_node_path: String::new(),

@@ -235,6 +235,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         const { [activeId]: _, ...rest } = s.claudeStatusByTab;
         set({ claudeStatusByTab: rest });
       }
+      // Auto-create an agent tab when switching to a worktree with no tabs
+      // and agent mode is the default.
+      const tabs = s.tabsByWorktree[id];
+      if ((!tabs || tabs.length === 0) && s.appSettings?.default_claude_mode === "agent") {
+        get().newAgentTab(id);
+      }
     }
   },
 
@@ -596,7 +602,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionState: AgentSessionState = {
       messages: [],
       status: "idle",
-      model: s.appSettings?.agent_default_model || "",
+      model: s.appSettings?.agent_default_model || "claude-opus-4-6",
       effort: s.appSettings?.agent_default_effort || "high",
       permissionMode: "acceptEdits",
       cost: null,
