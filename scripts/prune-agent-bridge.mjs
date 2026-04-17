@@ -44,9 +44,9 @@ const bridgeRoot = join(here, "..", "src-tauri", "resources", "agent-bridge");
 const nodeModules = join(bridgeRoot, "node_modules");
 
 if (!existsSync(nodeModules)) {
-  console.error(`agent-bridge node_modules not found at ${nodeModules}`);
-  console.error(`Run \`npm run agent-bridge:install\` first.`);
-  process.exit(1);
+  console.warn(`agent-bridge node_modules not found at ${nodeModules}`);
+  console.warn(`Skipping pruning (node_modules may not be installed yet).`);
+  process.exit(0);
 }
 
 console.log(`Pruning agent-bridge for target: ${target}`);
