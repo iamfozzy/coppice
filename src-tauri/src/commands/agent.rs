@@ -236,6 +236,16 @@ pub fn agent_set_permission_mode(
     agent_manager.send(&session_id, &msg.to_string())
 }
 
+/// Request the list of slash commands from an active agent session.
+/// The bridge responds asynchronously via an `agent-event` with `type: "commands"`.
+#[tauri::command]
+pub fn agent_list_commands(
+    session_id: String,
+    agent_manager: State<'_, AgentManager>,
+) -> Result<(), String> {
+    agent_manager.send(&session_id, r#"{"type":"list_commands"}"#)
+}
+
 /// Close an agent session.
 #[tauri::command]
 pub fn agent_close(

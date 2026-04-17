@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as commands from "../../lib/commands";
 import { useAppStore } from "../../stores/appStore";
-import type { AgentMessage } from "../../lib/types";
+import type { AgentMessage, SlashCommand } from "../../lib/types";
 import { AgentToolbar } from "./AgentToolbar";
 import { AgentControls } from "./AgentControls";
 import { MessageList } from "./MessageList";
@@ -34,6 +34,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
   const setModel = useAppStore((s) => s.setAgentModel);
   const setEffort = useAppStore((s) => s.setAgentEffort);
   const setPermissionMode = useAppStore((s) => s.setAgentPermissionMode);
+  const setSlashCommands = useAppStore((s) => s.setAgentSlashCommands);
   const appSettings = useAppStore((s) => s.appSettings);
 
   const startedRef = useRef(false);
@@ -122,6 +123,15 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
     switch (type) {
       case "init": {
         setSdkSessionId(sessionId, msg.sessionId as string);
+        // Seed slash commands from the init payload (names only); the bridge
+        // follows up with a richer `commands` event that includes descriptions.
+        const names = msg.slashCommands as string[] | undefined;
+        if (names && names.length) {
+          setSlashCommands(
+            sessionId,
+            names.map((name) => ({ name, description: "", argumentHint: "" }))
+          );
+        }
         // Only show "Session started" for the first init, not on resume
         if (!msg.isResume) {
           const mcpServers = msg.mcpServers as Array<{ name: string; status: string }> | undefined;
@@ -280,6 +290,33 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
       case "title": {
         const title = msg.title as string;
         if (title) renameThisTab(title);
+        break;
+      }
+
+      case "commands": {
+        const cmds = msg.commands as SlashCommand[] | undefined;
+        if (cmds) setSlashCommands(sessionId, cmds);
+        break;
+      }
+
+      case "slash_output": {
+        // Output from a local slash command (e.g. /compact, /help). Slash
+        // commands short-circuit the API call, so we won't get an `assistant`
+        // message — surface their stdout/stderr here instead. Clear the
+        // thinking state so the input becomes editable again.
+        clearStreaming(sessionId);
+        const stdout = (msg.stdout as string) || "";
+        const stderr = (msg.stderr as string) || "";
+        const text = [stdout, stderr].filter(Boolean).join("\n\n");
+        if (text) {
+          appendMessage(sessionId, {
+            id: nextMsgId(),
+            type: "slash_output",
+            content: text,
+            timestamp: Date.now(),
+          });
+        }
+        setStatus(sessionId, "done");
         break;
       }
     }
@@ -445,6 +482,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
                 ? "Send a message to start..."
                 : "Claude is working..."
         }
+        slashCommands={session.slashCommands}
         onSend={handleSend}
       />
     </div>

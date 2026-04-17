@@ -99,6 +99,7 @@ pub fn run() {
             commands::agent::agent_ask_response,
             commands::agent::agent_set_model,
             commands::agent::agent_set_permission_mode,
+            commands::agent::agent_list_commands,
             commands::agent::agent_close,
             commands::agent::agent_exists,
             commands::agent::agent_check_available,
