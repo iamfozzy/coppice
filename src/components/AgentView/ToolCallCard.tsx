@@ -51,17 +51,18 @@ function ToolIcon({ name }: { name: string }) {
 export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActive }: Props) {
   const [expanded, setExpanded] = useState(false);
   const summary = toolInput != null ? summarizeInput(toolName, toolInput) : "";
+  const hasDetail = toolInput != null || !!toolOutput;
 
-  // Pick a muted color scheme
   const accent = isError ? "text-error" : isActive ? "text-accent" : "text-text-tertiary";
 
   return (
-    <div className={`rounded-lg border text-xs transition-colors ${
-      isError ? "border-error/20 bg-error/4" : "border-border-primary bg-bg-secondary/60"
-    }`}>
+    <div className="text-xs">
       <button
-        className="flex items-center gap-2 w-full px-2.5 py-1.5 text-left hover:bg-bg-hover/40 transition-colors rounded-lg"
-        onClick={() => setExpanded(!expanded)}
+        type="button"
+        className={`flex items-center gap-2 w-full text-left px-1.5 py-0.5 rounded transition-colors ${
+          hasDetail ? "hover:bg-bg-hover/40 cursor-pointer" : "cursor-default"
+        }`}
+        onClick={hasDetail ? () => setExpanded((v) => !v) : undefined}
       >
         {/* Status dot */}
         {isActive ? (
@@ -76,22 +77,22 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
         <span className={accent}><ToolIcon name={toolName} /></span>
         <span className="font-mono text-text-secondary font-medium">{toolName}</span>
 
-        {/* Brief summary when collapsed */}
-        {summary && !expanded && (
-          <span className="text-text-tertiary truncate ml-0.5 font-mono">{summary}</span>
+        {summary && (
+          <span className="text-text-tertiary truncate font-mono min-w-0">{summary}</span>
         )}
 
-        <svg
-          width="10" height="10" viewBox="0 0 10 10" fill="none"
-          className={`ml-auto shrink-0 text-text-tertiary transition-transform ${expanded ? "rotate-90" : ""}`}
-        >
-          <path d="M3 1l4 4-4 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        {hasDetail && (
+          <svg
+            width="9" height="9" viewBox="0 0 10 10" fill="none"
+            className={`ml-auto shrink-0 text-text-tertiary/70 transition-transform ${expanded ? "rotate-90" : ""}`}
+          >
+            <path d="M3 1l4 4-4 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
       </button>
 
-      {expanded && (
-        <div className="px-2.5 pb-2 pt-0.5 space-y-2">
-          {/* Input */}
+      {expanded && hasDetail && (
+        <div className="pl-5 pr-1 pt-1 pb-1.5 space-y-1.5">
           {toolInput != null && (
             <div>
               <span className="text-text-tertiary text-[10px] uppercase tracking-wider font-medium">Input</span>
@@ -101,7 +102,6 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
             </div>
           )}
 
-          {/* Output */}
           {toolOutput && (
             <div>
               <span className={`text-[10px] uppercase tracking-wider font-medium ${isError ? "text-error" : "text-text-tertiary"}`}>

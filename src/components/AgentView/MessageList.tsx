@@ -1,7 +1,7 @@
 import { useRef, useEffect, useMemo } from "react";
 import type { AgentMessage, AgentStatus } from "../../lib/types";
 import { MessageBubble, MarkdownContent } from "./MessageBubble";
-import { ToolCallCard } from "./ToolCallCard";
+import { ToolGroup, type GroupedTool } from "./ToolGroup";
 
 interface Props {
   messages: AgentMessage[];
@@ -9,14 +9,10 @@ interface Props {
   status: AgentStatus;
 }
 
-/**
- * Merge adjacent tool_call + tool_result with the same toolUseId into a single
- * render item so they appear as one unified card.
- */
-interface MergedToolItem {
-  kind: "merged_tool";
-  callMsg: AgentMessage;
-  resultMsg: AgentMessage | null; // null if result hasn't arrived yet
+interface ToolGroupItem {
+  kind: "tool_group";
+  tools: GroupedTool[];
+  key: string;
 }
 
 interface PlainItem {
@@ -24,22 +20,37 @@ interface PlainItem {
   msg: AgentMessage;
 }
 
-type RenderItem = MergedToolItem | PlainItem;
+type RenderItem = ToolGroupItem | PlainItem;
 
+/**
+ * Collapse adjacent tool_call + tool_result pairs into a single visual group
+ * per assistant turn. A run of consecutive tool_calls (with their results
+ * attached by toolUseId) becomes one ToolGroup; any non-tool message breaks
+ * the run. tool_results don't break the run — they just get attached to their
+ * matching call inside whichever group is still open or already closed.
+ */
 function mergeMessages(messages: AgentMessage[]): RenderItem[] {
   const items: RenderItem[] = [];
-  // Index of tool_call items by toolUseId so we can patch them when results arrive
-  const callMap = new Map<string, MergedToolItem>();
+  const toolLoc = new Map<string, { groupIdx: number; toolIdx: number }>();
+  let currentGroup: ToolGroupItem | null = null;
 
   for (const msg of messages) {
     if (msg.type === "tool_call" && msg.toolUseId) {
-      const merged: MergedToolItem = { kind: "merged_tool", callMsg: msg, resultMsg: null };
-      callMap.set(msg.toolUseId, merged);
-      items.push(merged);
-    } else if (msg.type === "tool_result" && msg.toolUseId && callMap.has(msg.toolUseId)) {
-      // Attach result to the existing call entry — don't create a new item
-      callMap.get(msg.toolUseId)!.resultMsg = msg;
+      if (!currentGroup) {
+        currentGroup = { kind: "tool_group", tools: [], key: msg.id };
+        items.push(currentGroup);
+      }
+      currentGroup.tools.push({ callMsg: msg, resultMsg: null });
+      toolLoc.set(msg.toolUseId, {
+        groupIdx: items.length - 1,
+        toolIdx: currentGroup.tools.length - 1,
+      });
+    } else if (msg.type === "tool_result" && msg.toolUseId && toolLoc.has(msg.toolUseId)) {
+      const loc = toolLoc.get(msg.toolUseId)!;
+      const group = items[loc.groupIdx] as ToolGroupItem;
+      group.tools[loc.toolIdx].resultMsg = msg;
     } else {
+      currentGroup = null;
       items.push({ kind: "plain", msg });
     }
   }
@@ -92,19 +103,8 @@ export function MessageList({ messages, streamingText, status }: Props) {
       )}
 
       {items.map((item) => {
-        if (item.kind === "merged_tool") {
-          const call = item.callMsg;
-          const result = item.resultMsg;
-          return (
-            <ToolCallCard
-              key={call.id}
-              toolName={call.toolName || "Unknown"}
-              toolInput={call.toolInput}
-              toolOutput={result?.toolOutput || result?.content}
-              isError={result?.isError}
-              isActive={!result}
-            />
-          );
+        if (item.kind === "tool_group") {
+          return <ToolGroup key={item.key} tools={item.tools} />;
         }
         return <MessageBubble key={item.msg.id} message={item.msg} />;
       })}
