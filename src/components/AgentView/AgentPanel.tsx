@@ -287,6 +287,24 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
         break;
       }
 
+      case "bridge_stderr": {
+        // Raw stderr from the agent bridge process. Only surface unambiguous
+        // failure signals — otherwise every informational log would spam the
+        // thread. If the bridge dies before emitting anything useful, this is
+        // the only breadcrumb the user gets.
+        const text = (msg.text as string) || "";
+        const looksLikeError = /error|cannot find|failed|exception|ENOENT|throw/i.test(text);
+        if (looksLikeError) {
+          appendMessage(sessionId, {
+            id: nextMsgId(),
+            type: "error",
+            content: `[bridge] ${text}`,
+            timestamp: Date.now(),
+          });
+        }
+        break;
+      }
+
       case "title": {
         const title = msg.title as string;
         if (title) renameThisTab(title);

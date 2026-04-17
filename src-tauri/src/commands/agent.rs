@@ -267,8 +267,23 @@ pub fn agent_exists(
 /// Check if the agent infrastructure is available (node + bridge script).
 #[tauri::command]
 pub fn agent_check_available(app: AppHandle) -> Result<AgentAvailability, String> {
-    // Check node
-    let node_ok = crate::services::shell_env::user_command("node")
+    // Resolve node to its real binary path. This sidesteps version-manager
+    // shims (asdf/nvm/fnm/volta) that would otherwise fail inside a GUI-
+    // launched .app bundle where cwd is `/` and no profile env is set.
+    let node_path = match crate::services::shell_env::resolve_node_binary() {
+        Some(p) => p,
+        None => {
+            return Ok(AgentAvailability {
+                available: false,
+                reason: Some(
+                    "Node.js not found. Install Node.js 18+ and ensure it is \
+                     available in your login shell.".into(),
+                ),
+            });
+        }
+    };
+
+    let node_ok = std::process::Command::new(node_path)
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -279,7 +294,10 @@ pub fn agent_check_available(app: AppHandle) -> Result<AgentAvailability, String
     if !node_ok {
         return Ok(AgentAvailability {
             available: false,
-            reason: Some("Node.js not found. Install Node.js 18+ to use the Agent SDK.".into()),
+            reason: Some(format!(
+                "Node.js binary at {} did not respond to --version.",
+                node_path
+            )),
         });
     }
 
