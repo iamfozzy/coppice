@@ -60,7 +60,7 @@ export function AgentControls({
   onPermissionModeChange,
 }: Props) {
   return (
-    <div className="flex items-center gap-2 px-4 py-1.5 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
+    <div className="flex items-center gap-2 px-3 py-1.5 pb-0 pt-2 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
       {/* Model selector — custom dropdown */}
       <ModelPicker model={model} onModelChange={onModelChange} />
 
@@ -100,6 +100,19 @@ export function AgentControls({
         mode={permissionMode}
         onModeChange={onPermissionModeChange}
       />
+
+      {permissionMode === "plan" && (
+        <div className="ml-1 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+          <span>Plan mode active</span>
+          <button
+            className="rounded border border-warning/35 bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium hover:bg-warning/25"
+            onClick={() => onPermissionModeChange("default")}
+            title="Exit plan mode and return to default permission handling"
+          >
+            Exit to Default
+          </button>
+        </div>
+      )}
     </div>
   );
 }

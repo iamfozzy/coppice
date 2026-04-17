@@ -7,7 +7,7 @@ import { ProjectSettingsModal } from "./components/ProjectSettings/ProjectSettin
 import { AppSettingsModal } from "./components/AppSettings/AppSettingsModal";
 import { TerminalPanel } from "./components/Terminal/TerminalPanel";
 import { AgentPanel } from "./components/AgentView/AgentPanel";
-import { useAppStore } from "./stores/appStore";
+import { useAppStore, flushAllAgentTabCaches } from "./stores/appStore";
 import { setWindowFocused } from "./lib/windowFocus";
 import * as commands from "./lib/commands";
 
@@ -156,6 +156,18 @@ function App() {
       }
     });
     return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  // Flush all agent tab caches to the DB before the window unloads, so that
+  // conversations can be restored on the next launch.
+  // We intentionally use the browser `beforeunload` event instead of Tauri's
+  // `onCloseRequested`, because onCloseRequested wraps each listener with its
+  // own `await handler(); window.destroy()` — registering multiple handlers
+  // causes double-destroy and blocks the window from closing.
+  useEffect(() => {
+    const handler = () => { flushAllAgentTabCaches().catch(() => {}); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
   }, []);
 
   // Tab keyboard shortcuts — capture phase so xterm and the webview's native

@@ -9,6 +9,7 @@ import { MessageList } from "./MessageList";
 import { AgentInputBar } from "./AgentInputBar";
 import { PermissionDialog } from "./PermissionDialog";
 import { AskUserDialog } from "./AskUserDialog";
+import { PlanApprovalDialog, isPlanPermission } from "./PlanApprovalDialog";
 
 interface Props {
   sessionId: string;
@@ -46,8 +47,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const activeToolsRef = useRef<Map<string, { name: string; input: unknown }>>(new Map());
   // Track the last assistant message uuid to deduplicate
   const lastAssistantUuidRef = useRef<string | null>(null);
-  // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt)
-  const tabRenamedRef = useRef(false);
+  // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt).
+  // If the tab was restored from cache (has existing messages), treat it as already renamed.
+  const tabRenamedRef = useRef((session?.messages?.length ?? 0) > 0);
 
   /** Rename this tab by looking up the owning worktree. */
   const renameThisTab = (label: string) => {
@@ -366,12 +368,16 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         // thread. If the bridge dies before emitting anything useful, this is
         // the only breadcrumb the user gets.
         const text = (msg.text as string) || "";
+        // Skip known informational log lines that aren't real errors
+        const isInfoLine = /generated title:|generating title for/i.test(text);
         const looksLikeError = /error|cannot find|failed|exception|ENOENT|throw/i.test(text);
-        if (looksLikeError) {
+        if (looksLikeError && !isInfoLine) {
+          // Strip any existing [bridge] prefix to avoid doubling up
+          const cleaned = text.replace(/^\[bridge\]\s*/i, "");
           appendMessage(sessionId, {
             id: nextMsgId(),
             type: "error",
-            content: `[bridge] ${text}`,
+            content: `[bridge] ${cleaned}`,
             timestamp: Date.now(),
           });
         }
@@ -464,10 +470,19 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     }
   };
 
-  const handleToolResponse = (behavior: "allow" | "deny") => {
+  const handleToolResponse = (behavior: "allow" | "deny", opts?: { message?: string; updatedInput?: unknown }) => {
     const pending = session?.pendingPermission;
     if (!pending) return;
-    commands.agentToolResponse(sessionId, pending.callId, behavior).catch(() => {});
+    commands
+      .agentToolResponse(sessionId, pending.callId, behavior, opts?.message, opts?.updatedInput)
+      .catch((err) => {
+        appendMessage(sessionId, {
+          id: nextMsgId(),
+          type: "error",
+          content: `Tool response failed: ${err}`,
+          timestamp: Date.now(),
+        });
+      });
     setPendingPermission(sessionId, null);
     setStatus(sessionId, "tool_use");
   };
@@ -475,7 +490,14 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const handleAskResponse = (answers: Record<string, string>) => {
     const pending = session?.pendingQuestion;
     if (!pending) return;
-    commands.agentAskResponse(sessionId, pending.callId, answers).catch(() => {});
+    commands.agentAskResponse(sessionId, pending.callId, answers).catch((err) => {
+      appendMessage(sessionId, {
+        id: nextMsgId(),
+        type: "error",
+        content: `Ask response failed: ${err}`,
+        timestamp: Date.now(),
+      });
+    });
     setPendingQuestion(sessionId, null);
     setStatus(sessionId, "thinking");
   };
@@ -521,11 +543,24 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
 
       {/* Permission dialog */}
       {session.pendingPermission && (
-        <PermissionDialog
-          pending={session.pendingPermission}
-          onAllow={() => handleToolResponse("allow")}
-          onDeny={() => handleToolResponse("deny")}
-        />
+        isPlanPermission(session.pendingPermission) ? (
+          <PlanApprovalDialog
+            pending={session.pendingPermission}
+            onApprove={(updatedInput) => handleToolResponse("allow", { updatedInput })}
+            onRequestChanges={(feedback) =>
+              handleToolResponse("deny", {
+                message: `Please revise the plan: ${feedback}`,
+              })
+            }
+            onDeny={() => handleToolResponse("deny")}
+          />
+        ) : (
+          <PermissionDialog
+            pending={session.pendingPermission}
+            onAllow={() => handleToolResponse("allow")}
+            onDeny={() => handleToolResponse("deny")}
+          />
+        )
       )}
 
       {/* Ask user dialog */}
