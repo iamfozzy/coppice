@@ -65,3 +65,33 @@ body,
   user-select: none;
   -webkit-user-select: none;
 }
+
+/* Agent status indicator animations */
+@keyframes robot-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.5px); }
+}
+
+@keyframes robot-antenna {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes tool-spin {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(-15deg); }
+  75% { transform: rotate(15deg); }
+  100% { transform: rotate(0deg); }
+}
+
+.animate-robot-bob {
+  animation: robot-bob 1.2s ease-in-out infinite;
+}
+
+.animate-robot-antenna {
+  animation: robot-antenna 0.8s ease-in-out infinite;
+}
+
+.animate-tool-spin {
+  animation: tool-spin 0.6s ease-in-out infinite;
+}

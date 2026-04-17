@@ -1,4 +1,5 @@
 import type { AgentSessionState } from "../../lib/types";
+import { AnimatedRobotIcon, AnimatedToolIcon, useRotatingThinkingPhrase } from "./AgentStatusIcons";
 
 interface Props {
   session: AgentSessionState;
@@ -10,6 +11,7 @@ export function AgentToolbar({
   onInterrupt,
 }: Props) {
   const isWorking = session.status === "thinking" || session.status === "tool_use";
+  const thinkingPhrase = useRotatingThinkingPhrase();
 
   // Only show the toolbar when there is something to display
   const hasCost = !!session.cost;
@@ -21,12 +23,13 @@ export function AgentToolbar({
       {/* Status indicator */}
       {isWorking && (
         <div className="flex items-center gap-1.5 text-accent">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
-          </span>
+          {session.status === "tool_use" ? (
+            <AnimatedToolIcon size={12} />
+          ) : (
+            <AnimatedRobotIcon size={12} />
+          )}
           <span className="text-[10px] font-medium">
-            {session.status === "tool_use" ? "Running tool" : "Thinking"}
+            {session.status === "tool_use" ? "Running tool" : thinkingPhrase.replace(/\.{3}$/, "")}
           </span>
         </div>
       )}

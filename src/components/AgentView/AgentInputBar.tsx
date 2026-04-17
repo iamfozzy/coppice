@@ -3,6 +3,8 @@ import type { SlashCommand } from "../../lib/types";
 
 interface Props {
   disabled: boolean;
+  isAgentBusy: boolean;
+  autoFocus?: boolean;
   placeholder?: string;
   slashCommands?: SlashCommand[];
   onSend: (text: string) => void;
@@ -18,10 +20,17 @@ function parseLeadingSlash(text: string): string | null {
   return rest;
 }
 
-export function AgentInputBar({ disabled, placeholder, slashCommands, onSend }: Props) {
+export function AgentInputBar({ disabled, isAgentBusy, autoFocus, placeholder, slashCommands, onSend }: Props) {
   const [text, setText] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Focus textarea when this tab becomes visible
+  useEffect(() => {
+    if (autoFocus && !disabled) {
+      textareaRef.current?.focus();
+    }
+  }, [autoFocus, disabled]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -102,6 +111,9 @@ export function AgentInputBar({ disabled, placeholder, slashCommands, onSend }: 
     }
   };
 
+  // Determine button label & style based on queue state
+  const showQueueButton = isAgentBusy && !disabled;
+
   return (
     <div className="relative">
       {pickerOpen && (
@@ -135,6 +147,7 @@ export function AgentInputBar({ disabled, placeholder, slashCommands, onSend }: 
           ))}
         </div>
       )}
+
       <div className="flex items-end gap-2 px-3 py-2.5 bg-bg-secondary">
         <textarea
           ref={textareaRef}
@@ -148,14 +161,28 @@ export function AgentInputBar({ disabled, placeholder, slashCommands, onSend }: 
           spellCheck={false}
         />
         <button
-          className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-30 disabled:cursor-not-allowed text-white transition-colors"
+          className={`shrink-0 h-8 flex items-center justify-center rounded-lg text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+            showQueueButton
+              ? "bg-amber-500/80 hover:bg-amber-500 px-2.5 gap-1.5"
+              : "bg-accent hover:bg-accent-hover w-8"
+          }`}
           onClick={() => sendText(text)}
           disabled={disabled || !text.trim()}
-          title="Send (Enter)"
+          title={showQueueButton ? "Queue (Enter)" : "Send (Enter)"}
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M1 7h12M8 2l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          {showQueueButton ? (
+            <>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M6 3v3.5l2 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+              <span className="text-[11px] font-medium">Queue</span>
+            </>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M1 7h12M8 2l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
         </button>
       </div>
     </div>

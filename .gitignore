@@ -5,3 +5,5 @@ src-tauri/target/
 *.log
 .claude/settings.local.json
 src-tauri/gen/
+src-tauri/binaries/
+.sidecar-cache/

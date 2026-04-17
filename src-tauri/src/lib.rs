@@ -80,6 +80,9 @@ pub fn run() {
             commands::github::get_failed_action_logs,
             commands::github::get_pr_comments,
             commands::github::resolve_pr_comment,
+            commands::github::github_auth_status,
+            commands::github::github_auth_login,
+            commands::github::github_auth_logout,
             // Settings commands
             commands::settings::get_settings,
             commands::settings::update_settings,

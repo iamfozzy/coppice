@@ -1,8 +1,45 @@
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
 static USER_PATH: OnceLock<String> = OnceLock::new();
 static NODE_BINARY: OnceLock<Option<String>> = OnceLock::new();
+
+/// Resolve a Tauri `externalBin` sidecar that was bundled with the app.
+///
+/// Tauri places sidecars next to the main executable for every bundle format
+/// we ship (macOS .app/Contents/MacOS, Windows install dir, Linux .deb/.AppImage
+/// bin dir), so we locate them by asking for `current_exe()`'s neighbor. The
+/// bundled names are prefixed with `coppice-` to avoid clashing with any
+/// user-installed `node` / `gh` that might share the install dir on Linux.
+///
+/// Returns `None` in dev mode when the sidecar hasn't been downloaded yet, or
+/// if the file is missing for any other reason — callers should fall back to
+/// PATH-based lookup in that case.
+pub fn sidecar_path(name: &str) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let filename = if cfg!(windows) {
+        format!("coppice-{name}.exe")
+    } else {
+        format!("coppice-{name}")
+    };
+    let candidate = dir.join(filename);
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+/// Resolve a program to its bundled sidecar path if present, otherwise return
+/// the bare name for PATH-based lookup. Use this at every `user_command` call
+/// site for `node` and `gh` so packaged builds always use the bundled copy.
+pub fn bin(name: &str) -> String {
+    sidecar_path(name)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| name.to_string())
+}
 
 /// Get the user's full PATH by sourcing their login shell profile.
 /// Falls back to the current process PATH if the shell query fails.
@@ -68,34 +105,32 @@ pub fn user_command(program: &str) -> Command {
     cmd
 }
 
-/// Resolve the absolute path of the user's `node` binary.
+/// Resolve the absolute path of the `node` binary to use for the agent bridge.
 ///
-/// Naive `Command::new("node")` fails in GUI-launched .app bundles when node is
-/// managed by version managers like asdf / nvm / fnm / volta: their shims live
-/// on the user's PATH, but the shim itself needs extra context (a .tool-versions
-/// file in cwd, or env vars set by the shell integration) to pick a version.
-/// Inside a .app bundle cwd is `/`, and launchd does not propagate the shell
-/// env, so the shim bails out with "no version set" and the agent bridge dies
-/// silently.
+/// Prefers the sidecar bundled via Tauri's `externalBin` — packaged builds
+/// always have a known-good Node version adjacent to the main executable, so
+/// the user no longer needs Node installed at all.
 ///
-/// We sidestep shims entirely by asking a login interactive shell (which has
-/// already sourced the user's profile and initialized the version manager) for
-/// `process.execPath` — the real binary node is running from. That absolute
-/// path works regardless of cwd or env. Cached for process lifetime.
+/// Falls back to a login-shell lookup for dev mode (before the sidecar has
+/// been downloaded) and broken packaged installs. The fallback sidesteps
+/// version-manager shims (asdf/nvm/fnm/volta) by asking node for its own
+/// `process.execPath` — a shim would otherwise bail out inside a .app bundle
+/// where cwd is `/` and launchd has not propagated the shell env.
 ///
-/// Returns `None` if node cannot be resolved (not installed, broken setup).
+/// Returns `None` only when there is no sidecar AND no resolvable system node.
 pub fn resolve_node_binary() -> Option<&'static str> {
     NODE_BINARY
         .get_or_init(|| {
+            if let Some(p) = sidecar_path("node") {
+                return Some(p.to_string_lossy().to_string());
+            }
+
             if cfg!(target_os = "windows") {
-                // Windows doesn't have this shim problem — PATH lookup works.
                 return Some("node".to_string());
             }
 
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
 
-            // cwd defaults to $HOME via the shell; login shells typically have
-            // enough context there for version managers to pick a default.
             let output = Command::new(&shell)
                 .args([
                     "-lic",

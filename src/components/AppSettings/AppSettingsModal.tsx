@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useAppStore } from "../../stores/appStore";
 import * as commands from "../../lib/commands";
 import type { AppSettings, McpServerEntry } from "../../lib/types";
+import { GitHubAuthSection } from "./GitHubAuthSection";
 
 const defaultSettings: AppSettings = {
   editor_command: "",
@@ -16,6 +17,7 @@ const defaultSettings: AppSettings = {
   default_claude_mode: "agent",
   agent_default_model: "",
   agent_default_effort: "high",
+  agent_default_extended_context: false,
   agent_node_path: "",
   agent_api_key: "",
   mcp_servers: {},
@@ -78,6 +80,8 @@ export function AppSettingsModal() {
           <p className="text-[11px] text-text-tertiary">
             Global defaults. Leave blank to use platform defaults. Per-project settings override these.
           </p>
+
+          <GitHubAuthSection />
 
           <Field
             label="Editor command"
@@ -180,13 +184,13 @@ export function AppSettingsModal() {
                 label="Default model"
                 value={form.agent_default_model}
                 onChange={(agent_default_model) => setForm({ ...form, agent_default_model })}
-                placeholder="claude-sonnet-4-20250514"
-                hint="Model to use for agent sessions (e.g., claude-sonnet-4-20250514, claude-opus-4-20250514)"
+                placeholder="claude-opus-4-7"
+                hint="Model to use for agent sessions. Defaults to claude-opus-4-7 if empty."
               />
               <div>
                 <label className="block text-xs text-text-secondary mb-1">Default effort</label>
                 <div className="flex gap-1">
-                  {(["low", "medium", "high", "max"] as const).map((level) => (
+                  {(["low", "medium", "high", "xhigh", "max"] as const).map((level) => (
                     <button
                       key={level}
                       type="button"
@@ -202,6 +206,28 @@ export function AppSettingsModal() {
                   ))}
                 </div>
                 <p className="mt-0.5 text-[10px] text-text-tertiary">Controls how much effort the agent puts into responses</p>
+              </div>
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Extended context window</label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, agent_default_extended_context: !form.agent_default_extended_context })}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                      form.agent_default_extended_context ? "bg-accent" : "bg-bg-tertiary border border-border-primary"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                        form.agent_default_extended_context ? "translate-x-[18px]" : "translate-x-[3px]"
+                      }`}
+                    />
+                  </button>
+                  <span className="text-[11px] text-text-secondary">
+                    {form.agent_default_extended_context ? "1M context window" : "200K context window (default)"}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[10px] text-text-tertiary">Enable 1M token context window for new agent sessions (Sonnet 4+ only)</p>
               </div>
               <Field
                 label="Node.js path"
