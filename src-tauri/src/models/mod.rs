@@ -46,3 +46,20 @@ pub struct Worktree {
     pub archived: bool,
     pub created_at: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTabCache {
+    pub tab_id: String,
+    pub worktree_id: String,
+    pub label: String,
+    pub cwd: String,
+    pub sdk_session_id: Option<String>,
+    pub model: String,
+    pub effort: String,
+    pub permission_mode: String,
+    pub status: String,
+    pub cost_json: Option<String>,
+    pub messages_json: String,
+    pub tab_order: i32,
+    pub created_at: String,
+}

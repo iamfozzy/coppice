@@ -103,6 +103,11 @@ pub fn run() {
             commands::agent::agent_close,
             commands::agent::agent_exists,
             commands::agent::agent_check_available,
+            // Agent tab cache commands
+            commands::agent_tab_cache::save_agent_tab_cache,
+            commands::agent_tab_cache::list_agent_tab_cache,
+            commands::agent_tab_cache::delete_agent_tab_cache,
+            commands::agent_tab_cache::delete_agent_tab_cache_for_worktree,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

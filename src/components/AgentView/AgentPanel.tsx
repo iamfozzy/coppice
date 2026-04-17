@@ -42,8 +42,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
   const activeToolsRef = useRef<Map<string, { name: string; input: unknown }>>(new Map());
   // Track the last assistant message uuid to deduplicate
   const lastAssistantUuidRef = useRef<string | null>(null);
-  // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt)
-  const tabRenamedRef = useRef(false);
+  // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt).
+  // If the tab was restored from cache (has existing messages), treat it as already renamed.
+  const tabRenamedRef = useRef((session?.messages?.length ?? 0) > 0);
 
   /** Rename this tab by looking up the owning worktree. */
   const renameThisTab = (label: string) => {

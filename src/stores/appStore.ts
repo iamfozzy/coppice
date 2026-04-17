@@ -12,6 +12,105 @@ import {
 
 export type ClaudeStatus = "active" | "idle";
 
+// ── Agent tab cache persistence ──
+
+const _persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Debounced save of a single agent tab's state to the DB cache. */
+function persistAgentTabDebounced(tabId: string, immediate = false) {
+  const existing = _persistTimers.get(tabId);
+  if (existing) clearTimeout(existing);
+
+  const doSave = () => {
+    _persistTimers.delete(tabId);
+    const s = useAppStore.getState();
+    const session = s.agentSessionByTab[tabId];
+    if (!session) return;
+
+    // Find the owning worktree and tab index
+    let worktreeId: string | null = null;
+    let tabOrder = 0;
+    let tabInfo: TabInfo | undefined;
+    for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
+      const idx = tabs.findIndex((t) => t.id === tabId);
+      if (idx !== -1) {
+        worktreeId = wtId;
+        tabOrder = idx;
+        tabInfo = tabs[idx];
+        break;
+      }
+    }
+    if (!worktreeId || !tabInfo || tabInfo.type !== "agent") return;
+
+    // Don't persist tabs that have never been used (no messages, no SDK session)
+    if (session.messages.length === 0 && !session.sdkSessionId) return;
+
+    const cache: commands.AgentTabCache = {
+      tab_id: tabInfo.id,
+      worktree_id: worktreeId,
+      label: tabInfo.label,
+      cwd: tabInfo.cwd,
+      sdk_session_id: session.sdkSessionId,
+      model: session.model,
+      effort: session.effort,
+      permission_mode: session.permissionMode,
+      status: session.status,
+      cost_json: session.cost ? JSON.stringify(session.cost) : null,
+      messages_json: JSON.stringify(session.messages),
+      tab_order: tabOrder,
+      created_at: new Date().toISOString(),
+    };
+    commands.saveAgentTabCache(cache).catch(() => {});
+  };
+
+  if (immediate) {
+    _persistTimers.delete(tabId);
+    doSave();
+  } else {
+    _persistTimers.set(tabId, setTimeout(doSave, 500));
+  }
+}
+
+/** Flush all pending agent tab saves immediately. Returns a promise that resolves when all saves complete. */
+export async function flushAllAgentTabCaches(): Promise<void> {
+  // Clear all pending debounce timers
+  for (const [, timer] of _persistTimers) clearTimeout(timer);
+  _persistTimers.clear();
+
+  const s = useAppStore.getState();
+  const saves: Promise<void>[] = [];
+
+  for (const [worktreeId, tabs] of Object.entries(s.tabsByWorktree)) {
+    for (let i = 0; i < tabs.length; i++) {
+      const tab = tabs[i];
+      if (tab.type !== "agent") continue;
+      const session = s.agentSessionByTab[tab.id];
+      if (!session) continue;
+      // Don't persist tabs that have never been used
+      if (session.messages.length === 0 && !session.sdkSessionId) continue;
+
+      const cache: commands.AgentTabCache = {
+        tab_id: tab.id,
+        worktree_id: worktreeId,
+        label: tab.label,
+        cwd: tab.cwd,
+        sdk_session_id: session.sdkSessionId,
+        model: session.model,
+        effort: session.effort,
+        permission_mode: session.permissionMode,
+        status: session.status,
+        cost_json: session.cost ? JSON.stringify(session.cost) : null,
+        messages_json: JSON.stringify(session.messages),
+        tab_order: i,
+        created_at: new Date().toISOString(),
+      };
+      saves.push(commands.saveAgentTabCache(cache));
+    }
+  }
+
+  await Promise.allSettled(saves);
+}
+
 // ── Session types ──
 
 export interface TabInfo {
@@ -108,6 +207,7 @@ interface AppState {
   removeClaudeStatus: (tabId: string) => void;
 
   // Actions — tabs
+  restoreAgentTabs: (worktreeId: string) => Promise<void>;
   addTab: (worktreeId: string, type: "terminal" | "claude", cwd: string, command?: string) => void;
   openDiffTab: (worktreeId: string, file: string, cwd: string, mode: "uncommitted" | "pr", baseBranch?: string) => void;
   closeTab: (worktreeId: string, tabId: string) => void;
@@ -238,11 +338,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         const { [activeId]: _, ...rest } = s.claudeStatusByTab;
         set({ claudeStatusByTab: rest });
       }
-      // Auto-create an agent tab when switching to a worktree with no tabs
-      // and agent mode is the default.
+      // Restore cached agent tabs or auto-create a new one when switching
+      // to a worktree with no tabs.
       const tabs = s.tabsByWorktree[id];
-      if ((!tabs || tabs.length === 0) && s.appSettings?.default_claude_mode === "agent") {
-        get().newAgentTab(id);
+      if (!tabs || tabs.length === 0) {
+        get().restoreAgentTabs(id);
       }
     }
   },
@@ -419,6 +519,88 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // ── Tabs ──
 
+  restoreAgentTabs: async (worktreeId) => {
+    try {
+      const cachedTabs = await commands.listAgentTabCache(worktreeId);
+      if (cachedTabs.length === 0) {
+        // No cached tabs — fall back to auto-create if agent mode is default
+        const s = get();
+        if (s.appSettings?.default_claude_mode === "agent") {
+          if (!s.tabsByWorktree[worktreeId]?.length) {
+            get().newAgentTab(worktreeId);
+          }
+        }
+        return;
+      }
+
+      // Race guard: skip if tabs were already created while we were loading
+      if (get().tabsByWorktree[worktreeId]?.length) return;
+
+      const restoredTabs: TabInfo[] = [];
+      const restoredSessions: Record<string, AgentSessionState> = {};
+
+      for (const cached of cachedTabs) {
+        const tab: TabInfo = {
+          id: cached.tab_id,
+          type: "agent",
+          label: cached.label,
+          cwd: cached.cwd,
+          // command is intentionally omitted — restored tabs should NOT auto-start
+        };
+        restoredTabs.push(tab);
+
+        const messages: AgentMessage[] = JSON.parse(cached.messages_json);
+        const cost = cached.cost_json ? JSON.parse(cached.cost_json) : null;
+
+        // Coerce transient statuses to "done" — the agent process isn't running after restart
+        const status = cached.status === "done" || cached.status === "error"
+          ? cached.status as AgentStatus
+          : "done";
+
+        restoredSessions[cached.tab_id] = {
+          messages,
+          status,
+          model: cached.model,
+          effort: cached.effort as EffortLevel,
+          permissionMode: cached.permission_mode as AgentPermissionMode,
+          cost,
+          sdkSessionId: cached.sdk_session_id,
+          pendingPermission: null,
+          pendingQuestion: null,
+          streamingText: "",
+          slashCommands: DEFAULT_SLASH_COMMANDS,
+        };
+      }
+
+      // Only set if the worktree still has no tabs (race guard)
+      if (get().tabsByWorktree[worktreeId]?.length) return;
+
+      set((s) => ({
+        tabsByWorktree: {
+          ...s.tabsByWorktree,
+          [worktreeId]: restoredTabs,
+        },
+        activeTabByWorktree: {
+          ...s.activeTabByWorktree,
+          [worktreeId]: restoredTabs[restoredTabs.length - 1]?.id ?? null,
+        },
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          ...restoredSessions,
+        },
+      }));
+    } catch (err) {
+      console.error("Failed to restore agent tabs:", err);
+      // Fall back to auto-create
+      const s = get();
+      if (s.appSettings?.default_claude_mode === "agent") {
+        if (!s.tabsByWorktree[worktreeId]?.length) {
+          get().newAgentTab(worktreeId);
+        }
+      }
+    }
+  },
+
   addTab: (worktreeId, type, cwd, command) => {
     const tabs = get().tabsByWorktree[worktreeId] ?? [];
     const prefix = type === "claude" ? "Claude" : "Terminal";
@@ -505,9 +687,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       claudeStatusByTab: claudeStatus,
       agentSessionByTab: agentSession,
     });
-    // Close the agent bridge process if this was an agent tab
+    // Close the agent bridge process and remove cached state if this was an agent tab
     if (closedTab?.type === "agent") {
       commands.agentClose(tabId).catch(() => {});
+      commands.deleteAgentTabCache(tabId).catch(() => {});
     }
   },
 
@@ -638,6 +821,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    // Persist label change for agent tabs
+    const tab = get().tabsByWorktree[worktreeId]?.find((t) => t.id === tabId);
+    if (tab?.type === "agent") persistAgentTabDebounced(tabId);
   },
 
   // ── Agent session state ──
@@ -653,6 +839,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   updateAgentStreamingText: (tabId, text) => {
@@ -701,6 +888,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       store.setClaudeStatus(tabId, "active");
     } else if (status === "done" || status === "error") {
       store.setClaudeStatus(tabId, "idle");
+      // Flush cache immediately on terminal statuses — the session just finished.
+      persistAgentTabDebounced(tabId, true);
     }
     // Note: "idle" (initial state before first prompt) is intentionally excluded
     // so opening an agent tab doesn't trigger a spurious notification.
@@ -756,6 +945,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   setAgentSdkSessionId: (tabId, id) => {
@@ -769,6 +959,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    // Flush immediately — the SDK session ID is critical for resume.
+    persistAgentTabDebounced(tabId, true);
   },
 
   setAgentPendingPermission: (tabId, pending) => {

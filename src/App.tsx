@@ -7,7 +7,7 @@ import { ProjectSettingsModal } from "./components/ProjectSettings/ProjectSettin
 import { AppSettingsModal } from "./components/AppSettings/AppSettingsModal";
 import { TerminalPanel } from "./components/Terminal/TerminalPanel";
 import { AgentPanel } from "./components/AgentView/AgentPanel";
-import { useAppStore } from "./stores/appStore";
+import { useAppStore, flushAllAgentTabCaches } from "./stores/appStore";
 import { setWindowFocused } from "./lib/windowFocus";
 import * as commands from "./lib/commands";
 
@@ -154,6 +154,15 @@ function App() {
         const text = paths.map((p: string) => `"${p}"`).join(" ");
         commands.terminalWrite(activeSessionId, text).catch(() => {});
       }
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  // Flush all agent tab caches to the DB before the window closes, so that
+  // conversations can be restored on the next launch.
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onCloseRequested(async () => {
+      await flushAllAgentTabCaches();
     });
     return () => { unlisten.then((fn) => fn()); };
   }, []);

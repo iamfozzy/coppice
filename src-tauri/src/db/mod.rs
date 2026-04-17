@@ -2,7 +2,7 @@ use rusqlite::{Connection, Result, params};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use crate::models::{Project, ProjectFormData, Worktree};
+use crate::models::{AgentTabCache, Project, ProjectFormData, Worktree};
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -67,7 +67,25 @@ impl Database {
                 created_at TEXT NOT NULL
             );
 
-            CREATE INDEX IF NOT EXISTS idx_worktrees_project ON worktrees(project_id);",
+            CREATE INDEX IF NOT EXISTS idx_worktrees_project ON worktrees(project_id);
+
+            CREATE TABLE IF NOT EXISTS agent_tab_cache (
+                tab_id TEXT PRIMARY KEY,
+                worktree_id TEXT NOT NULL REFERENCES worktrees(id) ON DELETE CASCADE,
+                label TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                sdk_session_id TEXT,
+                model TEXT NOT NULL DEFAULT '',
+                effort TEXT NOT NULL DEFAULT 'high',
+                permission_mode TEXT NOT NULL DEFAULT 'acceptEdits',
+                status TEXT NOT NULL DEFAULT 'done',
+                cost_json TEXT,
+                messages_json TEXT NOT NULL DEFAULT '[]',
+                tab_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_tab_cache_worktree ON agent_tab_cache(worktree_id);",
         )?;
 
         // Migrations (ignore errors if columns already exist)
@@ -260,6 +278,72 @@ impl Database {
     pub fn delete_worktree(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM worktrees WHERE id=?1", params![id])?;
+        Ok(())
+    }
+
+    // ── Agent Tab Cache ──
+
+    pub fn save_agent_tab_cache(&self, tab: &AgentTabCache) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO agent_tab_cache (tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                tab.tab_id,
+                tab.worktree_id,
+                tab.label,
+                tab.cwd,
+                tab.sdk_session_id,
+                tab.model,
+                tab.effort,
+                tab.permission_mode,
+                tab.status,
+                tab.cost_json,
+                tab.messages_json,
+                tab.tab_order,
+                tab.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_agent_tab_cache(&self, worktree_id: &str) -> Result<Vec<AgentTabCache>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, created_at
+             FROM agent_tab_cache WHERE worktree_id=?1 ORDER BY tab_order ASC"
+        )?;
+
+        let rows = stmt.query_map(params![worktree_id], |row| {
+            Ok(AgentTabCache {
+                tab_id: row.get(0)?,
+                worktree_id: row.get(1)?,
+                label: row.get(2)?,
+                cwd: row.get(3)?,
+                sdk_session_id: row.get(4)?,
+                model: row.get(5)?,
+                effort: row.get(6)?,
+                permission_mode: row.get(7)?,
+                status: row.get(8)?,
+                cost_json: row.get(9)?,
+                messages_json: row.get(10)?,
+                tab_order: row.get(11)?,
+                created_at: row.get(12)?,
+            })
+        })?;
+
+        rows.collect()
+    }
+
+    pub fn delete_agent_tab_cache(&self, tab_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM agent_tab_cache WHERE tab_id=?1", params![tab_id])?;
+        Ok(())
+    }
+
+    pub fn delete_agent_tab_cache_for_worktree(&self, worktree_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM agent_tab_cache WHERE worktree_id=?1", params![worktree_id])?;
         Ok(())
     }
 }

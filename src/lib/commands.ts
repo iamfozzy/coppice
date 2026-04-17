@@ -354,3 +354,37 @@ export interface AgentAvailability {
 export async function agentCheckAvailable(): Promise<AgentAvailability> {
   return invoke("agent_check_available");
 }
+
+// Agent tab cache types
+export interface AgentTabCache {
+  tab_id: string;
+  worktree_id: string;
+  label: string;
+  cwd: string;
+  sdk_session_id: string | null;
+  model: string;
+  effort: string;
+  permission_mode: string;
+  status: string;
+  cost_json: string | null;
+  messages_json: string;
+  tab_order: number;
+  created_at: string;
+}
+
+// Agent tab cache commands
+export async function saveAgentTabCache(tab: AgentTabCache): Promise<void> {
+  return invoke("save_agent_tab_cache", { tab });
+}
+
+export async function listAgentTabCache(worktreeId: string): Promise<AgentTabCache[]> {
+  return invoke("list_agent_tab_cache", { worktreeId });
+}
+
+export async function deleteAgentTabCache(tabId: string): Promise<void> {
+  return invoke("delete_agent_tab_cache", { tabId });
+}
+
+export async function deleteAgentTabCacheForWorktree(worktreeId: string): Promise<void> {
+  return invoke("delete_agent_tab_cache_for_worktree", { worktreeId });
+}
