@@ -2,6 +2,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 static USER_PATH: OnceLock<String> = OnceLock::new();
+static NODE_BINARY: OnceLock<Option<String>> = OnceLock::new();
 
 /// Get the user's full PATH by sourcing their login shell profile.
 /// Falls back to the current process PATH if the shell query fails.
@@ -65,4 +66,53 @@ pub fn user_command(program: &str) -> Command {
     }
 
     cmd
+}
+
+/// Resolve the absolute path of the user's `node` binary.
+///
+/// Naive `Command::new("node")` fails in GUI-launched .app bundles when node is
+/// managed by version managers like asdf / nvm / fnm / volta: their shims live
+/// on the user's PATH, but the shim itself needs extra context (a .tool-versions
+/// file in cwd, or env vars set by the shell integration) to pick a version.
+/// Inside a .app bundle cwd is `/`, and launchd does not propagate the shell
+/// env, so the shim bails out with "no version set" and the agent bridge dies
+/// silently.
+///
+/// We sidestep shims entirely by asking a login interactive shell (which has
+/// already sourced the user's profile and initialized the version manager) for
+/// `process.execPath` — the real binary node is running from. That absolute
+/// path works regardless of cwd or env. Cached for process lifetime.
+///
+/// Returns `None` if node cannot be resolved (not installed, broken setup).
+pub fn resolve_node_binary() -> Option<&'static str> {
+    NODE_BINARY
+        .get_or_init(|| {
+            if cfg!(target_os = "windows") {
+                // Windows doesn't have this shim problem — PATH lookup works.
+                return Some("node".to_string());
+            }
+
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+
+            // cwd defaults to $HOME via the shell; login shells typically have
+            // enough context there for version managers to pick a default.
+            let output = Command::new(&shell)
+                .args([
+                    "-lic",
+                    "node -e 'process.stdout.write(process.execPath)'",
+                ])
+                .output()
+                .ok()?;
+
+            if !output.status.success() {
+                return None;
+            }
+
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if path.is_empty() || !std::path::Path::new(&path).exists() {
+                return None;
+            }
+            Some(path)
+        })
+        .as_deref()
 }

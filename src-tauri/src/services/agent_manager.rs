@@ -66,8 +66,16 @@ impl AgentManager {
         api_key: Option<&str>,
         app_handle: &AppHandle,
     ) -> Result<(), String> {
-        // Resolve node binary — use user_command for correct PATH + platform flags
-        let mut cmd = crate::services::shell_env::user_command("node");
+        // Resolve node to its real binary path (bypassing asdf/nvm/fnm shims),
+        // then wrap via user_command so PATH + platform flags are correct for
+        // any children node itself spawns (e.g. the bundled claude cli).
+        let node_path = crate::services::shell_env::resolve_node_binary()
+            .ok_or_else(|| {
+                "Node.js not found. Install Node.js 18+ and ensure it is \
+                 available in your login shell."
+                    .to_string()
+            })?;
+        let mut cmd = crate::services::shell_env::user_command(node_path);
         cmd.arg(bridge_path);
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
@@ -131,14 +139,25 @@ impl AgentManager {
             sessions_ref.lock().unwrap().remove(&sid);
         });
 
-        // Stderr reader thread — log to eprintln
+        // Stderr reader thread — log to eprintln AND forward to the UI as a
+        // bridge_stderr event. In packaged builds eprintln is invisible, so
+        // without forwarding, a bridge that dies before emitting any stdout
+        // (e.g. missing node_modules, import error) leaves the UI with no
+        // feedback at all.
         let sid_err = session_id.to_string();
+        let event_name_err = format!("agent-event-{}", session_id);
+        let app_err = app_handle.clone();
         thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines() {
                 match line {
                     Ok(text) => {
                         eprintln!("[agent:{}] {}", sid_err, text);
+                        let payload = serde_json::json!({
+                            "type": "bridge_stderr",
+                            "text": text,
+                        });
+                        let _ = app_err.emit(&event_name_err, payload.to_string());
                     }
                     Err(_) => break,
                 }
