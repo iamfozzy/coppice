@@ -128,6 +128,13 @@ export async function openInEditor(path: string): Promise<void> {
   return invoke("open_in_editor", { path });
 }
 
+export async function openWorktreeFileInEditor(
+  worktreePath: string,
+  file: string
+): Promise<void> {
+  return invoke("open_worktree_file_in_editor", { worktreePath, file });
+}
+
 /** @deprecated Use openInEditor */
 export const openInVscode = openInEditor;
 

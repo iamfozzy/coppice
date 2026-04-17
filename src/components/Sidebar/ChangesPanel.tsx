@@ -6,6 +6,30 @@ import * as commands from "../../lib/commands";
 import type { GitFileStatus } from "../../lib/commands";
 
 type Tab = "uncommitted" | "pr-changes" | "pr-status";
+type FileContextMenuState = {
+  file: string;
+  status: string;
+  x: number;
+  y: number;
+};
+
+function splitDisplayPath(file: string) {
+  const normalized = file.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  if (lastSlash === -1) {
+    return { directory: "", fileName: normalized };
+  }
+
+  return {
+    directory: normalized.slice(0, lastSlash),
+    fileName: normalized.slice(lastSlash + 1),
+  };
+}
+
+function buildTooltipPath(basePath: string, file: string) {
+  const trimmedBase = basePath.replace(/[\\/]+$/, "");
+  return `${trimmedBase}/${file}`;
+}
 
 export const ChangesPanel = memo(function ChangesPanel() {
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
@@ -47,6 +71,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
   const [loadingPr, setLoadingPr] = useState(false);
   const [unpushedCount, setUnpushedCount] = useState(0);
   const [revertingFile, setRevertingFile] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
 
   // Use refs for async operations to avoid stale closures and dependency churn
   const wtPathRef = useRef(worktree?.path);
@@ -88,6 +113,29 @@ export const ChangesPanel = memo(function ChangesPanel() {
     return () => { cancelled = true; clearTimeout(timer); clearInterval(interval); };
   }, [worktree?.id]);
 
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const closeMenu = () => setContextMenu(null);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+      }
+    };
+
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("blur", closeMenu);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+      window.removeEventListener("blur", closeMenu);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [contextMenu]);
+
   // PR files — always fetch so tab count stays current
   useEffect(() => {
     if (!worktree) return;
@@ -116,6 +164,8 @@ export const ChangesPanel = memo(function ChangesPanel() {
   const baseBranch = baseBranchRef.current;
   const claudeCmd = project.claude_command || appSettings?.claude_command || "claude";
   const hasLocalChanges = uncommittedFiles.length > 0 || unpushedCount > 0;
+  const contextMenuLeft = contextMenu ? Math.max(8, Math.min(contextMenu.x, window.innerWidth - 196)) : 0;
+  const contextMenuTop = contextMenu ? Math.max(8, Math.min(contextMenu.y, window.innerHeight - 120)) : 0;
 
   const handleRevert = async (file: string, status: string) => {
     if (!worktree) return;
@@ -137,6 +187,16 @@ export const ChangesPanel = memo(function ChangesPanel() {
       console.error("Failed to revert file:", e);
     } finally {
       setRevertingFile(null);
+    }
+  };
+
+  const handleOpenInEditor = async (file: string) => {
+    if (!worktree) return;
+
+    try {
+      await commands.openWorktreeFileInEditor(worktree.path, file);
+    } catch (error) {
+      console.error("Failed to open file in editor:", error);
     }
   };
 
@@ -185,7 +245,17 @@ export const ChangesPanel = memo(function ChangesPanel() {
             files={uncommittedFiles}
             loading={loadingUncommitted}
             emptyMessage="No uncommitted changes"
+            worktreePath={worktree.path}
             onFileClick={(f) => openDiffTab(worktree.id, f, worktree.path, "uncommitted")}
+            onFileContextMenu={(event, file, status) => {
+              event.preventDefault();
+              setContextMenu({
+                file,
+                status,
+                x: event.clientX,
+                y: event.clientY,
+              });
+            }}
             onRevert={handleRevert}
             revertingFile={revertingFile}
           />
@@ -195,6 +265,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
             files={prFiles}
             loading={loadingPr}
             emptyMessage={`No PR changes (or no common ancestor with ${baseBranch})`}
+            worktreePath={worktree.path}
             onFileClick={(f) => openDiffTab(worktree.id, f, worktree.path, "pr", baseBranch)}
           />
         )}
@@ -221,6 +292,52 @@ export const ChangesPanel = memo(function ChangesPanel() {
           />
         )}
       </div>
+
+      {contextMenu && (
+        <div
+          className="fixed inset-0 z-50"
+          onClick={() => setContextMenu(null)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setContextMenu(null);
+          }}
+        >
+          <div
+            className="absolute min-w-[188px] overflow-hidden rounded-md border border-border-primary bg-bg-secondary shadow-lg"
+            style={{ left: contextMenuLeft, top: contextMenuTop }}
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <button
+              className="w-full px-3 py-2 text-left text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+              onClick={() => {
+                openDiffTab(worktree.id, contextMenu.file, worktree.path, "uncommitted");
+                setContextMenu(null);
+              }}
+            >
+              Open diff
+            </button>
+            <button
+              className="w-full px-3 py-2 text-left text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+              onClick={() => {
+                void handleOpenInEditor(contextMenu.file);
+                setContextMenu(null);
+              }}
+            >
+              Open in editor
+            </button>
+            <button
+              className="w-full px-3 py-2 text-left text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-error"
+              onClick={() => {
+                setContextMenu(null);
+                void handleRevert(contextMenu.file, contextMenu.status);
+              }}
+            >
+              Revert changes
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
@@ -238,11 +355,13 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
   );
 }
 
-function FileList({ files, loading, emptyMessage, onFileClick, onRevert, revertingFile }: {
+function FileList({ files, loading, emptyMessage, worktreePath, onFileClick, onFileContextMenu, onRevert, revertingFile }: {
   files: GitFileStatus[];
   loading: boolean;
   emptyMessage: string;
+  worktreePath: string;
   onFileClick: (file: string) => void;
+  onFileContextMenu?: (event: React.MouseEvent<HTMLDivElement>, file: string, status: string) => void;
   onRevert?: (file: string, status: string) => void;
   revertingFile?: string | null;
 }) {
@@ -254,13 +373,15 @@ function FileList({ files, loading, emptyMessage, onFileClick, onRevert, reverti
         <div
           key={f.file}
           className="group w-full flex items-center gap-2 px-3 py-0.5 text-[11px] hover:bg-bg-hover transition-colors"
+          onContextMenu={onFileContextMenu ? (event) => onFileContextMenu(event, f.file, f.status) : undefined}
         >
           <button
             className="flex items-center gap-2 min-w-0 flex-1 text-left"
             onClick={() => onFileClick(f.file)}
+            title={buildTooltipPath(worktreePath, f.file)}
           >
             <StatusBadge status={f.status} />
-            <span className="truncate text-text-secondary font-mono">{f.file}</span>
+            <FilePathLabel file={f.file} />
           </button>
           {onRevert && (
             <button
@@ -278,6 +399,21 @@ function FileList({ files, loading, emptyMessage, onFileClick, onRevert, reverti
         </div>
       ))}
     </div>
+  );
+}
+
+function FilePathLabel({ file }: { file: string }) {
+  const { directory, fileName } = splitDisplayPath(file);
+
+  return (
+    <span className="flex min-w-0 items-baseline gap-1 font-mono">
+      {directory && (
+        <span className="min-w-0 flex-1 truncate text-text-tertiary" dir="rtl">
+          {directory}/
+        </span>
+      )}
+      <span className="shrink-0 text-text-secondary">{fileName}</span>
+    </span>
   );
 }
 

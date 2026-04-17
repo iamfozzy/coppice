@@ -92,6 +92,7 @@ pub fn run() {
             commands::claude_hooks::uninstall_claude_hooks,
             // External tool commands
             commands::external::open_in_editor,
+            commands::external::open_worktree_file_in_editor,
             commands::external::open_in_terminal,
             commands::external::open_in_finder,
             // Agent commands
