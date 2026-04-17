@@ -114,9 +114,13 @@ async function handleCommand(msg) {
       if (pending) {
         pendingToolResponses.delete(msg.callId);
         if (msg.behavior === "allow") {
+          // The SDK requires `updatedInput` to be the actual tool input, not
+          // undefined. Fall back to the original toolInput captured when we
+          // prompted — the frontend has no reason to mutate it for a plain
+          // Allow click, and a missing value here silently breaks execution.
           pending.resolve({
             behavior: "allow",
-            updatedInput: msg.updatedInput,
+            updatedInput: msg.updatedInput ?? pending.toolInput,
           });
         } else {
           pending.resolve({
@@ -274,7 +278,7 @@ async function startSession(msg) {
     });
 
     return new Promise((resolve) => {
-      pendingToolResponses.set(callId, { resolve });
+      pendingToolResponses.set(callId, { resolve, toolInput });
       // Timeout after 2 minutes — auto-deny
       setTimeout(() => {
         if (pendingToolResponses.has(callId)) {

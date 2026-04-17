@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
-import { useShallow } from "zustand/shallow";
 import { DiffViewer } from "../DiffViewer/DiffViewer";
 import * as commands from "../../lib/commands";
 
@@ -37,17 +36,7 @@ export function WorktreeView() {
 
   // Only subscribe to Claude statuses for tabs in the current worktree.
   // useShallow ensures re-render only when the picked values change.
-  const claudeStatusByTab = useAppStore(
-    useShallow((s) => {
-      const result: Record<string, ClaudeStatus> = {};
-      for (const t of tabs) {
-        if (t.type !== "claude" && t.type !== "agent") continue;
-        const st = s.claudeStatusByTab[t.id];
-        if (st) result[t.id] = st;
-      }
-      return result;
-    })
-  );
+  const claudeStatusByTab = useAppStore((s) => s.claudeStatusByTab);
 
   const [liveBranch, setLiveBranch] = useState<string | null>(null);
   const [lastBranchWtId, setLastBranchWtId] = useState<string | null>(null);
@@ -260,14 +249,18 @@ function Tab({
 
   let dotNode: React.ReactNode;
   if (agentActive) {
+    // Agent is actively working. Use a larger pulsing dot so it's clearly
+    // distinguishable from the plain "this tab is selected" dot below.
     dotNode = (
-      <span className="relative flex h-1.5 w-1.5 shrink-0">
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-50" />
-        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
+      <span className="relative flex h-2 w-2 shrink-0">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
       </span>
     );
   } else if (agentIdle) {
-    dotNode = <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-warning" />;
+    // Agent has completed (done or errored). Bigger warning dot so it's
+    // obvious the tab needs attention.
+    dotNode = <span className="w-2 h-2 rounded-full shrink-0 bg-warning" />;
   } else {
     const activeColor =
       type === "agent" || type === "claude" ? "bg-accent" : type === "diff" ? "bg-warning" : "bg-text-tertiary";

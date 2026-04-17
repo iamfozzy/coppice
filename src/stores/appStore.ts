@@ -218,15 +218,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectProject: (id) => set({ selectedProjectId: id }),
   selectWorktree: (id) => {
     set({ selectedWorktreeId: id });
-    // Clear the idle indicator only on the currently-active claude tab of the
-    // selected worktree — the tab the user can now actually see. Other claude
-    // tabs in this worktree keep their idle status so the tab-bar dot (and the
-    // aggregated sidebar dot) still point the user at the specific tab that
-    // fired the notification.
+    // Clear the idle dot for CLI claude tabs when the user navigates to the
+    // worktree (they're now able to see it). Agent tabs keep the dot until
+    // the user actually sends a new prompt — selecting a worktree isn't
+    // really engagement with the agent tab contents, and losing the dot
+    // here means users who switch away and come back never see the "done"
+    // signal at all.
     if (id) {
       const s = get();
       const activeId = s.activeTabByWorktree[id];
-      if (activeId && s.claudeStatusByTab[activeId] === "idle") {
+      const activeTab = activeId ? s.tabsByWorktree[id]?.find((t) => t.id === activeId) : undefined;
+      if (
+        activeId &&
+        activeTab?.type === "claude" &&
+        s.claudeStatusByTab[activeId] === "idle"
+      ) {
         const { [activeId]: _, ...rest } = s.claudeStatusByTab;
         set({ claudeStatusByTab: rest });
       }
@@ -340,19 +346,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const userIsWatching = isVisible && isWindowFocused();
 
-    // If the user is actively looking at this tab, there's nothing to
-    // notify them about — skip the idle transition entirely. Without this,
-    // the warning dot briefly flashes onto a tab the user is already
-    // viewing (setActiveTab / focus handlers only clear when something
-    // changed, not when the user was already there).
-    if (status === "idle" && userIsWatching) {
-      if (prev !== undefined) {
-        const { [tabId]: _, ...rest } = s.claudeStatusByTab;
-        set({ claudeStatusByTab: rest });
-      }
-      return;
-    }
-
+    // Always write the status so the in-tab dot reflects what the agent is
+    // actually doing (pulsing while active, warning when done/errored). We
+    // used to skip the write when the user was watching to avoid "flashing"
+    // a dot onto the visible tab, but that also suppressed the dot entirely
+    // for users who stay on the agent tab — leaving them with no visual
+    // completion cue at all. The setActiveTab + window-focus handlers still
+    // clear idle state on the next real engagement (switching tabs, window
+    // refocus), so the dot doesn't linger.
     set((state) => ({
       claudeStatusByTab: { ...state.claudeStatusByTab, [tabId]: status },
     }));

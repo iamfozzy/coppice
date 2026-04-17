@@ -25,7 +25,7 @@ export function ProjectTree() {
         let hasActive = false;
         let hasIdle = false;
         for (const t of tabs) {
-          if (t.type !== "claude") continue;
+          if (t.type !== "claude" && t.type !== "agent") continue;
           const st = s.claudeStatusByTab[t.id];
           if (st === "active") { hasActive = true; break; }
           if (st === "idle") hasIdle = true;
