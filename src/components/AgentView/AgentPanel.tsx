@@ -367,12 +367,16 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         // thread. If the bridge dies before emitting anything useful, this is
         // the only breadcrumb the user gets.
         const text = (msg.text as string) || "";
+        // Skip known informational log lines that aren't real errors
+        const isInfoLine = /generated title:|generating title for/i.test(text);
         const looksLikeError = /error|cannot find|failed|exception|ENOENT|throw/i.test(text);
-        if (looksLikeError) {
+        if (looksLikeError && !isInfoLine) {
+          // Strip any existing [bridge] prefix to avoid doubling up
+          const cleaned = text.replace(/^\[bridge\]\s*/i, "");
           appendMessage(sessionId, {
             id: nextMsgId(),
             type: "error",
-            content: `[bridge] ${text}`,
+            content: `[bridge] ${cleaned}`,
             timestamp: Date.now(),
           });
         }

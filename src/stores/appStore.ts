@@ -58,6 +58,7 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
       cost_json: session.cost ? JSON.stringify(session.cost) : null,
       messages_json: JSON.stringify(session.messages),
       tab_order: tabOrder,
+      extended_context: session.extendedContext,
       created_at: new Date().toISOString(),
     };
     commands.saveAgentTabCache(cache).catch(() => {});
@@ -102,6 +103,7 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         cost_json: session.cost ? JSON.stringify(session.cost) : null,
         messages_json: JSON.stringify(session.messages),
         tab_order: i,
+        extended_context: session.extendedContext,
         created_at: new Date().toISOString(),
       };
       saves.push(commands.saveAgentTabCache(cache));
@@ -559,7 +561,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           status,
           model: cached.model,
           effort: cached.effort as EffortLevel,
-          extendedContext: false,
+          extendedContext: cached.extended_context,
           permissionMode: cached.permission_mode as AgentPermissionMode,
           cost,
           sdkSessionId: cached.sdk_session_id,
