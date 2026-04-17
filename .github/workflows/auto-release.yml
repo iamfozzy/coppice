@@ -137,6 +137,10 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Install agent-bridge dependencies
+        run: npm ci
+        working-directory: src-tauri/resources/agent-bridge
+
       - name: Build with Tauri
         shell: bash
         run: npx tauri build --verbose ${{ matrix.args }}
