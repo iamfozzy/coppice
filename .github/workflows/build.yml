@@ -69,7 +69,14 @@ jobs:
         run: npm ci
 
       - name: Install agent-bridge dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          npm ci
+          # linuxdeploy (AppImage bundler) resolves dependencies for every .so
+          # under the AppDir. sharp ships a musl variant with os: [linux] but no
+          # libc constraint, so npm installs it on glibc Ubuntu — then
+          # linuxdeploy fails trying to find libc.musl-x86_64.so.1.
+          rm -rf node_modules/@img/sharp-linuxmusl-* node_modules/@img/sharp-libvips-linuxmusl-*
         working-directory: src-tauri/resources/agent-bridge
 
       - name: Build with Tauri
