@@ -447,17 +447,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const userIsWatching = isVisible && isWindowFocused();
 
-    // Always write the status so the in-tab dot reflects what the agent is
-    // actually doing (pulsing while active, warning when done/errored). We
-    // used to skip the write when the user was watching to avoid "flashing"
-    // a dot onto the visible tab, but that also suppressed the dot entirely
-    // for users who stay on the agent tab — leaving them with no visual
-    // completion cue at all. The setActiveTab + window-focus handlers still
-    // clear idle state on the next real engagement (switching tabs, window
-    // refocus), so the dot doesn't linger.
-    set((state) => ({
-      claudeStatusByTab: { ...state.claudeStatusByTab, [tabId]: status },
-    }));
+    // Write the status so the in-tab dot reflects what the agent is doing
+    // (pulsing while active, warning when done/errored). However, if the
+    // user is already watching this specific tab and it transitions to
+    // "idle", skip writing it — the user can see the agent finished from
+    // the tab content, and writing "idle" would light up the tab dot,
+    // sidebar dot, and dock badge with no clearing trigger until the user
+    // manually toggles away and back.
+    if (status === "idle" && userIsWatching) {
+      // Remove any previous status (e.g. "active") so the pulsing dot
+      // stops, but don't write "idle" — no orange dot / badge needed.
+      if (prev) {
+        const { [tabId]: _, ...rest } = s.claudeStatusByTab;
+        set({ claudeStatusByTab: rest });
+      }
+    } else {
+      set((state) => ({
+        claudeStatusByTab: { ...state.claudeStatusByTab, [tabId]: status },
+      }));
+    }
 
     // Notify when the agent becomes idle and the user can't see the tab.
     // Only agent SDK tabs drive this path (CLI tabs don't set claude status).
