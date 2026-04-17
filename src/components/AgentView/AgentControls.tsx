@@ -64,6 +64,19 @@ export function AgentControls({
       {/* Model selector — custom dropdown */}
       <ModelPicker model={model} onModelChange={onModelChange} />
 
+      {/* Extended context (1M) toggle */}
+      <button
+        className={`px-2 py-1 text-[11px] font-medium rounded-md border transition-colors ${
+          extendedContext
+            ? "border-accent bg-accent/10 text-accent"
+            : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+        }`}
+        onClick={() => onExtendedContextChange(!extendedContext)}
+        title={extendedContext ? "1M context window enabled — click to use default (200K)" : "Using default context (200K) — click to enable 1M context window"}
+      >
+        {extendedContext ? "1M ctx" : "200K ctx"}
+      </button>
+
       {/* Effort selector */}
       <div className="flex items-center rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
         {EFFORT_LEVELS.map((level) => (
@@ -81,19 +94,6 @@ export function AgentControls({
           </button>
         ))}
       </div>
-
-      {/* Extended context (1M) toggle */}
-      <button
-        className={`px-2 py-1 text-[11px] font-medium rounded-md border transition-colors ${
-          extendedContext
-            ? "border-accent bg-accent/10 text-accent"
-            : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-        }`}
-        onClick={() => onExtendedContextChange(!extendedContext)}
-        title={extendedContext ? "1M context window enabled — click to use default (200K)" : "Using default context (200K) — click to enable 1M context window"}
-      >
-        {extendedContext ? "1M ctx" : "200K ctx"}
-      </button>
 
       {/* Permission mode picker */}
       <PermissionModePicker
