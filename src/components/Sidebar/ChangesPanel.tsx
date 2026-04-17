@@ -201,19 +201,21 @@ export const ChangesPanel = memo(function ChangesPanel() {
   };
 
   const useAgent = appSettings?.default_claude_mode === "agent";
-  const sendToAgent = (prompt: string) => {
+  const sendToAgent = (prompt: string, model?: string) => {
     if (useAgent) {
-      requestAgentTab(prompt);
+      requestAgentTab(prompt, model);
     } else {
       requestClaudeTab(`${claudeCmd} "${prompt}"`);
     }
   };
 
+  const HAIKU_MODEL = "claude-haiku-4-5-20251001";
+
   const handlePush = () => {
     if (uncommittedFiles.length > 0) {
-      sendToAgent("Commit all the changes in this worktree with a clear, descriptive commit message, then push to origin.");
+      sendToAgent("Commit all the changes in this worktree with a clear, descriptive commit message, then push to origin.", HAIKU_MODEL);
     } else {
-      sendToAgent("Push the current branch to origin.");
+      sendToAgent("Push the current branch to origin.", HAIKU_MODEL);
     }
   };
 
@@ -229,12 +231,28 @@ export const ChangesPanel = memo(function ChangesPanel() {
             onClick={() => setTab("pr-status")}
           />
         </div>
-        {hasLocalChanges && (
+        {hasLocalChanges ? (
           <button
             className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
             onClick={handlePush}
           >
             {uncommittedFiles.length > 0 ? "Commit & Push" : `Push (${unpushedCount})`}
+          </button>
+        ) : (
+          <button
+            className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
+            onClick={() => {
+              if (project.pr_create_skill && !useAgent) {
+                requestClaudeTab(project.pr_create_skill);
+              } else {
+                sendToAgent(
+                  `Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}`,
+                  HAIKU_MODEL
+                );
+              }
+            }}
+          >
+            Create PR
           </button>
         )}
       </div>
@@ -280,15 +298,6 @@ export const ChangesPanel = memo(function ChangesPanel() {
               );
             }}
             onOpenFile={(file) => openDiffTab(worktree.id, file, worktree.path, "pr", baseBranch)}
-            onCreatePrWithClaude={() => {
-              if (project.pr_create_skill && !useAgent) {
-                requestClaudeTab(project.pr_create_skill);
-              } else {
-                sendToAgent(
-                  `Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}`
-                );
-              }
-            }}
           />
         )}
       </div>

@@ -78,9 +78,9 @@ export function WorktreeView() {
   // Watch for pending Agent prompts
   useEffect(() => {
     if (pendingAgentPrompt && worktree) {
-      const prompt = consumeAgentPrompt();
-      if (prompt) {
-        addAgentTab(worktree.id, worktree.path, prompt);
+      const pending = consumeAgentPrompt();
+      if (pending) {
+        addAgentTab(worktree.id, worktree.path, pending.prompt, pending.model);
       }
     }
   }, [pendingAgentPrompt, worktree, consumeAgentPrompt, addAgentTab]);

@@ -185,7 +185,7 @@ interface AppState {
   editingProject: "new" | string | null;
   sidebarWidth: number;
   pendingClaudeCommand: string | null;
-  pendingAgentPrompt: string | null;
+  pendingAgentPrompt: { prompt: string; model?: string } | null;
   pendingRunner: { key: string } | null;
   deletingWorktreeIds: Set<string>;
 
@@ -217,8 +217,8 @@ interface AppState {
   setSidebarWidth: (width: number) => void;
   requestClaudeTab: (command: string) => void;
   consumeClaudeCommand: () => string | null;
-  requestAgentTab: (prompt: string) => void;
-  consumeAgentPrompt: () => string | null;
+  requestAgentTab: (prompt: string, model?: string) => void;
+  consumeAgentPrompt: () => { prompt: string; model?: string } | null;
   requestRunner: (key: string) => void;
   consumeRunner: () => { key: string } | null;
 
@@ -254,7 +254,7 @@ interface AppState {
   closeActiveTab: (worktreeId: string) => void;
   newTerminalTab: (worktreeId: string) => void;
   newClaudeTab: (worktreeId: string) => void;
-  addAgentTab: (worktreeId: string, cwd: string, prompt?: string) => void;
+  addAgentTab: (worktreeId: string, cwd: string, prompt?: string, model?: string) => void;
   newAgentTab: (worktreeId: string) => void;
   renameTab: (worktreeId: string, tabId: string, newLabel: string) => void;
 
@@ -332,7 +332,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (cmd) set({ pendingClaudeCommand: null });
     return cmd;
   },
-  requestAgentTab: (prompt) => set({ pendingAgentPrompt: prompt }),
+  requestAgentTab: (prompt, model) => set({ pendingAgentPrompt: { prompt, model } }),
   consumeAgentPrompt: () => {
     const p = get().pendingAgentPrompt;
     if (p) set({ pendingAgentPrompt: null });
@@ -794,7 +794,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     s.addTab(worktreeId, "claude", path, claudeCmd);
   },
 
-  addAgentTab: (worktreeId, cwd, prompt) => {
+  addAgentTab: (worktreeId, cwd, prompt, model) => {
     const s = get();
     const tabs = s.tabsByWorktree[worktreeId] ?? [];
     let maxNum = 0;
@@ -814,7 +814,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionState: AgentSessionState = {
       messages: [],
       status: "idle",
-      model: s.appSettings?.agent_default_model || "claude-opus-4-7",
+      model: model || s.appSettings?.agent_default_model || "claude-opus-4-7",
       effort: s.appSettings?.agent_default_effort || "high",
       extendedContext: s.appSettings?.agent_default_extended_context ?? false,
       permissionMode: "bypassPermissions",
