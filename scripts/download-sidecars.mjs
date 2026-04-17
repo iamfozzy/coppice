@@ -6,7 +6,7 @@
 //
 // Usage: node scripts/download-sidecars.mjs [target-triple]
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -129,13 +129,33 @@ function extract(archivePath, archiveType, destDir) {
   // Pass the archive by basename and run from its parent dir. GNU tar (Git
   // Bash on Windows) interprets `D:\...` as a remote host because of the
   // colon, so absolute paths with drive letters fail with "Cannot connect
-  // to D: resolve failed". bsdtar on Win10+ understands zip via libarchive.
+  // to D: resolve failed".
   const cwd = dirname(archivePath);
   const name = basename(archivePath);
-  const flags =
-    archiveType === "tar.gz" ? "-xzf" : archiveType === "tar.xz" ? "-xJf" : archiveType === "zip" ? "-xf" : null;
+
+  if (archiveType === "zip") {
+    if (process.platform === "win32") {
+      // Some Windows runners ship a tar that cannot extract zip archives.
+      const psPath = archivePath.replace(/'/g, "''");
+      const psDest = destDir.replace(/'/g, "''");
+      execFileSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          `Expand-Archive -LiteralPath '${psPath}' -DestinationPath '${psDest}' -Force`,
+        ],
+        { stdio: "inherit" },
+      );
+      return;
+    }
+    execFileSync("tar", ["-xf", name, "-C", destDir], { stdio: "inherit", cwd });
+    return;
+  }
+
+  const flags = archiveType === "tar.gz" ? "-xzf" : archiveType === "tar.xz" ? "-xJf" : null;
   if (!flags) throw new Error(`Unknown archive type: ${archiveType}`);
-  execSync(`tar ${flags} "${name}" -C "${destDir}"`, { stdio: "inherit", cwd });
+  execFileSync("tar", [flags, name, "-C", destDir], { stdio: "inherit", cwd });
 }
 
 async function fetchBinary(name, meta) {
