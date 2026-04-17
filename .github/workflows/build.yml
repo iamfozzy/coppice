@@ -66,7 +66,7 @@ jobs:
           workspaces: src-tauri -> target
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Install agent-bridge dependencies
         shell: bash
@@ -78,6 +78,28 @@ jobs:
           # linuxdeploy fails trying to find libc.musl-x86_64.so.1.
           rm -rf node_modules/@img/sharp-linuxmusl-* node_modules/@img/sharp-libvips-linuxmusl-*
         working-directory: src-tauri/resources/agent-bridge
+
+      - name: Determine target triple
+        id: target
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            echo "triple=${{ matrix.rust_target }}" >> "$GITHUB_OUTPUT"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            echo "triple=x86_64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            echo "triple=x86_64-pc-windows-msvc" >> "$GITHUB_OUTPUT"
+          else
+            echo "triple=x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prune agent-bridge for target
+        shell: bash
+        run: node scripts/prune-agent-bridge.mjs ${{ steps.target.outputs.triple }}
+
+      - name: Download node + gh sidecars for target
+        shell: bash
+        run: node scripts/download-sidecars.mjs ${{ steps.target.outputs.triple }}
 
       - name: Build with Tauri
         shell: bash

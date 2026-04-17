@@ -4,16 +4,19 @@ import type { EffortLevel, AgentPermissionMode } from "../../lib/types";
 interface Props {
   model: string;
   effort: EffortLevel;
+  extendedContext: boolean;
   permissionMode: AgentPermissionMode;
   onModelChange: (model: string) => void;
   onEffortChange: (effort: EffortLevel) => void;
+  onExtendedContextChange: (enabled: boolean) => void;
   onPermissionModeChange: (mode: AgentPermissionMode) => void;
 }
 
-const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "max"];
+const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 const MODELS = [
-  { value: "", label: "Default" },
+  { value: "", label: "Default (Opus 4.7)" },
+  { value: "claude-opus-4-7", label: "Opus 4.7" },
   { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
   { value: "claude-opus-4-6", label: "Opus 4.6" },
   { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
@@ -49,15 +52,30 @@ const PERMISSION_MODES: {
 export function AgentControls({
   model,
   effort,
+  extendedContext,
   permissionMode,
   onModelChange,
   onEffortChange,
+  onExtendedContextChange,
   onPermissionModeChange,
 }: Props) {
   return (
     <div className="flex items-center gap-2 px-4 py-1.5 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
       {/* Model selector — custom dropdown */}
       <ModelPicker model={model} onModelChange={onModelChange} />
+
+      {/* Extended context (1M) toggle */}
+      <button
+        className={`px-2 py-1 text-[11px] font-medium rounded-md border transition-colors ${
+          extendedContext
+            ? "border-accent bg-accent/10 text-accent"
+            : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+        }`}
+        onClick={() => onExtendedContextChange(!extendedContext)}
+        title={extendedContext ? "1M context window enabled — click to use default (200K)" : "Using default context (200K) — click to enable 1M context window"}
+      >
+        {extendedContext ? "1M ctx" : "200K ctx"}
+      </button>
 
       {/* Effort selector */}
       <div className="flex items-center rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">

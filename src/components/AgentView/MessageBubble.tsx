@@ -10,7 +10,20 @@ export function MessageBubble({ message }: Props) {
     case "user":
       return (
         <div className="flex justify-end pl-12">
-          <div className="bg-accent/10 border border-accent/20 rounded-xl rounded-br-sm px-3.5 py-2 text-sm text-text-primary whitespace-pre-wrap break-words">
+          <div className={`rounded-xl rounded-br-sm px-3.5 py-2 text-sm text-text-primary whitespace-pre-wrap break-words ${
+            message.isQueued
+              ? "bg-amber-500/8 border border-amber-500/20"
+              : "bg-accent/10 border border-accent/20"
+          }`}>
+            {message.isQueued && (
+              <div className="flex items-center gap-1 mb-1 text-[10px] text-amber-400 font-medium">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <circle cx="5" cy="5" r="4" stroke="currentColor" strokeWidth="1" />
+                  <path d="M5 2.5v3l1.5 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                </svg>
+                Queued — will send when Claude finishes
+              </div>
+            )}
             {message.content}
           </div>
         </div>

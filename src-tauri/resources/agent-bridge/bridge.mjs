@@ -248,7 +248,19 @@ async function startSession(msg) {
   if (opts.maxTurns) queryOptions.maxTurns = opts.maxTurns;
   if (opts.maxBudgetUsd) queryOptions.maxBudgetUsd = opts.maxBudgetUsd;
   if (opts.resume) queryOptions.resume = opts.resume;
-  if (opts.systemPrompt) queryOptions.systemPrompt = opts.systemPrompt;
+
+  // Use Claude Code's full system prompt by default so the agent behaves like
+  // Claude Code (aggressive tool use, codebase-first answers, etc.).
+  // The caller can override with a custom string or their own preset config.
+  queryOptions.systemPrompt = opts.systemPrompt || {
+    type: "preset",
+    preset: "claude_code",
+  };
+
+  if (opts.extendedContext) {
+    queryOptions.betas = [...(queryOptions.betas || []), "context-1m-2025-08-07"];
+  }
+
   if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
     queryOptions.mcpServers = opts.mcpServers;
   }
@@ -481,6 +493,10 @@ function processMessage(message) {
     }
 
     case "result":
+      // Clear active references immediately so a follow-up startSession()
+      // (e.g. from a queued message) won't abort the already-finished query.
+      activeQuery = null;
+      activeAbort = null;
       emit({
         type: "result",
         subtype: message.subtype,

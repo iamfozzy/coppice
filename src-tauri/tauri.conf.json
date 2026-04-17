@@ -28,6 +28,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": [
+      "binaries/coppice-node",
+      "binaries/coppice-gh"
+    ],
     "resources": {
       "resources/agent-bridge/bridge.mjs": "agent-bridge/bridge.mjs",
       "resources/agent-bridge/package.json": "agent-bridge/package.json",

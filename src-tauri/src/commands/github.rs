@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
 use crate::db::Database;
-use crate::services::shell_env::user_command;
+use crate::services::pty_manager::PtyManager;
+use crate::services::shell_env::{bin, user_command};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrInfo {
@@ -55,7 +56,7 @@ pub async fn get_pr_for_branch(
     let cwd = get_project_path(&db, &project_id)?;
 
     // Get PR for this branch using gh CLI
-    let pr_output = user_command("gh")
+    let pr_output = user_command(&bin("gh"))
         .args([
             "pr", "view", &branch,
             "--json", "number,title,state,url,isDraft,mergeable,headRefName",
@@ -91,7 +92,7 @@ pub async fn get_pr_for_branch(
 }
 
 fn get_check_runs(cwd: &str, pr_number: i64) -> Result<Vec<CheckRun>, String> {
-    let output = user_command("gh")
+    let output = user_command(&bin("gh"))
         .args([
             "pr", "checks", &pr_number.to_string(),
             "--json", "name,state,link",
@@ -145,7 +146,7 @@ pub async fn create_pr(
     }
 
     // Create the PR
-    let output = user_command("gh")
+    let output = user_command(&bin("gh"))
         .args([
             "pr", "create",
             "--title", &title,
@@ -185,7 +186,7 @@ pub async fn get_failed_action_logs(
 
     // First, resolve the PR's head branch name (Command::new doesn't
     // invoke a shell, so we cannot use $(...) expansions).
-    let head_ref_output = user_command("gh")
+    let head_ref_output = user_command(&bin("gh"))
         .args([
             "pr", "view", &pr_number.to_string(),
             "--json", "headRefName",
@@ -198,7 +199,7 @@ pub async fn get_failed_action_logs(
     let head_ref = String::from_utf8_lossy(&head_ref_output.stdout).trim().to_string();
 
     // Get from PR checks directly
-    let checks_output = user_command("gh")
+    let checks_output = user_command(&bin("gh"))
         .args([
             "pr", "checks", &pr_number.to_string(),
         ])
@@ -221,7 +222,7 @@ pub async fn get_failed_action_logs(
         run_list_args.push(&head_ref);
     }
 
-    let run_list = user_command("gh")
+    let run_list = user_command(&bin("gh"))
         .args(&run_list_args)
         .current_dir(&cwd)
         .output()
@@ -233,7 +234,7 @@ pub async fn get_failed_action_logs(
         return Ok(format!("PR #{} checks:\n{}", pr_number, checks_text));
     }
 
-    let logs_output = user_command("gh")
+    let logs_output = user_command(&bin("gh"))
         .args(["run", "view", &run_id, "--log-failed"])
         .current_dir(&cwd)
         .output()
@@ -276,7 +277,7 @@ pub async fn get_pr_comments(
     let cwd = get_project_path(&db, &project_id)?;
 
     // Get review comments (inline code comments)
-    let review_output = user_command("gh")
+    let review_output = user_command(&bin("gh"))
         .args([
             "api",
             &format!("repos/{{owner}}/{{repo}}/pulls/{}/comments", pr_number),
@@ -307,7 +308,7 @@ pub async fn get_pr_comments(
     }
 
     // Get issue comments (general PR comments)
-    let issue_output = user_command("gh")
+    let issue_output = user_command(&bin("gh"))
         .args([
             "api",
             &format!("repos/{{owner}}/{{repo}}/issues/{}/comments", pr_number),
@@ -336,7 +337,7 @@ pub async fn get_pr_comments(
     }
 
     // Fetch thread resolution status via GraphQL (best-effort)
-    if let Ok(repo_out) = user_command("gh")
+    if let Ok(repo_out) = user_command(&bin("gh"))
         .args(["repo", "view", "--json", "owner,name"])
         .current_dir(&cwd)
         .output()
@@ -349,7 +350,7 @@ pub async fn get_pr_comments(
                 if !owner.is_empty() && !name.is_empty() {
                     let query = r#"query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved comments(first: 100) { nodes { databaseId } } } } } } }"#;
 
-                    if let Ok(gql_out) = user_command("gh")
+                    if let Ok(gql_out) = user_command(&bin("gh"))
                         .args([
                             "api", "graphql",
                             "-f", &format!("owner={}", owner),
@@ -417,7 +418,7 @@ pub async fn resolve_pr_comment(
         mutation_name
     );
 
-    let output = user_command("gh")
+    let output = user_command(&bin("gh"))
         .args([
             "api", "graphql",
             "-f", &format!("threadId={}", thread_id),
@@ -443,4 +444,112 @@ pub async fn resolve_pr_comment(
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthStatus {
+    pub logged_in: bool,
+    pub user: Option<String>,
+    pub host: String,
+}
+
+/// Check whether the bundled `gh` is authenticated against github.com.
+///
+/// `gh auth status` exits non-zero when not logged in and writes its
+/// human-readable report to stderr in both cases; we parse the username out
+/// of the "Logged in to github.com account <user>" line when present.
+#[tauri::command]
+pub async fn github_auth_status() -> Result<AuthStatus, String> {
+    let output = user_command(&bin("gh"))
+        .args(["auth", "status", "--hostname", "github.com"])
+        .output()
+        .map_err(|e| format!("Failed to run gh: {}", e))?;
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    if !output.status.success() {
+        return Ok(AuthStatus {
+            logged_in: false,
+            user: None,
+            host: "github.com".into(),
+        });
+    }
+
+    let user = combined
+        .lines()
+        .find_map(|line| {
+            let t = line.trim();
+            t.strip_prefix("Logged in to github.com account ")
+                .map(|rest| rest.split_whitespace().next().unwrap_or("").to_string())
+                .filter(|s| !s.is_empty())
+        });
+
+    Ok(AuthStatus {
+        logged_in: true,
+        user,
+        host: "github.com".into(),
+    })
+}
+
+/// Start an interactive `gh auth login` session in a PTY. The frontend
+/// attaches an xterm to `session_id` to show the device-code prompt and let
+/// the user press Enter / paste the code. `-w` uses the web browser flow,
+/// which is the only one that works inside a packaged app with no stored
+/// SSH keys.
+#[tauri::command]
+pub fn github_auth_login(
+    session_id: String,
+    rows: Option<u16>,
+    cols: Option<u16>,
+    pty_manager: State<'_, PtyManager>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let gh = bin("gh");
+    let cmd = format!(
+        "{} auth login --hostname github.com --git-protocol https --web",
+        shell_quote(&gh)
+    );
+    let cwd = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    pty_manager.spawn(
+        &session_id,
+        &cwd,
+        Some(&cmd),
+        rows.unwrap_or(24),
+        cols.unwrap_or(80),
+        &app,
+        None,
+    )
+}
+
+/// Log out of github.com. Runs non-interactively — `gh` writes credentials
+/// to its config dir so a simple invocation is enough.
+#[tauri::command]
+pub async fn github_auth_logout() -> Result<(), String> {
+    let output = user_command(&bin("gh"))
+        .args(["auth", "logout", "--hostname", "github.com"])
+        .output()
+        .map_err(|e| format!("Failed to run gh: {}", e))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+/// Minimal POSIX-ish quoting for paths passed through a shell command line.
+/// Sidecar paths on macOS live under `.app/Contents/MacOS/` which contains
+/// spaces in the bundle name; wrap in single quotes and escape any embedded
+/// single quotes. Windows pwsh/cmd aren't covered here — auth login is a
+/// Unix-shaped flow in practice, and Tauri spawns this through the platform
+/// shell which handles its own quoting on Windows.
+fn shell_quote(s: &str) -> String {
+    if s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:".contains(c)) {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
 }
