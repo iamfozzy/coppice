@@ -152,43 +152,46 @@ async function handleCommand(msg) {
 }
 
 // ── Title generation ──
+//
+// Uses the SDK's `query()` with a one-shot prompt so we inherit whatever auth
+// the main session uses (OAuth/subscription or API key). A direct REST call
+// would require `ANTHROPIC_API_KEY`, which subscription users don't have.
 
-async function generateTitle(prompt, apiKey) {
-  if (!apiKey) {
-    log("Title generation skipped: no API key");
-    return;
-  }
+async function generateTitle(prompt, cwd) {
   log("Generating title for prompt:", prompt.slice(0, 80));
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 30_000);
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
+    const titleQuery = query({
+      prompt: `Generate a very short tab title (2-5 words) summarizing this task. Respond with ONLY the title, no quotes or punctuation.\n\nTask: ${prompt.slice(0, 500)}`,
+      options: {
+        cwd,
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 20,
-        messages: [
-          {
-            role: "user",
-            content: `Generate a very short tab title (2-5 words) summarizing this task. Respond with ONLY the title, no quotes or punctuation.\n\nTask: ${prompt.slice(0, 500)}`,
-          },
-        ],
-      }),
+        maxTurns: 1,
+        settingSources: [],
+        allowedTools: [],
+        includePartialMessages: false,
+        abortController: abort,
+      },
     });
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "");
-      log("Title generation API error:", res.status, errBody);
-      return;
+
+    let title = "";
+    for await (const message of titleQuery) {
+      if (message.type === "assistant") {
+        const content = message.message?.content || [];
+        for (const block of content) {
+          if (block.type === "text" && block.text) title += block.text;
+        }
+      }
     }
-    const data = await res.json();
-    const title = data.content?.[0]?.text?.trim();
+
+    title = title.trim().replace(/^["']|["']$/g, "").replace(/[.!?]+$/, "");
     log("Generated title:", title);
     if (title) emit({ type: "title", title });
   } catch (err) {
     log("Title generation failed:", err.message);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -207,7 +210,7 @@ async function startSession(msg) {
   // Generate a short tab title from the first prompt (fire-and-forget)
   if (!titleGenerated && msg.prompt) {
     titleGenerated = true;
-    generateTitle(msg.prompt, opts.apiKey || process.env.ANTHROPIC_API_KEY);
+    generateTitle(msg.prompt, msg.cwd);
   }
   const abortController = new AbortController();
   activeAbort = abortController;
