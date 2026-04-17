@@ -393,6 +393,7 @@ export interface AgentTabCache {
   cost_json: string | null;
   messages_json: string;
   tab_order: number;
+  extended_context: boolean;
   created_at: string;
 }
 

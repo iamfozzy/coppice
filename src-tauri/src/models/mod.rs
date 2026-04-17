@@ -61,5 +61,6 @@ pub struct AgentTabCache {
     pub cost_json: Option<String>,
     pub messages_json: String,
     pub tab_order: i32,
+    pub extended_context: bool,
     pub created_at: String,
 }

@@ -559,6 +559,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           status,
           model: cached.model,
           effort: cached.effort as EffortLevel,
+          extendedContext: false,
           permissionMode: cached.permission_mode as AgentPermissionMode,
           cost,
           sdkSessionId: cached.sdk_session_id,
@@ -566,6 +567,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           pendingQuestion: null,
           streamingText: "",
           slashCommands: DEFAULT_SLASH_COMMANDS,
+          queuedMessages: [],
         };
       }
 
