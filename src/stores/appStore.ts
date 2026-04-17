@@ -12,6 +12,42 @@ import {
 
 export type ClaudeStatus = "active" | "idle";
 
+let _notifIdCounter = 0;
+
+interface TabLocation {
+  projectId: string;
+  worktreeId: string;
+  worktree: Worktree;
+  tab: TabInfo;
+}
+
+/** Resolve the project, worktree, and tab objects that own the given tabId. */
+function findTabLocation(state: Pick<AppState, "tabsByWorktree" | "worktreesByProject">, tabId: string): TabLocation | null {
+  for (const [projectId, worktrees] of Object.entries(state.worktreesByProject)) {
+    for (const worktree of worktrees) {
+      const tab = (state.tabsByWorktree[worktree.id] ?? []).find((candidate) => candidate.id === tabId);
+      if (tab) {
+        return {
+          projectId,
+          worktreeId: worktree.id,
+          worktree,
+          tab,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+/** Fast check: find the worktree that owns the tab (skips the project lookup). */
+function findWorktreeForTab(tabsByWorktree: Record<string, TabInfo[]>, tabId: string): string | null {
+  for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
+    if (tabs.some((t) => t.id === tabId)) return wtId;
+  }
+  return null;
+}
+
 // ── Agent tab cache persistence ──
 
 const _persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -437,14 +473,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     // "Visible" means the tab is the active tab of the selected worktree;
     // "focused" means the whole window is in the foreground. Both must be
     // true for us to consider the user present.
-    let isVisible = false;
-    for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
-      const tab = tabs.find((t) => t.id === tabId);
-      if (tab) {
-        isVisible = s.selectedWorktreeId === wtId && s.activeTabByWorktree[wtId] === tabId;
-        break;
-      }
-    }
+    const owningWt = findWorktreeForTab(s.tabsByWorktree, tabId);
+    const isVisible = owningWt !== null
+      && s.selectedWorktreeId === owningWt
+      && s.activeTabByWorktree[owningWt] === tabId;
     const userIsWatching = isVisible && isWindowFocused();
 
     // Write the status so the in-tab dot reflects what the agent is doing
@@ -478,21 +510,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       // another virtual desktop. Respect the user's toggle and request
       // permission lazily on first use.
       if (s.appSettings?.notification_popup) {
-        // Resolve tab label and worktree name for the notification body.
-        let tabLabel = "";
-        let worktreeName = "";
-        for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
-          const tab = tabs.find((t) => t.id === tabId);
-          if (tab) {
-            tabLabel = tab.label;
-            // Find worktree name.
-            for (const wts of Object.values(s.worktreesByProject)) {
-              const wt = wts.find((w) => w.id === wtId);
-              if (wt) { worktreeName = wt.name || wt.branch; break; }
-            }
-            break;
-          }
-        }
+        // Full lookup needed only here — resolves project ID for the click handler.
+        const tabLocation = findTabLocation(s, tabId);
+        const tabLabel = tabLocation?.tab.label ?? "";
+        const worktreeName = tabLocation ? (tabLocation.worktree.name || tabLocation.worktree.branch) : "";
 
         (async () => {
           try {
@@ -503,10 +524,18 @@ export const useAppStore = create<AppState>((set, get) => ({
             }
             if (granted) {
               sendNotification({
+                id: (_notifIdCounter = (_notifIdCounter + 1) % 0x7FFF_FFFF),
                 title: "Claude is waiting",
                 body: worktreeName
                   ? `${tabLabel} in ${worktreeName}`
                   : tabLabel || "A Claude tab needs attention",
+                ...(tabLocation ? {
+                  extra: {
+                    projectId: tabLocation.projectId,
+                    worktreeId: tabLocation.worktreeId,
+                    tabId,
+                  },
+                } : {}),
               });
             }
           } catch {

@@ -134,7 +134,22 @@ function App() {
 
   // Bring window to foreground when user clicks an OS notification.
   useEffect(() => {
-    const listener = onAction(() => {
+    const listener = onAction((notification) => {
+      const projectId = typeof notification.extra?.projectId === "string"
+        ? notification.extra.projectId
+        : null;
+      const worktreeId = typeof notification.extra?.worktreeId === "string"
+        ? notification.extra.worktreeId
+        : null;
+      const tabId = typeof notification.extra?.tabId === "string"
+        ? notification.extra.tabId
+        : null;
+      if (projectId && worktreeId && tabId) {
+        const store = useAppStore.getState();
+        store.selectProject(projectId);
+        store.selectWorktree(worktreeId);
+        store.setActiveTab(worktreeId, tabId);
+      }
       getCurrentWindow().unminimize().catch(() => {});
       getCurrentWindow().setFocus().catch(() => {});
     });
