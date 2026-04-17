@@ -259,6 +259,28 @@ export async function resolvePrComment(
   return invoke("resolve_pr_comment", { projectId, threadId, resolve });
 }
 
+export interface GithubAuthStatus {
+  logged_in: boolean;
+  user: string | null;
+  host: string;
+}
+
+export async function githubAuthStatus(): Promise<GithubAuthStatus> {
+  return invoke("github_auth_status");
+}
+
+export async function githubAuthLogin(
+  sessionId: string,
+  rows?: number,
+  cols?: number
+): Promise<void> {
+  return invoke("github_auth_login", { sessionId, rows, cols });
+}
+
+export async function githubAuthLogout(): Promise<void> {
+  return invoke("github_auth_logout");
+}
+
 // Agent commands
 export interface AgentStartOptions {
   model?: string;

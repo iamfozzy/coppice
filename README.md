@@ -47,10 +47,11 @@ Since the app is not code-signed, Windows SmartScreen may block it on first laun
 - Auto-run setup scripts on new worktree creation
 
 ### GitHub Integration
-- Fetch PR status and check runs for any branch (requires `gh` CLI)
+- Fetch PR status and check runs for any branch
 - Create PRs directly from the app
 - View failed CI logs inline
 - CI status badges on worktree entries
+- `gh` CLI is bundled with every release — sign in via **App Settings → GitHub** (no separate install required)
 
 ### File Diff Viewer
 - Side-by-side diffs powered by Monaco Editor
@@ -66,6 +67,7 @@ Since the app is not code-signed, Windows SmartScreen may block it on first laun
 - A bundled Node "agent bridge" process (`src-tauri/resources/agent-bridge/`) drives the SDK over a JSON-line stdin/stdout protocol — one bridge process per agent session
 - Rust backend (`src-tauri/src/commands/agent.rs`) spawns and manages bridge lifecycles; tool-use and `AskUserQuestion` round-trips block on frontend responses
 - Bridge dependencies install automatically via the root `postinstall` script, so `npm install` in the repo root is all you need
+- Node.js and `gh` binaries are bundled as Tauri sidecars (`src-tauri/binaries/coppice-node-*`, `coppice-gh-*`) so the packaged app has no external runtime dependencies. `npm install` downloads them for the host platform via `scripts/download-sidecars.mjs`; CI re-runs it per target triple.
 
 ## Tech Stack
 

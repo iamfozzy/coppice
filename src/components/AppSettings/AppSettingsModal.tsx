@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useAppStore } from "../../stores/appStore";
 import * as commands from "../../lib/commands";
 import type { AppSettings, McpServerEntry } from "../../lib/types";
+import { GitHubAuthSection } from "./GitHubAuthSection";
 
 const defaultSettings: AppSettings = {
   editor_command: "",
@@ -78,6 +79,8 @@ export function AppSettingsModal() {
           <p className="text-[11px] text-text-tertiary">
             Global defaults. Leave blank to use platform defaults. Per-project settings override these.
           </p>
+
+          <GitHubAuthSection />
 
           <Field
             label="Editor command"
