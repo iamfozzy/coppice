@@ -93,6 +93,10 @@ jobs:
             echo "triple=x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Patch agent-bridge SDK
+        shell: bash
+        run: node scripts/patch-agent-bridge.mjs
+
       - name: Prune agent-bridge for target
         shell: bash
         run: node scripts/prune-agent-bridge.mjs ${{ steps.target.outputs.triple }}

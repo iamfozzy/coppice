@@ -9,9 +9,10 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "agent-bridge:install": "npm --prefix ./src-tauri/resources/agent-bridge install --omit=dev",
+    "agent-bridge:patch": "node scripts/patch-agent-bridge.mjs",
     "agent-bridge:prune": "node scripts/prune-agent-bridge.mjs",
     "sidecars:download": "node scripts/download-sidecars.mjs",
-    "postinstall": "npm run agent-bridge:install && npm run agent-bridge:prune && npm run sidecars:download"
+    "postinstall": "npm run agent-bridge:install && npm run agent-bridge:patch && npm run agent-bridge:prune && npm run sidecars:download"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
