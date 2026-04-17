@@ -25,11 +25,16 @@ export function AgentInputBar({ disabled, isAgentBusy, autoFocus, placeholder, s
   const [activeIndex, setActiveIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Focus textarea when this tab becomes visible
+  // Focus textarea when this tab becomes visible (tab switch, worktree switch,
+  // or a new worktree selection all flip `autoFocus` via the `visible` prop).
+  // Defer to next frame so the browser has finished any layout work from the
+  // parent's visibility toggle before we move focus.
   useEffect(() => {
-    if (autoFocus && !disabled) {
+    if (!autoFocus || disabled) return;
+    const raf = requestAnimationFrame(() => {
       textareaRef.current?.focus();
-    }
+    });
+    return () => cancelAnimationFrame(raf);
   }, [autoFocus, disabled]);
 
   // Auto-resize textarea

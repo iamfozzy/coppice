@@ -30,8 +30,8 @@ export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDen
   };
 
   return (
-    <div className="mx-4 mb-2 border border-warning/25 bg-warning/4 rounded-lg overflow-hidden">
-      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-warning/10 border-b border-warning/20">
+    <div className="mx-4 mb-2 border border-warning/25 bg-warning/4 rounded-lg overflow-hidden flex flex-col max-h-[70vh] min-h-0">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-warning/10 border-b border-warning/20 shrink-0">
         <div className="flex items-center gap-2">
           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-warning">
             <path d="M7 1l6 12H1L7 1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
@@ -43,7 +43,7 @@ export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDen
         <span className="text-[10px] font-mono text-text-tertiary">{pending.toolName}</span>
       </div>
 
-      <div className="px-3 py-3 space-y-3">
+      <div className="px-3 py-3 space-y-3 overflow-y-auto min-h-0">
         <div className="rounded-md border border-border-primary bg-bg-secondary/60">
           <div className="px-2.5 py-1.5 border-b border-border-primary text-[10px] uppercase tracking-wider text-text-tertiary">
             Preview

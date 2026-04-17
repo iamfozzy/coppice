@@ -1002,10 +1002,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const session = s.agentSessionByTab[tabId];
       if (!session) return s;
+      const prev = session.cost;
+      const accumulated = prev
+        ? {
+            inputTokens: prev.inputTokens + cost.inputTokens,
+            outputTokens: prev.outputTokens + cost.outputTokens,
+            cacheReadTokens: prev.cacheReadTokens + cost.cacheReadTokens,
+            cacheWriteTokens: prev.cacheWriteTokens + cost.cacheWriteTokens,
+            totalCostUsd: prev.totalCostUsd + cost.totalCostUsd,
+          }
+        : cost;
       return {
         agentSessionByTab: {
           ...s.agentSessionByTab,
-          [tabId]: { ...session, cost },
+          [tabId]: { ...session, cost: accumulated },
         },
       };
     });
