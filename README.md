@@ -7,6 +7,24 @@ A desktop app for managing Git worktrees, Claude AI sessions, and development wo
 
 Coppice lets you work across multiple Git worktrees simultaneously, each with its own terminal sessions, Claude AI tabs, diff viewers, and configurable runners — all in one window.
 
+## Installation
+
+Download the latest build from [GitHub Actions](https://github.com/iamfozzy/coppice/actions) artifacts or [Releases](https://github.com/iamfozzy/coppice/releases).
+
+### macOS — "App is damaged" fix
+
+Since the app is not code-signed, macOS quarantines downloaded apps. After extracting, run:
+
+```sh
+xattr -cr /Applications/Coppice.app
+```
+
+Then open Coppice normally. You only need to do this once.
+
+### Windows — SmartScreen warning
+
+Since the app is not code-signed, Windows SmartScreen may block it on first launch. When you see the "Windows protected your PC" dialog, click **More info** then **Run anyway**. You only need to do this once.
+
 ## Features
 
 ### Worktree Management
@@ -42,6 +60,12 @@ Coppice lets you work across multiple Git worktrees simultaneously, each with it
 ### External Tool Launchers
 - Open worktree in VS Code, native terminal, or file manager
 - Cross-platform support (Finder/Explorer/xdg-open)
+
+### Claude Agent SDK Integration
+- Agent sessions are powered by [`@anthropic-ai/claude-agent-sdk`](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)
+- A bundled Node "agent bridge" process (`src-tauri/resources/agent-bridge/`) drives the SDK over a JSON-line stdin/stdout protocol — one bridge process per agent session
+- Rust backend (`src-tauri/src/commands/agent.rs`) spawns and manages bridge lifecycles; tool-use and `AskUserQuestion` round-trips block on frontend responses
+- Bridge dependencies install automatically via the root `postinstall` script, so `npm install` in the repo root is all you need
 
 ## Tech Stack
 
@@ -87,24 +111,6 @@ Coppice lets you work across multiple Git worktrees simultaneously, each with it
 │   └── tauri.conf.json
 └── .github/workflows/build.yml   # Multi-platform CI
 ```
-
-## Installation
-
-Download the latest build from [GitHub Actions](https://github.com/iamfozzy/coppice/actions) artifacts or [Releases](https://github.com/iamfozzy/coppice/releases).
-
-### macOS — "App is damaged" fix
-
-Since the app is not code-signed, macOS quarantines downloaded apps. After extracting, run:
-
-```sh
-xattr -cr /Applications/Coppice.app
-```
-
-Then open Coppice normally. You only need to do this once.
-
-### Windows — SmartScreen warning
-
-Since the app is not code-signed, Windows SmartScreen may block it on first launch. When you see the "Windows protected your PC" dialog, click **More info** then **Run anyway**. You only need to do this once.
 
 ## Prerequisites
 
@@ -175,6 +181,7 @@ Build artifacts (`.dmg`, `.app`, `.deb`, `.AppImage`, `.msi`, `.exe`) are upload
 - **Event-driven PTY** — Output streams via Tauri events (`pty-output-{sessionId}`) rather than polling. A dedicated flush thread batches output every 50ms.
 - **SQLite with WAL** — Database uses Write-Ahead Logging for concurrent read/write. Foreign keys enabled with cascading deletes on worktrees.
 - **Git CLI** — All git operations shell out to `git` / `gh` directly (no libgit2), keeping the dependency surface small and behavior consistent with the user's git config.
+- **Agent bridge subprocess** — Each Claude Agent SDK session runs in its own Node subprocess, isolated from the main app. Communication is line-delimited JSON over stdio, letting the Rust backend drive the SDK without embedding a JS runtime.
 
 ## License
 
