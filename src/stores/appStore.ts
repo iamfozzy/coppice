@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand } from "../lib/types";
+import { DEFAULT_SLASH_COMMANDS } from "../lib/slashCommandDefaults";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
 import { isWindowFocused } from "../lib/windowFocus";
@@ -131,6 +132,7 @@ interface AppState {
   setAgentSdkSessionId: (tabId: string, id: string) => void;
   setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
   setAgentPendingQuestion: (tabId: string, pending: AgentPendingQuestion | null) => void;
+  setAgentSlashCommands: (tabId: string, commands: SlashCommand[]) => void;
   removeAgentSession: (tabId: string) => void;
 
   // Actions — runners
@@ -599,6 +601,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingPermission: null,
       pendingQuestion: null,
       streamingText: "",
+      slashCommands: DEFAULT_SLASH_COMMANDS,
     };
     set((state) => ({
       tabsByWorktree: {
@@ -789,6 +792,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         agentSessionByTab: {
           ...s.agentSessionByTab,
           [tabId]: { ...session, pendingQuestion: pending },
+        },
+      };
+    });
+  },
+
+  setAgentSlashCommands: (tabId, commands) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, slashCommands: commands },
         },
       };
     });

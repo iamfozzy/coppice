@@ -33,6 +33,20 @@ export function MessageBubble({ message }: Props) {
         </div>
       );
 
+    case "slash_output":
+      return (
+        <div className="pr-8">
+          <div className="rounded-lg border border-border-primary bg-bg-secondary/40 overflow-hidden">
+            <div className="px-3 py-1 bg-bg-secondary/60 border-b border-border-primary text-[10px] text-text-tertiary font-mono uppercase tracking-wider">
+              slash command output
+            </div>
+            <div className="px-3 py-2">
+              <MarkdownContent text={message.content || ""} />
+            </div>
+          </div>
+        </div>
+      );
+
     case "error":
       return (
         <div className="flex items-start gap-2 bg-error/8 border border-error/20 rounded-lg px-3 py-2.5 text-sm text-error">

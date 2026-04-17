@@ -82,7 +82,7 @@ export type AgentPermissionMode = "default" | "plan" | "acceptEdits" | "bypassPe
 
 export interface AgentMessage {
   id: string;
-  type: "user" | "assistant" | "tool_call" | "tool_result" | "system" | "error";
+  type: "user" | "assistant" | "tool_call" | "tool_result" | "system" | "error" | "slash_output";
   content?: string;
   toolName?: string;
   toolInput?: unknown;
@@ -117,6 +117,12 @@ export interface AgentCost {
   totalCostUsd: number;
 }
 
+export interface SlashCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
 export interface AgentSessionState {
   messages: AgentMessage[];
   status: AgentStatus;
@@ -128,4 +134,5 @@ export interface AgentSessionState {
   pendingPermission: AgentPendingPermission | null;
   pendingQuestion: AgentPendingQuestion | null;
   streamingText: string;
+  slashCommands: SlashCommand[];
 }

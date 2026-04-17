@@ -109,6 +109,10 @@ async function handleCommand(msg) {
       }
       break;
 
+    case "list_commands":
+      await emitCommands();
+      break;
+
     case "tool_response": {
       const pending = pendingToolResponses.get(msg.callId);
       if (pending) {
@@ -148,6 +152,18 @@ async function handleCommand(msg) {
 
     default:
       log("Unknown command type:", msg.type);
+  }
+}
+
+// ── Slash commands ──
+
+async function emitCommands() {
+  if (!activeQuery) return;
+  try {
+    const commands = await activeQuery.supportedCommands();
+    emit({ type: "commands", commands });
+  } catch (err) {
+    log("supportedCommands error:", err.message);
   }
 }
 
@@ -378,8 +394,12 @@ function processMessage(message) {
           model: message.model || "",
           permissionMode: message.permissionMode || "",
           mcpServers: message.mcp_servers || [],
+          slashCommands: message.slash_commands || [],
           isResume: !isFirst,
         });
+        // Fetch the richer command list (name, description, argumentHint) —
+        // supportedCommands() resolves after initialization.
+        emitCommands();
       } else if (message.subtype === "status") {
         // SDK status updates (e.g. "compacting")
         if (message.status) {
@@ -415,6 +435,24 @@ function processMessage(message) {
     }
 
     case "user": {
+      // Slash command output is emitted as a user message with content wrapped
+      // in <local-command-stdout>/<local-command-stderr> tags and isReplay:true.
+      // Pass those through as `slash_output` so the UI can render them; the
+      // regular "skip replay" filter would otherwise drop the result entirely.
+      const rawContent = message.message?.content;
+      if (typeof rawContent === "string") {
+        const stdoutMatch = rawContent.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
+        const stderrMatch = rawContent.match(/<local-command-stderr>([\s\S]*?)<\/local-command-stderr>/);
+        if (stdoutMatch || stderrMatch) {
+          emit({
+            type: "slash_output",
+            stdout: stdoutMatch ? stdoutMatch[1].trim() : "",
+            stderr: stderrMatch ? stderrMatch[1].trim() : "",
+          });
+          break;
+        }
+      }
+
       // Skip replay messages to prevent duplicates
       if (message.isReplay) break;
 

@@ -334,6 +334,10 @@ export async function agentSetPermissionMode(
   return invoke("agent_set_permission_mode", { sessionId, mode });
 }
 
+export async function agentListCommands(sessionId: string): Promise<void> {
+  return invoke("agent_list_commands", { sessionId });
+}
+
 export async function agentClose(sessionId: string): Promise<void> {
   return invoke("agent_close", { sessionId });
 }

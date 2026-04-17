@@ -1,13 +1,26 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import type { SlashCommand } from "../../lib/types";
 
 interface Props {
   disabled: boolean;
   placeholder?: string;
+  slashCommands?: SlashCommand[];
   onSend: (text: string) => void;
 }
 
-export function AgentInputBar({ disabled, placeholder, onSend }: Props) {
+/** Return the command name the user is currently typing, or null. */
+function parseLeadingSlash(text: string): string | null {
+  // Only trigger on a leading `/` with no whitespace yet — i.e. the whole input
+  // so far is the command name. This matches Claude Code's picker behavior.
+  if (!text.startsWith("/")) return null;
+  const rest = text.slice(1);
+  if (/\s/.test(rest)) return null;
+  return rest;
+}
+
+export function AgentInputBar({ disabled, placeholder, slashCommands, onSend }: Props) {
   const [text, setText] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-resize textarea
@@ -18,43 +31,133 @@ export function AgentInputBar({ disabled, placeholder, onSend }: Props) {
     el.style.height = Math.min(el.scrollHeight, 150) + "px";
   }, [text]);
 
-  const handleSend = () => {
-    const trimmed = text.trim();
+  const query = parseLeadingSlash(text);
+  const filtered = useMemo<SlashCommand[]>(() => {
+    if (query === null || !slashCommands?.length) return [];
+    const q = query.toLowerCase();
+    return slashCommands
+      .filter((c) => c.name.toLowerCase().startsWith(q))
+      .slice(0, 10);
+  }, [query, slashCommands]);
+
+  const pickerOpen = filtered.length > 0;
+
+  // Reset the highlighted row whenever the filter changes
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query]);
+
+  const sendText = (value: string) => {
+    const trimmed = value.trim();
     if (!trimmed || disabled) return;
     onSend(trimmed);
     setText("");
   };
 
+  const applyCommand = (cmd: SlashCommand) => {
+    // If the command takes arguments, insert `/name ` and let the user type.
+    // Otherwise send immediately — mirrors Claude Code's one-tap behavior.
+    if (cmd.argumentHint) {
+      setText(`/${cmd.name} `);
+      textareaRef.current?.focus();
+    } else {
+      sendText(`/${cmd.name}`);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (pickerOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveIndex((i) => (i + 1) % filtered.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveIndex((i) => (i - 1 + filtered.length) % filtered.length);
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const cmd = filtered[activeIndex];
+        if (cmd) setText(`/${cmd.name}${cmd.argumentHint ? " " : ""}`);
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const cmd = filtered[activeIndex];
+        if (cmd) applyCommand(cmd);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setText("");
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      sendText(text);
     }
   };
 
   return (
-    <div className="flex items-end gap-2 px-3 py-2.5 bg-bg-secondary">
-      <textarea
-        ref={textareaRef}
-        className="flex-1 resize-none bg-bg-tertiary border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/20 transition-all font-mono leading-relaxed"
-        rows={1}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder || "Send a message..."}
-        disabled={disabled}
-        spellCheck={false}
-      />
-      <button
-        className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-30 disabled:cursor-not-allowed text-white transition-colors"
-        onClick={handleSend}
-        disabled={disabled || !text.trim()}
-        title="Send (Enter)"
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <path d="M1 7h12M8 2l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
+    <div className="relative">
+      {pickerOpen && (
+        <div className="absolute bottom-full left-3 right-3 mb-1 max-h-60 overflow-y-auto rounded-lg border border-border-primary bg-bg-secondary shadow-lg z-10">
+          {filtered.map((cmd, i) => (
+            <button
+              key={cmd.name}
+              type="button"
+              className={`w-full text-left px-3 py-1.5 text-[12px] font-mono flex items-baseline gap-2 ${
+                i === activeIndex
+                  ? "bg-accent/20 text-text-primary"
+                  : "text-text-secondary hover:bg-bg-tertiary"
+              }`}
+              onMouseDown={(e) => {
+                // Prevent textarea blur so focus stays put after selection.
+                e.preventDefault();
+                applyCommand(cmd);
+              }}
+              onMouseEnter={() => setActiveIndex(i)}
+            >
+              <span className="text-accent">/{cmd.name}</span>
+              {cmd.argumentHint && (
+                <span className="text-text-tertiary">{cmd.argumentHint}</span>
+              )}
+              {cmd.description && (
+                <span className="ml-auto text-text-tertiary truncate">
+                  {cmd.description}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="flex items-end gap-2 px-3 py-2.5 bg-bg-secondary">
+        <textarea
+          ref={textareaRef}
+          className="flex-1 resize-none bg-bg-tertiary border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/20 transition-all font-mono leading-relaxed"
+          rows={1}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder || "Send a message..."}
+          disabled={disabled}
+          spellCheck={false}
+        />
+        <button
+          className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-30 disabled:cursor-not-allowed text-white transition-colors"
+          onClick={() => sendText(text)}
+          disabled={disabled || !text.trim()}
+          title="Send (Enter)"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M1 7h12M8 2l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }
