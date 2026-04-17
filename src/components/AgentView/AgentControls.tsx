@@ -15,7 +15,7 @@ interface Props {
 const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 const MODELS = [
-  { value: "", label: "Default" },
+  { value: "", label: "Default (Opus 4.7)" },
   { value: "claude-opus-4-7", label: "Opus 4.7" },
   { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
   { value: "claude-opus-4-6", label: "Opus 4.6" },

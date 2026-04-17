@@ -493,6 +493,10 @@ function processMessage(message) {
     }
 
     case "result":
+      // Clear active references immediately so a follow-up startSession()
+      // (e.g. from a queued message) won't abort the already-finished query.
+      activeQuery = null;
+      activeAbort = null;
       emit({
         type: "result",
         subtype: message.subtype,

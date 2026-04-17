@@ -1,6 +1,7 @@
 import { useState, startTransition } from "react";
 import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
 import { CreateWorktreeModal } from "./CreateWorktreeModal";
+import { DeleteWorktreeModal } from "./DeleteWorktreeModal";
 import type { Project, Worktree } from "../../lib/types";
 import { useShallow } from "zustand/shallow";
 
@@ -39,6 +40,10 @@ export function ProjectTree() {
   );
   const [creatingWorktreeForProject, setCreatingWorktreeForProject] =
     useState<string | null>(null);
+  const [worktreeToDelete, setWorktreeToDelete] = useState<{
+    worktree: Worktree;
+    projectId: string;
+  } | null>(null);
 
   if (projects.length === 0) {
     return (
@@ -68,9 +73,7 @@ export function ProjectTree() {
           runnersByWorktree={runnersByWorktree}
           claudeStatusByWorktree={claudeStatusByWorktree}
           onDeleteWorktree={(wt) => {
-            if (confirm(`Delete worktree "${wt.name}"? This will remove the directory from disk.`)) {
-              deleteWorktree(wt.id, project.id);
-            }
+            setWorktreeToDelete({ worktree: wt, projectId: project.id });
           }}
           onRenameWorktree={(wt, name) => {
             renameWorktree(wt.id, project.id, name);
@@ -83,6 +86,16 @@ export function ProjectTree() {
         <CreateWorktreeModal
           projectId={creatingWorktreeForProject}
           onClose={() => setCreatingWorktreeForProject(null)}
+        />
+      )}
+      {worktreeToDelete && (
+        <DeleteWorktreeModal
+          worktree={worktreeToDelete.worktree}
+          onConfirm={() => {
+            deleteWorktree(worktreeToDelete.worktree.id, worktreeToDelete.projectId);
+            setWorktreeToDelete(null);
+          }}
+          onClose={() => setWorktreeToDelete(null)}
         />
       )}
     </div>

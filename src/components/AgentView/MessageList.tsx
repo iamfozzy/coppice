@@ -2,6 +2,7 @@ import { useRef, useEffect, useMemo } from "react";
 import type { AgentMessage, AgentStatus } from "../../lib/types";
 import { MessageBubble, MarkdownContent } from "./MessageBubble";
 import { ToolGroup, type GroupedTool } from "./ToolGroup";
+import { AnimatedRobotIcon, AnimatedToolIcon, useRotatingThinkingPhrase } from "./AgentStatusIcons";
 
 interface Props {
   messages: AgentMessage[];
@@ -119,17 +120,28 @@ export function MessageList({ messages, streamingText, status }: Props) {
 
       {/* Thinking/working indicator — shown when agent is active but no streaming text yet */}
       {!streamingText && (status === "thinking" || status === "tool_use") && (
-        <div className="flex items-center gap-2 py-1">
-          <div className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse [animation-delay:150ms]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse [animation-delay:300ms]" />
-          </div>
-          <span className="text-[11px] text-text-tertiary">
-            {status === "tool_use" ? "Running tool..." : "Thinking..."}
-          </span>
-        </div>
+        <StatusIndicator status={status} />
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Inline status indicator with animated icons and rotating phrases
+// ---------------------------------------------------------------------------
+function StatusIndicator({ status }: { status: "thinking" | "tool_use" }) {
+  const thinkingPhrase = useRotatingThinkingPhrase();
+
+  return (
+    <div className="flex items-center gap-2 py-1">
+      {status === "tool_use" ? (
+        <AnimatedToolIcon size={14} className="text-accent" />
+      ) : (
+        <AnimatedRobotIcon size={14} className="text-accent" />
+      )}
+      <span className="text-[11px] text-text-tertiary">
+        {status === "tool_use" ? "Running tool..." : thinkingPhrase}
+      </span>
     </div>
   );
 }

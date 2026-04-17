@@ -36,6 +36,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const setEffort = useAppStore((s) => s.setAgentEffort);
   const setPermissionMode = useAppStore((s) => s.setAgentPermissionMode);
   const setSlashCommands = useAppStore((s) => s.setAgentSlashCommands);
+  const pushQueuedMessage = useAppStore((s) => s.pushAgentQueuedMessage);
+  const shiftQueuedMessage = useAppStore((s) => s.shiftQueuedMessage);
+  const promoteAllQueuedMessages = useAppStore((s) => s.promoteAllQueuedMessages);
   const appSettings = useAppStore((s) => s.appSettings);
 
   const startedRef = useRef(false);
@@ -64,6 +67,54 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     const words = prompt.trim().split(/\s+/).slice(0, 6).join(" ");
     const label = words.length > 30 ? words.slice(0, 30) + "..." : words;
     if (label) renameThisTab(label);
+  };
+
+  /** Start or resume an agent session with the given prompt text. */
+  const dispatchToAgent = (text: string) => {
+    const store = useAppStore.getState();
+    const currentSession = store.agentSessionByTab[sessionId];
+    setStatus(sessionId, "thinking");
+
+    if (currentSession?.sdkSessionId) {
+      // Resume the existing session
+      commands
+        .agentStart(sessionId, cwd, text, {
+          model: currentSession.model || undefined,
+          effort: currentSession.effort || undefined,
+          extendedContext: currentSession.extendedContext || undefined,
+          permissionMode: currentSession.permissionMode || undefined,
+          resume: currentSession.sdkSessionId,
+          apiKey: appSettings?.agent_api_key || undefined,
+        })
+        .catch((err) => {
+          appendMessage(sessionId, {
+            id: nextMsgId(),
+            type: "error",
+            content: String(err),
+            timestamp: Date.now(),
+          });
+          setStatus(sessionId, "error");
+        });
+    } else {
+      // Fresh start
+      commands
+        .agentStart(sessionId, cwd, text, {
+          model: currentSession?.model || undefined,
+          effort: currentSession?.effort || undefined,
+          extendedContext: currentSession?.extendedContext || undefined,
+          permissionMode: currentSession?.permissionMode || undefined,
+          apiKey: appSettings?.agent_api_key || undefined,
+        })
+        .catch((err) => {
+          appendMessage(sessionId, {
+            id: nextMsgId(),
+            type: "error",
+            content: String(err),
+            timestamp: Date.now(),
+          });
+          setStatus(sessionId, "error");
+        });
+    }
   };
 
   // Subscribe to agent events from the Rust backend
@@ -256,7 +307,16 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           setCost(sessionId, cost);
         }
         const subtype = msg.subtype as string;
-        if (subtype && subtype.startsWith("error_")) {
+        activeToolsRef.current.clear();
+        lastAssistantUuidRef.current = null;
+
+        // Auto-dispatch next queued message
+        const latestSession = useAppStore.getState().agentSessionByTab[sessionId];
+        const hasQueue = latestSession && latestSession.queuedMessages.length > 0;
+
+        // Only show error subtypes when there's nothing queued — abort/interrupt
+        // subtypes during queue dispatch are expected and shouldn't alarm the user.
+        if (subtype && subtype.startsWith("error_") && !hasQueue) {
           appendMessage(sessionId, {
             id: nextMsgId(),
             type: "error",
@@ -265,8 +325,12 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           });
         }
         setStatus(sessionId, "done");
-        activeToolsRef.current.clear();
-        lastAssistantUuidRef.current = null;
+
+        if (hasQueue) {
+          const nextText = latestSession.queuedMessages[0];
+          shiftQueuedMessage(sessionId);
+          dispatchToAgent(nextText);
+        }
         break;
       }
 
@@ -286,6 +350,13 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           timestamp: Date.now(),
         });
         setStatus(sessionId, "error");
+
+        // Promote all queued messages to regular (unsent) user messages on error —
+        // don't auto-dispatch so the user can decide whether to retry.
+        const errSession = useAppStore.getState().agentSessionByTab[sessionId];
+        if (errSession && errSession.queuedMessages.length > 0) {
+          promoteAllQueuedMessages(sessionId);
+        }
         break;
       }
 
@@ -342,66 +413,45 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     }
   }
 
-  // Send a follow-up message
+  // Send a follow-up message (or queue it if agent is busy)
   const handleSend = (text: string) => {
     // Rename tab from first typed message (when no initialPrompt was provided)
     applyQuickTitle(text);
-
-    appendMessage(sessionId, {
-      id: nextMsgId(),
-      type: "user",
-      content: text,
-      timestamp: Date.now(),
-    });
 
     const store = useAppStore.getState();
     const currentSession = store.agentSessionByTab[sessionId];
 
     if (currentSession?.status === "done" || currentSession?.status === "error" || currentSession?.status === "idle") {
-      // Start a new session or resume
-      setStatus(sessionId, "thinking");
-      if (currentSession?.sdkSessionId) {
-        // Resume the existing session
-        commands
-          .agentStart(sessionId, cwd, text, {
-            model: currentSession.model || undefined,
-            effort: currentSession.effort || undefined,
-            extendedContext: currentSession.extendedContext || undefined,
-            permissionMode: currentSession.permissionMode || undefined,
-            resume: currentSession.sdkSessionId,
-            apiKey: appSettings?.agent_api_key || undefined,
-          })
-          .catch((err) => {
-            appendMessage(sessionId, {
-              id: nextMsgId(),
-              type: "error",
-              content: String(err),
-              timestamp: Date.now(),
-            });
-            setStatus(sessionId, "error");
-          });
-      } else {
-        // Fresh start
-        commands
-          .agentStart(sessionId, cwd, text, {
-            model: currentSession?.model || undefined,
-            effort: currentSession?.effort || undefined,
-            extendedContext: currentSession?.extendedContext || undefined,
-            permissionMode: currentSession?.permissionMode || undefined,
-            apiKey: appSettings?.agent_api_key || undefined,
-          })
-          .catch((err) => {
-            appendMessage(sessionId, {
-              id: nextMsgId(),
-              type: "error",
-              content: String(err),
-              timestamp: Date.now(),
-            });
-            setStatus(sessionId, "error");
-          });
-      }
+      // Direct send — session is not busy
+      appendMessage(sessionId, {
+        id: nextMsgId(),
+        type: "user",
+        content: text,
+        timestamp: Date.now(),
+      });
+      dispatchToAgent(text);
+    } else if (
+      currentSession?.status === "thinking" ||
+      currentSession?.status === "tool_use"
+    ) {
+      // Queue the message — agent is actively processing.
+      // Multiple messages can be queued; they dispatch in order.
+      pushQueuedMessage(sessionId, text);
+      appendMessage(sessionId, {
+        id: nextMsgId(),
+        type: "user",
+        content: text,
+        isQueued: true,
+        timestamp: Date.now(),
+      });
     } else {
-      // Send as follow-up input to active session
+      // waiting_input — send as follow-up input to active session
+      appendMessage(sessionId, {
+        id: nextMsgId(),
+        type: "user",
+        content: text,
+        timestamp: Date.now(),
+      });
       setStatus(sessionId, "thinking");
       commands.agentSendInput(sessionId, text).catch((err) => {
         appendMessage(sessionId, {
@@ -449,15 +499,17 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   };
 
   const handleInterrupt = () => {
+    // Stop sends the interrupt signal. The bridge will emit a `result` event
+    // which will set status to "done" and auto-dispatch queued messages.
+    // This keeps the conversation alive — the user (or queue) can continue.
     commands.agentInterrupt(sessionId).catch(() => {});
   };
 
   if (!session) return null;
 
-  const isInputDisabled =
-    session.status === "thinking" ||
-    session.status === "tool_use" ||
-    session.status === "waiting_permission";
+  const isInputDisabled = session.status === "waiting_permission";
+  const isAgentBusy =
+    session.status === "thinking" || session.status === "tool_use";
 
   return (
     <div className="flex flex-col h-full bg-bg-primary">
@@ -501,6 +553,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       />
       <AgentInputBar
         disabled={isInputDisabled}
+        isAgentBusy={isAgentBusy}
         autoFocus={visible}
         placeholder={
           session.status === "done"
@@ -509,7 +562,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
               ? "Answer Claude's question..."
               : session.status === "idle"
                 ? "Send a message to start..."
-                : "Claude is working..."
+                : "Queue a message for when Claude finishes..."
         }
         slashCommands={session.slashCommands}
         onSend={handleSend}

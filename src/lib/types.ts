@@ -90,6 +90,7 @@ export interface AgentMessage {
   toolOutput?: string;
   toolUseId?: string;
   isError?: boolean;
+  isQueued?: boolean;
   thinkingText?: string;
   timestamp: number;
 }
@@ -137,4 +138,5 @@ export interface AgentSessionState {
   pendingQuestion: AgentPendingQuestion | null;
   streamingText: string;
   slashCommands: SlashCommand[];
+  queuedMessages: string[];
 }

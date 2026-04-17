@@ -185,7 +185,7 @@ export function AppSettingsModal() {
                 value={form.agent_default_model}
                 onChange={(agent_default_model) => setForm({ ...form, agent_default_model })}
                 placeholder="claude-opus-4-7"
-                hint="Model to use for agent sessions (e.g., claude-opus-4-7, claude-sonnet-4-6, claude-opus-4-6)"
+                hint="Model to use for agent sessions. Defaults to claude-opus-4-7 if empty."
               />
               <div>
                 <label className="block text-xs text-text-secondary mb-1">Default effort</label>

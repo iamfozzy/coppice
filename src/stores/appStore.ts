@@ -135,6 +135,10 @@ interface AppState {
   setAgentPendingQuestion: (tabId: string, pending: AgentPendingQuestion | null) => void;
   setAgentSlashCommands: (tabId: string, commands: SlashCommand[]) => void;
   removeAgentSession: (tabId: string) => void;
+  pushAgentQueuedMessage: (tabId: string, text: string) => void;
+  removeQueuedAgentMessages: (tabId: string) => void;
+  shiftQueuedMessage: (tabId: string) => void;
+  promoteAllQueuedMessages: (tabId: string) => void;
 
   // Actions — runners
   expandRunner: (worktreeId: string, key: string, command: string, cwd: string) => void;
@@ -596,6 +600,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingQuestion: null,
       streamingText: "",
       slashCommands: DEFAULT_SLASH_COMMANDS,
+      queuedMessages: [],
     };
     set((state) => ({
       tabsByWorktree: {
@@ -824,6 +829,83 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+
+  pushAgentQueuedMessage: (tabId, text) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, queuedMessages: [...session.queuedMessages, text] },
+        },
+      };
+    });
+  },
+
+  removeQueuedAgentMessages: (tabId) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: {
+            ...session,
+            queuedMessages: [],
+            messages: session.messages.filter((m) => !m.isQueued),
+          },
+        },
+      };
+    });
+  },
+
+  shiftQueuedMessage: (tabId) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session || session.queuedMessages.length === 0) return s;
+      // Remove the first queued message from the queue and promote it in messages
+      const [, ...rest] = session.queuedMessages;
+      // Find the first queued message in the messages list and promote it
+      let promoted = false;
+      const updatedMessages = session.messages.map((m) => {
+        if (!promoted && m.isQueued) {
+          promoted = true;
+          return { ...m, isQueued: false };
+        }
+        return m;
+      });
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: {
+            ...session,
+            queuedMessages: rest,
+            messages: updatedMessages,
+          },
+        },
+      };
+    });
+  },
+
+  promoteAllQueuedMessages: (tabId) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: {
+            ...session,
+            queuedMessages: [],
+            messages: session.messages.map((m) =>
+              m.isQueued ? { ...m, isQueued: false } : m
+            ),
+          },
+        },
+      };
+    });
+  },
   // ── Runners ──
 
   expandRunner: (worktreeId, key, command, cwd) => {
