@@ -1,6 +1,20 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerEntry {
+    pub server_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -14,6 +28,12 @@ pub struct AppSettings {
     pub window_decorations: bool,
     pub notification_sound: bool,
     pub notification_popup: bool,
+    pub default_claude_mode: String,
+    pub agent_default_model: String,
+    pub agent_default_effort: String,
+    pub agent_node_path: String,
+    pub agent_api_key: String,
+    pub mcp_servers: HashMap<String, McpServerEntry>,
 }
 
 impl Default for AppSettings {
@@ -28,6 +48,12 @@ impl Default for AppSettings {
             window_decorations: true,
             notification_sound: true,
             notification_popup: true,
+            default_claude_mode: "agent".to_string(),
+            agent_default_model: String::new(),
+            agent_default_effort: "high".to_string(),
+            agent_node_path: String::new(),
+            agent_api_key: String::new(),
+            mcp_servers: HashMap::new(),
         }
     }
 }
@@ -37,6 +63,10 @@ pub struct SettingsState(pub Mutex<AppSettings>);
 impl SettingsState {
     pub fn new() -> Self {
         Self(Mutex::new(load_settings()))
+    }
+
+    pub fn get(&self) -> AppSettings {
+        self.0.lock().unwrap().clone()
     }
 }
 

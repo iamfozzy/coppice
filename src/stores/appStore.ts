@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode } from "../lib/types";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
 import { isWindowFocused } from "../lib/windowFocus";
@@ -11,17 +11,11 @@ import {
 
 export type ClaudeStatus = "active" | "idle";
 
-// Per-tab notification cooldown. After firing a notification for a tab,
-// suppress further notifications for this many ms to prevent chime/popup
-// spam during rapid active→idle→active→idle bouncing.
-const NOTIFICATION_COOLDOWN_MS = 10_000;
-const notificationCooldownUntil = new Map<string, number>();
-
 // ── Session types ──
 
 export interface TabInfo {
   id: string;
-  type: "terminal" | "claude" | "diff";
+  type: "terminal" | "claude" | "agent" | "diff";
   label: string;
   command?: string;
   cwd: string;
@@ -53,6 +47,7 @@ interface AppState {
   editingProject: "new" | string | null;
   sidebarWidth: number;
   pendingClaudeCommand: string | null;
+  pendingAgentPrompt: string | null;
   pendingRunner: { key: string } | null;
   deletingWorktreeIds: Set<string>;
 
@@ -61,8 +56,11 @@ interface AppState {
   activeTabByWorktree: Record<string, string | null>;
   runnersByWorktree: Record<string, Record<string, RunnerInfo>>;
 
-  // Claude tab activity status (keyed by tab ID)
+  // Claude tab activity status (keyed by tab ID — covers both claude and agent tabs)
   claudeStatusByTab: Record<string, ClaudeStatus>;
+
+  // Agent session state (keyed by tab ID)
+  agentSessionByTab: Record<string, AgentSessionState>;
 
   // PR comments (keyed by project ID)
   prCommentsByProject: Record<string, import("../lib/commands").PrComment[]>;
@@ -81,6 +79,8 @@ interface AppState {
   setSidebarWidth: (width: number) => void;
   requestClaudeTab: (command: string) => void;
   consumeClaudeCommand: () => string | null;
+  requestAgentTab: (prompt: string) => void;
+  consumeAgentPrompt: () => string | null;
   requestRunner: (key: string) => void;
   consumeRunner: () => { key: string } | null;
 
@@ -115,6 +115,23 @@ interface AppState {
   closeActiveTab: (worktreeId: string) => void;
   newTerminalTab: (worktreeId: string) => void;
   newClaudeTab: (worktreeId: string) => void;
+  addAgentTab: (worktreeId: string, cwd: string, prompt?: string) => void;
+  newAgentTab: (worktreeId: string) => void;
+  renameTab: (worktreeId: string, tabId: string, newLabel: string) => void;
+
+  // Actions — agent session state
+  appendAgentMessage: (tabId: string, message: AgentMessage) => void;
+  updateAgentStreamingText: (tabId: string, text: string) => void;
+  clearAgentStreamingText: (tabId: string) => void;
+  setAgentStatus: (tabId: string, status: AgentStatus) => void;
+  setAgentModel: (tabId: string, model: string) => void;
+  setAgentEffort: (tabId: string, effort: EffortLevel) => void;
+  setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
+  setAgentCost: (tabId: string, cost: AgentCost) => void;
+  setAgentSdkSessionId: (tabId: string, id: string) => void;
+  setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
+  setAgentPendingQuestion: (tabId: string, pending: AgentPendingQuestion | null) => void;
+  removeAgentSession: (tabId: string) => void;
 
   // Actions — runners
   expandRunner: (worktreeId: string, key: string, command: string, cwd: string) => void;
@@ -136,12 +153,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   editingProject: null,
   sidebarWidth: 310,
   pendingClaudeCommand: null,
+  pendingAgentPrompt: null,
   pendingRunner: null,
   deletingWorktreeIds: new Set(),
   tabsByWorktree: {},
   activeTabByWorktree: {},
   runnersByWorktree: {},
   claudeStatusByTab: {},
+  agentSessionByTab: {},
   prCommentsByProject: {},
   editingAppSettings: false,
 
@@ -168,6 +187,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (cmd) set({ pendingClaudeCommand: null });
     return cmd;
   },
+  requestAgentTab: (prompt) => set({ pendingAgentPrompt: prompt }),
+  consumeAgentPrompt: () => {
+    const p = get().pendingAgentPrompt;
+    if (p) set({ pendingAgentPrompt: null });
+    return p;
+  },
   requestRunner: (key) => set({ pendingRunner: { key } }),
   consumeRunner: () => {
     const r = get().pendingRunner;
@@ -193,17 +218,29 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectProject: (id) => set({ selectedProjectId: id }),
   selectWorktree: (id) => {
     set({ selectedWorktreeId: id });
-    // Clear the idle indicator only on the currently-active claude tab of the
-    // selected worktree — the tab the user can now actually see. Other claude
-    // tabs in this worktree keep their idle status so the tab-bar dot (and the
-    // aggregated sidebar dot) still point the user at the specific tab that
-    // fired the notification.
+    // Clear the idle dot for CLI claude tabs when the user navigates to the
+    // worktree (they're now able to see it). Agent tabs keep the dot until
+    // the user actually sends a new prompt — selecting a worktree isn't
+    // really engagement with the agent tab contents, and losing the dot
+    // here means users who switch away and come back never see the "done"
+    // signal at all.
     if (id) {
       const s = get();
       const activeId = s.activeTabByWorktree[id];
-      if (activeId && s.claudeStatusByTab[activeId] === "idle") {
+      const activeTab = activeId ? s.tabsByWorktree[id]?.find((t) => t.id === activeId) : undefined;
+      if (
+        activeId &&
+        activeTab?.type === "claude" &&
+        s.claudeStatusByTab[activeId] === "idle"
+      ) {
         const { [activeId]: _, ...rest } = s.claudeStatusByTab;
         set({ claudeStatusByTab: rest });
+      }
+      // Auto-create an agent tab when switching to a worktree with no tabs
+      // and agent mode is the default.
+      const tabs = s.tabsByWorktree[id];
+      if ((!tabs || tabs.length === 0) && s.appSettings?.default_claude_mode === "agent") {
+        get().newAgentTab(id);
       }
     }
   },
@@ -301,41 +338,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     // true for us to consider the user present.
     let isVisible = false;
     for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
-      if (tabs.some((t) => t.id === tabId)) {
+      const tab = tabs.find((t) => t.id === tabId);
+      if (tab) {
         isVisible = s.selectedWorktreeId === wtId && s.activeTabByWorktree[wtId] === tabId;
         break;
       }
     }
     const userIsWatching = isVisible && isWindowFocused();
 
-    // If the user is actively looking at this tab, there's nothing to
-    // notify them about — skip the idle transition entirely. Without this,
-    // the warning dot briefly flashes onto a tab the user is already
-    // viewing (setActiveTab / focus handlers only clear when something
-    // changed, not when the user was already there).
-    if (status === "idle" && userIsWatching) {
-      if (prev !== undefined) {
-        const { [tabId]: _, ...rest } = s.claudeStatusByTab;
-        set({ claudeStatusByTab: rest });
-      }
-      return;
-    }
-
+    // Always write the status so the in-tab dot reflects what the agent is
+    // actually doing (pulsing while active, warning when done/errored). We
+    // used to skip the write when the user was watching to avoid "flashing"
+    // a dot onto the visible tab, but that also suppressed the dot entirely
+    // for users who stay on the agent tab — leaving them with no visual
+    // completion cue at all. The setActiveTab + window-focus handlers still
+    // clear idle state on the next real engagement (switching tabs, window
+    // refocus), so the dot doesn't linger.
     set((state) => ({
       claudeStatusByTab: { ...state.claudeStatusByTab, [tabId]: status },
     }));
 
-    // Notify when Claude becomes idle and the user can't see the tab.
-    // "Can't see" = tab is not the active tab of the selected worktree,
-    // OR the window is backgrounded.
+    // Notify when the agent becomes idle and the user can't see the tab.
+    // Only agent SDK tabs drive this path (CLI tabs don't set claude status).
     if (status === "idle" && (prev === "active" || prev === undefined) && !userIsWatching) {
-      // Cooldown: suppress rapid-fire notifications for the same tab.
-      // This prevents chime/popup spam when Claude bounces between active
-      // and idle states (e.g. during tool-use loops).
-      const cooldownExpiry = notificationCooldownUntil.get(tabId) ?? 0;
-      if (Date.now() < cooldownExpiry) return;
-      notificationCooldownUntil.set(tabId, Date.now() + NOTIFICATION_COOLDOWN_MS);
-
       if (s.appSettings?.notification_sound) {
         playNotificationSound();
       }
@@ -459,6 +484,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   closeTab: (worktreeId, tabId) => {
     const s = get();
     const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    const closedTab = tabs.find((t) => t.id === tabId);
     const next = tabs.filter((t) => t.id !== tabId);
     const activeTab = s.activeTabByWorktree[worktreeId];
     let newActive = activeTab;
@@ -468,11 +494,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     const claudeStatus = tabId in s.claudeStatusByTab
       ? (() => { const { [tabId]: _, ...rest } = s.claudeStatusByTab; return rest; })()
       : s.claudeStatusByTab;
+    const agentSession = tabId in s.agentSessionByTab
+      ? (() => { const { [tabId]: _, ...rest } = s.agentSessionByTab; return rest; })()
+      : s.agentSessionByTab;
     set({
       tabsByWorktree: { ...s.tabsByWorktree, [worktreeId]: next },
       activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: newActive },
       claudeStatusByTab: claudeStatus,
+      agentSessionByTab: agentSession,
     });
+    // Close the agent bridge process if this was an agent tab
+    if (closedTab?.type === "agent") {
+      commands.agentClose(tabId).catch(() => {});
+    }
   },
 
   setActiveTab: (worktreeId, tabId) => {
@@ -535,6 +569,236 @@ export const useAppStore = create<AppState>((set, get) => ({
     const project = projectId ? s.projects.find((p) => p.id === projectId) : undefined;
     const claudeCmd = project?.claude_command || s.appSettings?.claude_command || "claude";
     s.addTab(worktreeId, "claude", path, claudeCmd);
+  },
+
+  addAgentTab: (worktreeId, cwd, prompt) => {
+    const s = get();
+    const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    let maxNum = 0;
+    for (const t of tabs) {
+      if (t.type !== "agent") continue;
+      const m = t.label.match(/^Agent #(\d+)$/);
+      if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+    }
+    const label = `Agent #${maxNum + 1}`;
+    const tab: TabInfo = {
+      id: `agent-${worktreeId}-${Date.now()}`,
+      type: "agent",
+      label,
+      command: prompt,
+      cwd,
+    };
+    const sessionState: AgentSessionState = {
+      messages: [],
+      status: "idle",
+      model: s.appSettings?.agent_default_model || "claude-opus-4-6",
+      effort: s.appSettings?.agent_default_effort || "high",
+      permissionMode: "acceptEdits",
+      cost: null,
+      sdkSessionId: null,
+      pendingPermission: null,
+      pendingQuestion: null,
+      streamingText: "",
+    };
+    set((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [worktreeId]: [...(state.tabsByWorktree[worktreeId] ?? []), tab],
+      },
+      activeTabByWorktree: {
+        ...state.activeTabByWorktree,
+        [worktreeId]: tab.id,
+      },
+      agentSessionByTab: {
+        ...state.agentSessionByTab,
+        [tab.id]: sessionState,
+      },
+    }));
+  },
+
+  newAgentTab: (worktreeId) => {
+    const path = get().getWorktreePath(worktreeId);
+    if (!path) return;
+    get().addAgentTab(worktreeId, path);
+  },
+
+  renameTab: (worktreeId, tabId, newLabel) => {
+    set((s) => {
+      const tabs = s.tabsByWorktree[worktreeId];
+      if (!tabs) return s;
+      return {
+        tabsByWorktree: {
+          ...s.tabsByWorktree,
+          [worktreeId]: tabs.map((t) =>
+            t.id === tabId ? { ...t, label: newLabel } : t
+          ),
+        },
+      };
+    });
+  },
+
+  // ── Agent session state ──
+
+  appendAgentMessage: (tabId, message) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, messages: [...session.messages, message] },
+        },
+      };
+    });
+  },
+
+  updateAgentStreamingText: (tabId, text) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, streamingText: session.streamingText + text },
+        },
+      };
+    });
+  },
+
+  clearAgentStreamingText: (tabId) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, streamingText: "" },
+        },
+      };
+    });
+  },
+
+  setAgentStatus: (tabId, status) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, status },
+        },
+      };
+    });
+    // Map agent status to claude status for unified notifications.
+    // "active" = agent is working; "idle" = agent stopped and may need attention.
+    // Permission/input waiting are NOT mapped to idle — they're visible in the
+    // agent UI and shouldn't burn the cooldown that protects the "done" notification.
+    const store = get();
+    if (status === "thinking" || status === "tool_use" || status === "waiting_permission" || status === "waiting_input") {
+      store.setClaudeStatus(tabId, "active");
+    } else if (status === "done" || status === "error") {
+      store.setClaudeStatus(tabId, "idle");
+    }
+    // Note: "idle" (initial state before first prompt) is intentionally excluded
+    // so opening an agent tab doesn't trigger a spurious notification.
+  },
+
+  setAgentModel: (tabId, model) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, model },
+        },
+      };
+    });
+  },
+
+  setAgentEffort: (tabId, effort) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, effort },
+        },
+      };
+    });
+  },
+
+  setAgentPermissionMode: (tabId, mode) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, permissionMode: mode },
+        },
+      };
+    });
+  },
+
+  setAgentCost: (tabId, cost) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, cost },
+        },
+      };
+    });
+  },
+
+  setAgentSdkSessionId: (tabId, id) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, sdkSessionId: id },
+        },
+      };
+    });
+  },
+
+  setAgentPendingPermission: (tabId, pending) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, pendingPermission: pending },
+        },
+      };
+    });
+  },
+
+  setAgentPendingQuestion: (tabId, pending) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, pendingQuestion: pending },
+        },
+      };
+    });
+  },
+
+  removeAgentSession: (tabId) => {
+    set((s) => {
+      const { [tabId]: _, ...rest } = s.agentSessionByTab;
+      return { agentSessionByTab: rest };
+    });
   },
 
   // ── Runners ──

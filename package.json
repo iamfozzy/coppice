@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "agent-bridge:install": "cd src-tauri/resources/agent-bridge && npm install --omit=dev"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",

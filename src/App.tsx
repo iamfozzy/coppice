@@ -6,6 +6,7 @@ import { WorktreeView } from "./components/WorktreeView/WorktreeView";
 import { ProjectSettingsModal } from "./components/ProjectSettings/ProjectSettingsModal";
 import { AppSettingsModal } from "./components/AppSettings/AppSettingsModal";
 import { TerminalPanel } from "./components/Terminal/TerminalPanel";
+import { AgentPanel } from "./components/AgentView/AgentPanel";
 import { useAppStore } from "./stores/appStore";
 import { setWindowFocused } from "./lib/windowFocus";
 import * as commands from "./lib/commands";
@@ -22,17 +23,34 @@ function App() {
 
   // Memoize terminal tab list — only recompute when tabs/active/selection change
   const terminalTabs = useMemo(() => {
-    const result: Array<{ id: string; cwd: string; command?: string; visible: boolean; isClaudeTab: boolean }> = [];
+    const result: Array<{ id: string; cwd: string; command?: string; visible: boolean }> = [];
     for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
       const activeTab = activeTabByWorktree[wtId];
       for (const tab of tabs) {
-        if (tab.type === "diff") continue;
+        if (tab.type === "diff" || tab.type === "agent") continue;
         result.push({
           id: tab.id,
           cwd: tab.cwd,
           command: tab.command,
           visible: wtId === selectedWorktreeId && tab.id === activeTab,
-          isClaudeTab: tab.type === "claude",
+        });
+      }
+    }
+    return result;
+  }, [tabsByWorktree, activeTabByWorktree, selectedWorktreeId]);
+
+  // Memoize agent tab list
+  const agentTabs = useMemo(() => {
+    const result: Array<{ id: string; cwd: string; command?: string; visible: boolean }> = [];
+    for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
+      const activeTab = activeTabByWorktree[wtId];
+      for (const tab of tabs) {
+        if (tab.type !== "agent") continue;
+        result.push({
+          id: tab.id,
+          cwd: tab.cwd,
+          command: tab.command,
+          visible: wtId === selectedWorktreeId && tab.id === activeTab,
         });
       }
     }
@@ -71,8 +89,8 @@ function App() {
   //      notification gating (appStore.setClaudeStatus) knows whether the
   //      user can actually see the visible tab.
   //   2. When focus is regained, clear the idle indicator on the currently
-  //      visible Claude tab (the tab the user can now actually see). Other
-  //      idle Claude tabs stay lit so the user can tell which specific tab
+  //      visible agent tab (the tab the user can now actually see). Other
+  //      idle agent tabs stay lit so the user can tell which specific tab
   //      needs attention.
   useEffect(() => {
     // Seed the shared flag with the real window state on mount, in case
@@ -94,7 +112,7 @@ function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  // Keep the dock/taskbar badge in sync with the number of idle Claude tabs.
+  // Keep the dock/taskbar badge in sync with the number of idle agent tabs.
   // macOS: shows a number badge on the dock icon.
   // Linux: depends on desktop env (Unity, GNOME with extension).
   // Windows: not supported by set_badge_count (no-op).
@@ -165,7 +183,18 @@ function App() {
         if (e.code === "KeyT") {
           e.preventDefault();
           e.stopImmediatePropagation();
-          state.newClaudeTab(wt);
+          // Ctrl+Shift+T creates the default Claude tab type
+          const mode = state.appSettings?.default_claude_mode;
+          if (mode === "agent") {
+            state.newAgentTab(wt);
+          } else {
+            state.newClaudeTab(wt);
+          }
+        } else if (e.code === "KeyA") {
+          // Ctrl+Shift+A always creates an agent tab
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          state.newAgentTab(wt);
         }
         return;
       }
@@ -204,7 +233,7 @@ function App() {
       <Sidebar />
       <main className="flex-1 flex flex-col min-w-0 bg-bg-primary relative">
         <WorktreeView />
-        {/* Terminal layer — always mounted */}
+        {/* Terminal + Agent layer — always mounted */}
         <div id="terminal-layer" className="absolute inset-0" style={{ top: "calc(3rem + 2.5rem)", pointerEvents: "none" }}>
           {terminalTabs.map((t) => (
             <div
@@ -215,7 +244,19 @@ function App() {
                 pointerEvents: t.visible ? "auto" : "none",
               }}
             >
-              <TerminalPanel sessionId={t.id} cwd={t.cwd} command={t.command} fontSize={termFontSize} fontFamily={termFontFamily} keepAlive isClaudeTab={t.isClaudeTab} />
+              <TerminalPanel sessionId={t.id} cwd={t.cwd} command={t.command} fontSize={termFontSize} fontFamily={termFontFamily} keepAlive />
+            </div>
+          ))}
+          {agentTabs.map((t) => (
+            <div
+              key={t.id}
+              className="absolute inset-0"
+              style={{
+                visibility: t.visible ? "visible" : "hidden",
+                pointerEvents: t.visible ? "auto" : "none",
+              }}
+            >
+              <AgentPanel sessionId={t.id} cwd={t.cwd} initialPrompt={t.command} />
             </div>
           ))}
         </div>

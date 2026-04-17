@@ -28,6 +28,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "resources/agent-bridge/bridge.mjs": "agent-bridge/bridge.mjs",
+      "resources/agent-bridge/package.json": "agent-bridge/package.json",
+      "resources/agent-bridge/package-lock.json": "agent-bridge/package-lock.json",
+      "resources/agent-bridge/node_modules": "agent-bridge/node_modules"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

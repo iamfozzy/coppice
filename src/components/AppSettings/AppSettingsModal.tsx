@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAppStore } from "../../stores/appStore";
 import * as commands from "../../lib/commands";
-import type { AppSettings } from "../../lib/types";
+import type { AppSettings, McpServerEntry } from "../../lib/types";
 
 const defaultSettings: AppSettings = {
   editor_command: "",
@@ -13,6 +13,12 @@ const defaultSettings: AppSettings = {
   window_decorations: true,
   notification_sound: true,
   notification_popup: true,
+  default_claude_mode: "agent",
+  agent_default_model: "",
+  agent_default_effort: "high",
+  agent_node_path: "",
+  agent_api_key: "",
+  mcp_servers: {},
 };
 
 export function AppSettingsModal() {
@@ -133,6 +139,83 @@ export function AppSettingsModal() {
             onChange={(notification_popup) => setForm({ ...form, notification_popup })}
             hint="Show a system notification when Claude finishes (visible even when Coppice is minimized)"
           />
+
+          {/* Claude mode selector */}
+          <div className="pt-2 border-t border-border-primary">
+            <label className="block text-xs text-text-secondary mb-1">Claude mode</label>
+            <div className="flex gap-1">
+              {(["terminal", "agent"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setForm({ ...form, default_claude_mode: mode })}
+                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                    form.default_claude_mode === mode
+                      ? "bg-accent text-white"
+                      : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
+                  }`}
+                >
+                  {mode === "terminal" ? "Terminal (CLI)" : "Agent (SDK)"}
+                </button>
+              ))}
+            </div>
+            <p className="mt-0.5 text-[10px] text-text-tertiary">
+              {form.default_claude_mode === "terminal"
+                ? "Runs Claude Code CLI in a PTY terminal (requires claude CLI installed)"
+                : "Runs Claude via the Agent SDK with an interactive UI (requires API key)"}
+            </p>
+          </div>
+
+          {/* Agent SDK settings — only shown when agent mode is selected */}
+          {form.default_claude_mode === "agent" && (
+            <div className="space-y-4 pl-2 border-l-2 border-accent/30">
+              <Field
+                label="Anthropic API key"
+                value={form.agent_api_key}
+                onChange={(agent_api_key) => setForm({ ...form, agent_api_key })}
+                placeholder="sk-ant-..."
+                hint="Your Anthropic API key for the Agent SDK"
+              />
+              <Field
+                label="Default model"
+                value={form.agent_default_model}
+                onChange={(agent_default_model) => setForm({ ...form, agent_default_model })}
+                placeholder="claude-sonnet-4-20250514"
+                hint="Model to use for agent sessions (e.g., claude-sonnet-4-20250514, claude-opus-4-20250514)"
+              />
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Default effort</label>
+                <div className="flex gap-1">
+                  {(["low", "medium", "high", "max"] as const).map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={() => setForm({ ...form, agent_default_effort: level })}
+                      className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
+                        form.agent_default_effort === level
+                          ? "bg-accent text-white"
+                          : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
+                      }`}
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-0.5 text-[10px] text-text-tertiary">Controls how much effort the agent puts into responses</p>
+              </div>
+              <Field
+                label="Node.js path"
+                value={form.agent_node_path}
+                onChange={(agent_node_path) => setForm({ ...form, agent_node_path })}
+                placeholder="(auto-detect)"
+                hint="Path to node binary — only needed if node isn't on your PATH"
+              />
+              <McpServersEditor
+                servers={form.mcp_servers}
+                onChange={(mcp_servers) => setForm({ ...form, mcp_servers })}
+              />
+            </div>
+          )}
 
           {/* Claude Code hooks integration */}
           <div className="pt-2 border-t border-border-primary">
@@ -265,6 +348,193 @@ function Toggle({
         <span className="text-xs text-text-secondary">{label}</span>
       </label>
       {hint && <p className="mt-0.5 ml-10 text-[10px] text-text-tertiary">{hint}</p>}
+    </div>
+  );
+}
+
+function McpServersEditor({
+  servers,
+  onChange,
+}: {
+  servers: Record<string, McpServerEntry>;
+  onChange: (servers: Record<string, McpServerEntry>) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editType, setEditType] = useState<"stdio" | "sse" | "http">("stdio");
+  const [editCommand, setEditCommand] = useState("");
+  const [editArgs, setEditArgs] = useState("");
+  const [editUrl, setEditUrl] = useState("");
+  const [editEnv, setEditEnv] = useState("");
+
+  const entries = Object.entries(servers);
+
+  const handleAdd = () => {
+    const name = editName.trim();
+    if (!name) return;
+    const entry: McpServerEntry = { server_type: editType };
+    if (editType === "stdio") {
+      entry.command = editCommand.trim() || undefined;
+      const args = editArgs.trim();
+      if (args) entry.args = args.split(/\s+/);
+      const envPairs = editEnv.trim();
+      if (envPairs) {
+        entry.env = {};
+        for (const line of envPairs.split("\n")) {
+          const eq = line.indexOf("=");
+          if (eq > 0) {
+            entry.env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+          }
+        }
+      }
+    } else {
+      entry.url = editUrl.trim() || undefined;
+    }
+    onChange({ ...servers, [name]: entry });
+    setAdding(false);
+    setEditName("");
+    setEditCommand("");
+    setEditArgs("");
+    setEditUrl("");
+    setEditEnv("");
+  };
+
+  const handleRemove = (name: string) => {
+    const next = { ...servers };
+    delete next[name];
+    onChange(next);
+  };
+
+  return (
+    <div>
+      <label className="block text-xs text-text-secondary mb-1">MCP Servers</label>
+      <p className="text-[10px] text-text-tertiary mb-2">
+        Additional MCP servers available to agent sessions. These are merged with servers from Claude Code settings.
+      </p>
+
+      {entries.length > 0 && (
+        <div className="space-y-1.5 mb-2">
+          {entries.map(([name, entry]) => (
+            <div
+              key={name}
+              className="flex items-center gap-2 px-2.5 py-1.5 bg-bg-tertiary border border-border-primary rounded text-xs"
+            >
+              <span className="font-mono font-medium text-text-primary">{name}</span>
+              <span className="px-1.5 py-0.5 rounded bg-bg-secondary border border-border-primary text-[10px] text-text-tertiary">
+                {entry.server_type}
+              </span>
+              <span className="text-text-tertiary truncate flex-1">
+                {entry.server_type === "stdio"
+                  ? [entry.command, ...(entry.args || [])].join(" ")
+                  : entry.url || ""}
+              </span>
+              <button
+                type="button"
+                className="text-text-tertiary hover:text-error transition-colors shrink-0"
+                onClick={() => handleRemove(name)}
+                title="Remove"
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <path d="M2 2l6 6M8 2L2 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {adding ? (
+        <div className="space-y-2 p-2.5 bg-bg-tertiary border border-border-primary rounded">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              placeholder="Server name"
+              className="flex-1 px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+            />
+            <div className="flex rounded overflow-hidden border border-border-primary">
+              {(["stdio", "sse", "http"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setEditType(t)}
+                  className={`px-2 py-1 text-[10px] transition-colors ${
+                    editType === t
+                      ? "bg-accent text-white"
+                      : "bg-bg-primary text-text-secondary hover:bg-bg-hover"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {editType === "stdio" ? (
+            <>
+              <input
+                type="text"
+                value={editCommand}
+                onChange={(e) => setEditCommand(e.target.value)}
+                placeholder="Command (e.g., npx)"
+                className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+              />
+              <input
+                type="text"
+                value={editArgs}
+                onChange={(e) => setEditArgs(e.target.value)}
+                placeholder="Arguments (space-separated, e.g., -y @some/mcp-server)"
+                className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+              />
+              <textarea
+                value={editEnv}
+                onChange={(e) => setEditEnv(e.target.value)}
+                placeholder={"Environment variables (one per line):\nSLACK_TOKEN=xoxb-...\nOTHER_VAR=value"}
+                rows={2}
+                className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono resize-none"
+              />
+            </>
+          ) : (
+            <input
+              type="text"
+              value={editUrl}
+              onChange={(e) => setEditUrl(e.target.value)}
+              placeholder="URL (e.g., http://localhost:3001/sse)"
+              className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+            />
+          )}
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleAdd}
+              disabled={!editName.trim()}
+              className="px-2.5 py-1 text-xs rounded bg-accent hover:bg-accent-hover disabled:opacity-40 text-white transition-colors"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdding(false)}
+              className="px-2.5 py-1 text-xs rounded text-text-secondary hover:text-text-primary transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="flex items-center gap-1 px-2.5 py-1 text-xs rounded bg-bg-tertiary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path d="M5 1v8M1 5h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+          Add MCP Server
+        </button>
+      )}
     </div>
   );
 }
