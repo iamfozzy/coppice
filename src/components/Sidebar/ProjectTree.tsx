@@ -16,6 +16,8 @@ export function ProjectTree() {
   const deletingWorktreeIds = useAppStore((s) => s.deletingWorktreeIds);
   const renameWorktree = useAppStore((s) => s.renameWorktree);
   const runnersByWorktree = useAppStore((s) => s.runnersByWorktree);
+  const collapsedProjectIds = useAppStore((s) => s.collapsedProjectIds);
+  const toggleProjectCollapsed = useAppStore((s) => s.toggleProjectCollapsed);
   // Derive per-worktree Claude status inside the selector so the component
   // only re-renders when a worktree's aggregate status actually changes,
   // not on every individual PTY output event.
@@ -63,6 +65,8 @@ export function ProjectTree() {
           project={project}
           worktrees={worktreesByProject[project.id] ?? []}
           selectedWorktreeId={selectedWorktreeId}
+          collapsed={collapsedProjectIds.has(project.id)}
+          onToggleCollapse={() => toggleProjectCollapsed(project.id)}
           onSelectWorktree={(wt) => {
             startTransition(() => {
               selectProject(project.id);
@@ -106,6 +110,8 @@ function ProjectNode({
   project,
   worktrees,
   selectedWorktreeId,
+  collapsed,
+  onToggleCollapse,
   deletingIds,
   runnersByWorktree,
   claudeStatusByWorktree,
@@ -118,6 +124,8 @@ function ProjectNode({
   project: Project;
   worktrees: Worktree[];
   selectedWorktreeId: string | null;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
   deletingIds: Set<string>;
   runnersByWorktree: Record<string, Record<string, import("../../stores/appStore").RunnerInfo>>;
   claudeStatusByWorktree: Record<string, ClaudeStatus | null>;
@@ -127,7 +135,7 @@ function ProjectNode({
   onEditProject: () => void;
   onAddWorktree: () => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const expanded = !collapsed;
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
@@ -136,7 +144,7 @@ function ProjectNode({
       {/* Project header */}
       <button
         className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors group"
-        onClick={() => setExpanded(!expanded)}
+        onClick={onToggleCollapse}
         onContextMenu={(e) => {
           e.preventDefault();
           onEditProject();

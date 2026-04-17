@@ -12,6 +12,42 @@ import {
 
 export type ClaudeStatus = "active" | "idle";
 
+let _notifIdCounter = 0;
+
+interface TabLocation {
+  projectId: string;
+  worktreeId: string;
+  worktree: Worktree;
+  tab: TabInfo;
+}
+
+/** Resolve the project, worktree, and tab objects that own the given tabId. */
+function findTabLocation(state: Pick<AppState, "tabsByWorktree" | "worktreesByProject">, tabId: string): TabLocation | null {
+  for (const [projectId, worktrees] of Object.entries(state.worktreesByProject)) {
+    for (const worktree of worktrees) {
+      const tab = (state.tabsByWorktree[worktree.id] ?? []).find((candidate) => candidate.id === tabId);
+      if (tab) {
+        return {
+          projectId,
+          worktreeId: worktree.id,
+          worktree,
+          tab,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+/** Fast check: find the worktree that owns the tab (skips the project lookup). */
+function findWorktreeForTab(tabsByWorktree: Record<string, TabInfo[]>, tabId: string): string | null {
+  for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
+    if (tabs.some((t) => t.id === tabId)) return wtId;
+  }
+  return null;
+}
+
 // ── Agent tab cache persistence ──
 
 const _persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -148,8 +184,9 @@ interface AppState {
   selectedWorktreeId: string | null;
   editingProject: "new" | string | null;
   sidebarWidth: number;
+  collapsedProjectIds: Set<string>;
   pendingClaudeCommand: string | null;
-  pendingAgentPrompt: string | null;
+  pendingAgentPrompt: { prompt: string; model?: string } | null;
   pendingRunner: { key: string } | null;
   deletingWorktreeIds: Set<string>;
 
@@ -179,10 +216,11 @@ interface AppState {
   openProjectSettings: (mode: "new" | string) => void;
   closeProjectSettings: () => void;
   setSidebarWidth: (width: number) => void;
+  toggleProjectCollapsed: (projectId: string) => void;
   requestClaudeTab: (command: string) => void;
   consumeClaudeCommand: () => string | null;
-  requestAgentTab: (prompt: string) => void;
-  consumeAgentPrompt: () => string | null;
+  requestAgentTab: (prompt: string, model?: string) => void;
+  consumeAgentPrompt: () => { prompt: string; model?: string } | null;
   requestRunner: (key: string) => void;
   consumeRunner: () => { key: string } | null;
 
@@ -218,7 +256,7 @@ interface AppState {
   closeActiveTab: (worktreeId: string) => void;
   newTerminalTab: (worktreeId: string) => void;
   newClaudeTab: (worktreeId: string) => void;
-  addAgentTab: (worktreeId: string, cwd: string, prompt?: string) => void;
+  addAgentTab: (worktreeId: string, cwd: string, prompt?: string, model?: string) => void;
   newAgentTab: (worktreeId: string) => void;
   renameTab: (worktreeId: string, tabId: string, newLabel: string) => void;
 
@@ -261,6 +299,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedWorktreeId: null,
   editingProject: null,
   sidebarWidth: 310,
+  collapsedProjectIds: new Set(JSON.parse(localStorage.getItem("coppice:collapsedProjects") || "[]") as string[]),
   pendingClaudeCommand: null,
   pendingAgentPrompt: null,
   pendingRunner: null,
@@ -296,7 +335,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (cmd) set({ pendingClaudeCommand: null });
     return cmd;
   },
-  requestAgentTab: (prompt) => set({ pendingAgentPrompt: prompt }),
+  requestAgentTab: (prompt, model) => set({ pendingAgentPrompt: { prompt, model } }),
   consumeAgentPrompt: () => {
     const p = get().pendingAgentPrompt;
     if (p) set({ pendingAgentPrompt: null });
@@ -349,6 +388,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   openProjectSettings: (mode) => set({ editingProject: mode }),
   closeProjectSettings: () => set({ editingProject: null }),
   setSidebarWidth: (width) => set({ sidebarWidth: width }),
+
+  toggleProjectCollapsed: (projectId) => {
+    const next = new Set(get().collapsedProjectIds);
+    if (next.has(projectId)) next.delete(projectId);
+    else next.add(projectId);
+    localStorage.setItem("coppice:collapsedProjects", JSON.stringify([...next]));
+    set({ collapsedProjectIds: next });
+  },
 
   createProject: async (data) => {
     await commands.createProject(data);
@@ -437,27 +484,31 @@ export const useAppStore = create<AppState>((set, get) => ({
     // "Visible" means the tab is the active tab of the selected worktree;
     // "focused" means the whole window is in the foreground. Both must be
     // true for us to consider the user present.
-    let isVisible = false;
-    for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
-      const tab = tabs.find((t) => t.id === tabId);
-      if (tab) {
-        isVisible = s.selectedWorktreeId === wtId && s.activeTabByWorktree[wtId] === tabId;
-        break;
-      }
-    }
+    const owningWt = findWorktreeForTab(s.tabsByWorktree, tabId);
+    const isVisible = owningWt !== null
+      && s.selectedWorktreeId === owningWt
+      && s.activeTabByWorktree[owningWt] === tabId;
     const userIsWatching = isVisible && isWindowFocused();
 
-    // Always write the status so the in-tab dot reflects what the agent is
-    // actually doing (pulsing while active, warning when done/errored). We
-    // used to skip the write when the user was watching to avoid "flashing"
-    // a dot onto the visible tab, but that also suppressed the dot entirely
-    // for users who stay on the agent tab — leaving them with no visual
-    // completion cue at all. The setActiveTab + window-focus handlers still
-    // clear idle state on the next real engagement (switching tabs, window
-    // refocus), so the dot doesn't linger.
-    set((state) => ({
-      claudeStatusByTab: { ...state.claudeStatusByTab, [tabId]: status },
-    }));
+    // Write the status so the in-tab dot reflects what the agent is doing
+    // (pulsing while active, warning when done/errored). However, if the
+    // user is already watching this specific tab and it transitions to
+    // "idle", skip writing it — the user can see the agent finished from
+    // the tab content, and writing "idle" would light up the tab dot,
+    // sidebar dot, and dock badge with no clearing trigger until the user
+    // manually toggles away and back.
+    if (status === "idle" && userIsWatching) {
+      // Remove any previous status (e.g. "active") so the pulsing dot
+      // stops, but don't write "idle" — no orange dot / badge needed.
+      if (prev) {
+        const { [tabId]: _, ...rest } = s.claudeStatusByTab;
+        set({ claudeStatusByTab: rest });
+      }
+    } else {
+      set((state) => ({
+        claudeStatusByTab: { ...state.claudeStatusByTab, [tabId]: status },
+      }));
+    }
 
     // Notify when the agent becomes idle and the user can't see the tab.
     // Only agent SDK tabs drive this path (CLI tabs don't set claude status).
@@ -470,21 +521,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       // another virtual desktop. Respect the user's toggle and request
       // permission lazily on first use.
       if (s.appSettings?.notification_popup) {
-        // Resolve tab label and worktree name for the notification body.
-        let tabLabel = "";
-        let worktreeName = "";
-        for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
-          const tab = tabs.find((t) => t.id === tabId);
-          if (tab) {
-            tabLabel = tab.label;
-            // Find worktree name.
-            for (const wts of Object.values(s.worktreesByProject)) {
-              const wt = wts.find((w) => w.id === wtId);
-              if (wt) { worktreeName = wt.name || wt.branch; break; }
-            }
-            break;
-          }
-        }
+        // Full lookup needed only here — resolves project ID for the click handler.
+        const tabLocation = findTabLocation(s, tabId);
+        const tabLabel = tabLocation?.tab.label ?? "";
+        const worktreeName = tabLocation ? (tabLocation.worktree.name || tabLocation.worktree.branch) : "";
 
         (async () => {
           try {
@@ -495,10 +535,18 @@ export const useAppStore = create<AppState>((set, get) => ({
             }
             if (granted) {
               sendNotification({
+                id: (_notifIdCounter = (_notifIdCounter + 1) % 0x7FFF_FFFF),
                 title: "Claude is waiting",
                 body: worktreeName
                   ? `${tabLabel} in ${worktreeName}`
                   : tabLabel || "A Claude tab needs attention",
+                ...(tabLocation ? {
+                  extra: {
+                    projectId: tabLocation.projectId,
+                    worktreeId: tabLocation.worktreeId,
+                    tabId,
+                  },
+                } : {}),
               });
             }
           } catch {
@@ -757,7 +805,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     s.addTab(worktreeId, "claude", path, claudeCmd);
   },
 
-  addAgentTab: (worktreeId, cwd, prompt) => {
+  addAgentTab: (worktreeId, cwd, prompt, model) => {
     const s = get();
     const tabs = s.tabsByWorktree[worktreeId] ?? [];
     let maxNum = 0;
@@ -777,7 +825,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionState: AgentSessionState = {
       messages: [],
       status: "idle",
-      model: s.appSettings?.agent_default_model || "claude-opus-4-7",
+      model: model || s.appSettings?.agent_default_model || "claude-opus-4-7",
       effort: s.appSettings?.agent_default_effort || "high",
       extendedContext: s.appSettings?.agent_default_extended_context ?? false,
       permissionMode: "bypassPermissions",

@@ -1,5 +1,52 @@
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use crate::settings::SettingsState;
+
+fn open_path_in_editor(editor: &str, path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        if editor.is_empty() {
+            Command::new("open")
+                .args(["-a", "Visual Studio Code"])
+                .arg(path)
+                .spawn()
+                .map_err(|e| format!("Failed to open editor: {}", e))?;
+        } else {
+            Command::new(editor)
+                .arg(path)
+                .spawn()
+                .map_err(|e| format!("Failed to open editor '{}': {}", editor, e))?;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let cmd = if editor.is_empty() { "code" } else { editor };
+        Command::new(cmd)
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open editor '{}': {}", cmd, e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let ed = if editor.is_empty() { "code" } else { editor };
+        let direct = Command::new(ed).arg(path).spawn();
+        if direct.is_err() {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            Command::new("cmd")
+                .arg("/c")
+                .arg(ed)
+                .arg(path)
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .map_err(|e| format!("Failed to open editor '{}': {}", ed, e))?;
+        }
+    }
+
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn open_in_editor(state: tauri::State<'_, SettingsState>, path: String) -> Result<(), String> {
@@ -8,59 +55,32 @@ pub async fn open_in_editor(state: tauri::State<'_, SettingsState>, path: String
         settings.editor_command.clone()
     };
 
-    #[cfg(target_os = "macos")]
-    {
-        if editor.is_empty() {
-            Command::new("open")
-                .args(["-a", "Visual Studio Code", &path])
-                .spawn()
-                .map_err(|e| format!("Failed to open editor: {}", e))?;
-        } else {
-            Command::new(&editor)
-                .arg(&path)
-                .spawn()
-                .map_err(|e| format!("Failed to open editor '{}': {}", editor, e))?;
+    open_path_in_editor(&editor, Path::new(&path))
+}
+
+#[tauri::command]
+pub async fn open_worktree_file_in_editor(
+    state: tauri::State<'_, SettingsState>,
+    worktree_path: String,
+    file: String,
+) -> Result<(), String> {
+    let editor = {
+        let settings = state.0.lock().unwrap();
+        settings.editor_command.clone()
+    };
+
+    let mut full_path = PathBuf::from(&worktree_path);
+    for segment in file.split(['/', '\\']).filter(|s| !s.is_empty()) {
+        if segment == "." || segment == ".." {
+            return Err(format!(
+                "Invalid file path '{}': path traversal segments are not allowed",
+                file
+            ));
         }
+        full_path.push(segment);
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        let cmd = if editor.is_empty() { "code".to_string() } else { editor };
-        Command::new(&cmd)
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open editor '{}': {}", cmd, e))?;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let ed = if editor.is_empty() { "code".to_string() } else { editor };
-        // Try direct invocation first — safer than routing through `cmd /c`,
-        // which reinterprets `&`, `|`, `^`, `%` in the path. Many editor
-        // launchers are .exe (Sublime, IntelliJ, Cursor) and work directly.
-        //
-        // If the launcher is a batch file (VS Code ships as `code.cmd`),
-        // CreateProcessW can't execute it without a full path, so fall back
-        // to `cmd /c` — at that point metacharacters in the editor binary
-        // name are already trusted (user-configured setting).
-        let direct = Command::new(&ed).arg(&path).spawn();
-        if direct.is_err() {
-            // Hide the transient cmd.exe window while it launches the editor.
-            // The editor itself is a GUI app and creates its own window
-            // independently of cmd's console, so the user only sees the editor.
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            Command::new("cmd")
-                .arg("/c")
-                .arg(&ed)
-                .arg(&path)
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn()
-                .map_err(|e| format!("Failed to open editor '{}': {}", ed, e))?;
-        }
-    }
-
-    Ok(())
+    open_path_in_editor(&editor, &full_path)
 }
 
 #[tauri::command]

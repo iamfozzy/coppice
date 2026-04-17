@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "agent-bridge:install": "cd src-tauri/resources/agent-bridge && npm install --omit=dev",
+    "agent-bridge:install": "npm --prefix ./src-tauri/resources/agent-bridge install --omit=dev",
     "agent-bridge:prune": "node scripts/prune-agent-bridge.mjs",
     "sidecars:download": "node scripts/download-sidecars.mjs",
     "postinstall": "npm run agent-bridge:install && npm run agent-bridge:prune && npm run sidecars:download"

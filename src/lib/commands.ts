@@ -128,6 +128,13 @@ export async function openInEditor(path: string): Promise<void> {
   return invoke("open_in_editor", { path });
 }
 
+export async function openWorktreeFileInEditor(
+  worktreePath: string,
+  file: string
+): Promise<void> {
+  return invoke("open_worktree_file_in_editor", { worktreePath, file });
+}
+
 /** @deprecated Use openInEditor */
 export const openInVscode = openInEditor;
 
@@ -171,19 +178,6 @@ export async function terminalResize(
 
 export async function terminalKill(sessionId: string): Promise<void> {
   return invoke("terminal_kill", { sessionId });
-}
-
-// Claude hooks commands
-export async function checkClaudeHooksInstalled(): Promise<boolean> {
-  return invoke("check_claude_hooks_installed");
-}
-
-export async function installClaudeHooks(): Promise<void> {
-  return invoke("install_claude_hooks");
-}
-
-export async function uninstallClaudeHooks(): Promise<void> {
-  return invoke("uninstall_claude_hooks");
 }
 
 // GitHub commands

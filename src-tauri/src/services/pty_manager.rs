@@ -213,18 +213,6 @@ impl PtyManager {
             }
         }
 
-        // Expose the session ID and hook directory to child processes.
-        // Claude Code's hooks can read these to write status files that
-        // Coppice's watcher picks up for deterministic idle detection.
-        // Harmless for non-Claude terminals (env vars are just ignored).
-        cmd.env("COPPICE_SESSION_ID", session_id);
-        cmd.env(
-            "COPPICE_HOOK_DIR",
-            crate::services::claude_hooks::hook_dir()
-                .to_string_lossy()
-                .to_string(),
-        );
-
         let child = pair
             .slave
             .spawn_command(cmd)
@@ -447,8 +435,6 @@ impl PtyManager {
             let _ = session.child.kill();
             let _ = session.child.wait();
         }
-        // Clean up any hook status file so stale files don't accumulate.
-        crate::services::claude_hooks::cleanup_session(session_id);
         Ok(())
     }
 }

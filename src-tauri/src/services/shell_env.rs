@@ -122,7 +122,7 @@ pub fn resolve_node_binary() -> Option<&'static str> {
     NODE_BINARY
         .get_or_init(|| {
             if let Some(p) = sidecar_path("node") {
-                return Some(p.to_string_lossy().to_string());
+                return p.to_str().map(|s| s.to_string());
             }
 
             if cfg!(target_os = "windows") {
