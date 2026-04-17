@@ -158,21 +158,16 @@ function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  // Flush all agent tab caches to the DB before the window closes, so that
-  // conversations can be restored on the next launch.  We race against a
-  // timeout so a hung IPC call can never block the window from closing.
-  // The try/catch is critical: if the handler rejects, Tauri's internal
-  // onCloseRequested wrapper skips `this.destroy()` and the window stays open.
+  // Flush all agent tab caches to the DB before the window unloads, so that
+  // conversations can be restored on the next launch.
+  // We intentionally use the browser `beforeunload` event instead of Tauri's
+  // `onCloseRequested`, because onCloseRequested wraps each listener with its
+  // own `await handler(); window.destroy()` — registering multiple handlers
+  // causes double-destroy and blocks the window from closing.
   useEffect(() => {
-    const unlisten = getCurrentWindow().onCloseRequested(async () => {
-      try {
-        const timeout = new Promise<void>((r) => setTimeout(r, 3000));
-        await Promise.race([flushAllAgentTabCaches(), timeout]);
-      } catch {
-        // Swallow — never block window close.
-      }
-    });
-    return () => { unlisten.then((fn) => fn()); };
+    const handler = () => { flushAllAgentTabCaches().catch(() => {}); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
   }, []);
 
   // Tab keyboard shortcuts — capture phase so xterm and the webview's native
