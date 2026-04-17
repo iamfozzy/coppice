@@ -159,10 +159,18 @@ function App() {
   }, []);
 
   // Flush all agent tab caches to the DB before the window closes, so that
-  // conversations can be restored on the next launch.
+  // conversations can be restored on the next launch.  We race against a
+  // timeout so a hung IPC call can never block the window from closing.
+  // The try/catch is critical: if the handler rejects, Tauri's internal
+  // onCloseRequested wrapper skips `this.destroy()` and the window stays open.
   useEffect(() => {
     const unlisten = getCurrentWindow().onCloseRequested(async () => {
-      await flushAllAgentTabCaches();
+      try {
+        const timeout = new Promise<void>((r) => setTimeout(r, 3000));
+        await Promise.race([flushAllAgentTabCaches(), timeout]);
+      } catch {
+        // Swallow — never block window close.
+      }
     });
     return () => { unlisten.then((fn) => fn()); };
   }, []);
