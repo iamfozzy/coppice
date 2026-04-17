@@ -184,6 +184,7 @@ interface AppState {
   selectedWorktreeId: string | null;
   editingProject: "new" | string | null;
   sidebarWidth: number;
+  collapsedProjectIds: Set<string>;
   pendingClaudeCommand: string | null;
   pendingAgentPrompt: { prompt: string; model?: string } | null;
   pendingRunner: { key: string } | null;
@@ -215,6 +216,7 @@ interface AppState {
   openProjectSettings: (mode: "new" | string) => void;
   closeProjectSettings: () => void;
   setSidebarWidth: (width: number) => void;
+  toggleProjectCollapsed: (projectId: string) => void;
   requestClaudeTab: (command: string) => void;
   consumeClaudeCommand: () => string | null;
   requestAgentTab: (prompt: string, model?: string) => void;
@@ -297,6 +299,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedWorktreeId: null,
   editingProject: null,
   sidebarWidth: 310,
+  collapsedProjectIds: new Set(JSON.parse(localStorage.getItem("coppice:collapsedProjects") || "[]") as string[]),
   pendingClaudeCommand: null,
   pendingAgentPrompt: null,
   pendingRunner: null,
@@ -385,6 +388,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   openProjectSettings: (mode) => set({ editingProject: mode }),
   closeProjectSettings: () => set({ editingProject: null }),
   setSidebarWidth: (width) => set({ sidebarWidth: width }),
+
+  toggleProjectCollapsed: (projectId) => {
+    const next = new Set(get().collapsedProjectIds);
+    if (next.has(projectId)) next.delete(projectId);
+    else next.add(projectId);
+    localStorage.setItem("coppice:collapsedProjects", JSON.stringify([...next]));
+    set({ collapsedProjectIds: next });
+  },
 
   createProject: async (data) => {
     await commands.createProject(data);

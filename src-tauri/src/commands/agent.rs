@@ -9,7 +9,7 @@ fn resolve_bridge_path(app: &AppHandle) -> Result<String, String> {
     if let Ok(resource_dir) = app.path().resource_dir() {
         let bundled = resource_dir.join("agent-bridge").join("bridge.mjs");
         if bundled.exists() {
-            return Ok(bundled.to_string_lossy().to_string());
+            return path_to_string(&bundled);
         }
     }
 
@@ -19,10 +19,31 @@ fn resolve_bridge_path(app: &AppHandle) -> Result<String, String> {
         .join("agent-bridge")
         .join("bridge.mjs");
     if dev_path.exists() {
-        return Ok(dev_path.to_string_lossy().to_string());
+        return path_to_string(&dev_path);
     }
 
     Err("Agent bridge script not found. Ensure agent-bridge is installed.".to_string())
+}
+
+/// Convert a PathBuf to a String, using the \\?\ long-path prefix on Windows
+/// to avoid MAX_PATH (260 char) issues with deeply nested node_modules, and
+/// returning an error instead of silently replacing non-UTF-8 characters.
+fn path_to_string(path: &std::path::Path) -> Result<String, String> {
+    let s = path
+        .to_str()
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        // Already prefixed or a UNC path — return as-is
+        if s.starts_with(r"\\?\") || s.starts_with(r"\\") {
+            return Ok(s.to_string());
+        }
+        return Ok(format!(r"\\?\{}", s));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    Ok(s.to_string())
 }
 
 /// Start a new agent session.
@@ -294,7 +315,7 @@ pub fn agent_check_available(app: AppHandle) -> Result<AgentAvailability, String
         }
     };
 
-    let node_ok = std::process::Command::new(node_path)
+    let node_ok = crate::services::shell_env::user_command(node_path)
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

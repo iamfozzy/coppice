@@ -203,9 +203,10 @@ impl AgentManager {
             // Try to send close command gracefully
             let _ = session.stdin.write_all(b"{\"type\":\"close\"}\n");
             let _ = session.stdin.flush();
-            // Give it a moment then kill
-            let _ = session.child.kill();
-            let _ = session.child.wait();
+            // Kill the process tree. On Windows, child.kill() only terminates
+            // the direct child (node), leaving any grandchildren (Claude SDK
+            // sub-processes) orphaned. Use taskkill /T to kill the whole tree.
+            kill_process_tree(&mut session.child);
         }
         Ok(())
     }
@@ -217,8 +218,29 @@ impl AgentManager {
         for (_, mut session) in sessions.drain() {
             let _ = session.stdin.write_all(b"{\"type\":\"close\"}\n");
             let _ = session.stdin.flush();
-            let _ = session.child.kill();
-            let _ = session.child.wait();
+            kill_process_tree(&mut session.child);
         }
     }
+}
+
+/// Kill a child process and its entire process tree.
+fn kill_process_tree(child: &mut Child) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let pid = child.id();
+        // taskkill /T kills the entire process tree, /F forces termination
+        let _ = std::process::Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
 }

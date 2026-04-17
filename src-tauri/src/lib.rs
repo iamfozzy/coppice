@@ -6,9 +6,7 @@ mod settings;
 
 use db::Database;
 use services::agent_manager::AgentManager;
-use services::claude_hooks::ClaudeHookWatcher;
 use services::pty_manager::PtyManager;
-use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,29 +15,10 @@ pub fn run() {
     let agent_manager = AgentManager::new();
     let settings_state = settings::SettingsState::new();
 
-    // Ensure the hook directory exists and clean up stale status files
-    // from previous sessions (crash recovery).
-    services::claude_hooks::init_hook_dir();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .setup(|app| {
-            // Start the filesystem watcher that bridges Claude Code hook
-            // signals into Tauri events for the frontend.
-            match ClaudeHookWatcher::new(app.handle()) {
-                Ok(watcher) => {
-                    // Store in managed state so it lives for the app's lifetime.
-                    app.manage(watcher);
-                }
-                Err(e) => {
-                    eprintln!("Warning: failed to start Claude hook watcher: {}", e);
-                    // Non-fatal — heuristic detection still works without hooks.
-                }
-            }
-            Ok(())
-        })
         .manage(database)
         .manage(pty_manager)
         .manage(agent_manager)
@@ -86,10 +65,6 @@ pub fn run() {
             // Settings commands
             commands::settings::get_settings,
             commands::settings::update_settings,
-            // Claude hooks commands
-            commands::claude_hooks::check_claude_hooks_installed,
-            commands::claude_hooks::install_claude_hooks,
-            commands::claude_hooks::uninstall_claude_hooks,
             // External tool commands
             commands::external::open_in_editor,
             commands::external::open_worktree_file_in_editor,

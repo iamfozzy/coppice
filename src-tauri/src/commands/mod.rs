@@ -1,6 +1,5 @@
 pub mod agent;
 pub mod agent_tab_cache;
-pub mod claude_hooks;
 pub mod project;
 pub mod worktree;
 pub mod external;
