@@ -11,6 +11,10 @@ export function AgentToolbar({
   onInterrupt,
 }: Props) {
   const isWorking = session.status === "thinking" || session.status === "tool_use";
+  const waitingOnPlanApproval =
+    session.status === "waiting_permission" &&
+    !!session.pendingPermission &&
+    session.pendingPermission.toolName.toLowerCase().includes("plan");
   const thinkingPhrase = useRotatingThinkingPhrase();
 
   // Only show the toolbar when there is something to display
@@ -36,7 +40,9 @@ export function AgentToolbar({
       {session.status === "waiting_permission" && (
         <div className="flex items-center gap-1.5 text-warning">
           <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
-          <span className="text-[10px] font-medium">Waiting for approval</span>
+          <span className="text-[10px] font-medium">
+            {waitingOnPlanApproval ? "Waiting for plan approval" : "Waiting for approval"}
+          </span>
         </div>
       )}
       {session.status === "done" && (

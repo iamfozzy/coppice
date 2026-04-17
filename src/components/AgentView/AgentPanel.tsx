@@ -9,6 +9,7 @@ import { MessageList } from "./MessageList";
 import { AgentInputBar } from "./AgentInputBar";
 import { PermissionDialog } from "./PermissionDialog";
 import { AskUserDialog } from "./AskUserDialog";
+import { PlanApprovalDialog, isPlanPermission } from "./PlanApprovalDialog";
 
 interface Props {
   sessionId: string;
@@ -469,10 +470,19 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     }
   };
 
-  const handleToolResponse = (behavior: "allow" | "deny") => {
+  const handleToolResponse = (behavior: "allow" | "deny", opts?: { message?: string; updatedInput?: unknown }) => {
     const pending = session?.pendingPermission;
     if (!pending) return;
-    commands.agentToolResponse(sessionId, pending.callId, behavior).catch(() => {});
+    commands
+      .agentToolResponse(sessionId, pending.callId, behavior, opts?.message, opts?.updatedInput)
+      .catch((err) => {
+        appendMessage(sessionId, {
+          id: nextMsgId(),
+          type: "error",
+          content: `Tool response failed: ${err}`,
+          timestamp: Date.now(),
+        });
+      });
     setPendingPermission(sessionId, null);
     setStatus(sessionId, "tool_use");
   };
@@ -480,7 +490,14 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const handleAskResponse = (answers: Record<string, string>) => {
     const pending = session?.pendingQuestion;
     if (!pending) return;
-    commands.agentAskResponse(sessionId, pending.callId, answers).catch(() => {});
+    commands.agentAskResponse(sessionId, pending.callId, answers).catch((err) => {
+      appendMessage(sessionId, {
+        id: nextMsgId(),
+        type: "error",
+        content: `Ask response failed: ${err}`,
+        timestamp: Date.now(),
+      });
+    });
     setPendingQuestion(sessionId, null);
     setStatus(sessionId, "thinking");
   };
@@ -526,11 +543,24 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
 
       {/* Permission dialog */}
       {session.pendingPermission && (
-        <PermissionDialog
-          pending={session.pendingPermission}
-          onAllow={() => handleToolResponse("allow")}
-          onDeny={() => handleToolResponse("deny")}
-        />
+        isPlanPermission(session.pendingPermission) ? (
+          <PlanApprovalDialog
+            pending={session.pendingPermission}
+            onApprove={(updatedInput) => handleToolResponse("allow", { updatedInput })}
+            onRequestChanges={(feedback) =>
+              handleToolResponse("deny", {
+                message: `Please revise the plan: ${feedback}`,
+              })
+            }
+            onDeny={() => handleToolResponse("deny")}
+          />
+        ) : (
+          <PermissionDialog
+            pending={session.pendingPermission}
+            onAllow={() => handleToolResponse("allow")}
+            onDeny={() => handleToolResponse("deny")}
+          />
+        )
       )}
 
       {/* Ask user dialog */}

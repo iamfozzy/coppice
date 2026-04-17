@@ -331,9 +331,16 @@ export async function agentToolResponse(
   sessionId: string,
   callId: string,
   behavior: "allow" | "deny",
-  message?: string
+  message?: string,
+  updatedInput?: unknown,
 ): Promise<void> {
-  return invoke("agent_tool_response", { sessionId, callId, behavior, message });
+  return invoke("agent_tool_response", {
+    sessionId,
+    callId,
+    behavior,
+    message,
+    updatedInput,
+  });
 }
 
 export async function agentAskResponse(

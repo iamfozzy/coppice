@@ -188,14 +188,18 @@ pub fn agent_tool_response(
     call_id: String,
     behavior: String,
     message: Option<String>,
+    updated_input: Option<serde_json::Value>,
     agent_manager: State<'_, AgentManager>,
 ) -> Result<(), String> {
-    let msg = serde_json::json!({
+    let mut msg = serde_json::json!({
         "type": "tool_response",
         "callId": call_id,
         "behavior": behavior,
         "message": message.unwrap_or_default(),
     });
+    if let Some(input) = updated_input {
+        msg["updatedInput"] = input;
+    }
     agent_manager.send(&session_id, &msg.to_string())
 }
 
