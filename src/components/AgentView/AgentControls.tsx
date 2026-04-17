@@ -60,7 +60,7 @@ export function AgentControls({
   onPermissionModeChange,
 }: Props) {
   return (
-    <div className="flex items-center gap-2 px-4 py-1.5 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
+    <div className="flex items-center gap-2 px-3 py-1.5 pb-0 pt-2 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
       {/* Model selector — custom dropdown */}
       <ModelPicker model={model} onModelChange={onModelChange} />
 

@@ -161,7 +161,7 @@ export function AgentInputBar({ disabled, isAgentBusy, autoFocus, placeholder, s
           spellCheck={false}
         />
         <button
-          className={`shrink-0 h-8 flex items-center justify-center rounded-lg text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+          className={`shrink-0 self-stretch flex items-center justify-center rounded-lg text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
             showQueueButton
               ? "bg-amber-500/80 hover:bg-amber-500 px-2.5 gap-1.5"
               : "bg-accent hover:bg-accent-hover w-8"
