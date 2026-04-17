@@ -33,6 +33,7 @@ pub fn agent_start(
     prompt: String,
     model: Option<String>,
     effort: Option<String>,
+    extended_context: Option<bool>,
     permission_mode: Option<String>,
     allowed_tools: Option<Vec<String>>,
     max_turns: Option<u32>,
@@ -52,6 +53,12 @@ pub fn agent_start(
     }
     if let Some(e) = &effort {
         options.insert("effort".into(), serde_json::Value::String(e.clone()));
+    }
+    if let Some(ec) = extended_context {
+        options.insert(
+            "extendedContext".into(),
+            serde_json::Value::Bool(ec),
+        );
     }
     if let Some(pm) = &permission_mode {
         options.insert(

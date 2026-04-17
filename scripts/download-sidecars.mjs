@@ -15,7 +15,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const NODE_VERSION = "20.18.1";
@@ -126,16 +126,16 @@ async function download(url, dest) {
 }
 
 function extract(archivePath, archiveType, destDir) {
-  if (archiveType === "tar.gz") {
-    execSync(`tar -xzf "${archivePath}" -C "${destDir}"`, { stdio: "inherit" });
-  } else if (archiveType === "tar.xz") {
-    execSync(`tar -xJf "${archivePath}" -C "${destDir}"`, { stdio: "inherit" });
-  } else if (archiveType === "zip") {
-    // tar understands zip on Win10+/macOS/Linux (bsdtar/libarchive).
-    execSync(`tar -xf "${archivePath}" -C "${destDir}"`, { stdio: "inherit" });
-  } else {
-    throw new Error(`Unknown archive type: ${archiveType}`);
-  }
+  // Pass the archive by basename and run from its parent dir. GNU tar (Git
+  // Bash on Windows) interprets `D:\...` as a remote host because of the
+  // colon, so absolute paths with drive letters fail with "Cannot connect
+  // to D: resolve failed". bsdtar on Win10+ understands zip via libarchive.
+  const cwd = dirname(archivePath);
+  const name = basename(archivePath);
+  const flags =
+    archiveType === "tar.gz" ? "-xzf" : archiveType === "tar.xz" ? "-xJf" : archiveType === "zip" ? "-xf" : null;
+  if (!flags) throw new Error(`Unknown archive type: ${archiveType}`);
+  execSync(`tar ${flags} "${name}" -C "${destDir}"`, { stdio: "inherit", cwd });
 }
 
 async function fetchBinary(name, meta) {

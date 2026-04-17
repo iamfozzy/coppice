@@ -61,6 +61,7 @@ export interface AppSettings {
   default_claude_mode: "agent" | "terminal";
   agent_default_model: string;
   agent_default_effort: EffortLevel;
+  agent_default_extended_context: boolean;
   agent_node_path: string;
   agent_api_key: string;
   mcp_servers: Record<string, McpServerEntry>;
@@ -77,7 +78,7 @@ export interface McpServerEntry {
 // ── Agent SDK types ──
 
 export type AgentStatus = "idle" | "thinking" | "tool_use" | "waiting_permission" | "waiting_input" | "done" | "error";
-export type EffortLevel = "low" | "medium" | "high" | "max";
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 export type AgentPermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions";
 
 export interface AgentMessage {
@@ -128,6 +129,7 @@ export interface AgentSessionState {
   status: AgentStatus;
   model: string;
   effort: EffortLevel;
+  extendedContext: boolean;
   permissionMode: AgentPermissionMode;
   cost: AgentCost | null;
   sdkSessionId: string | null;

@@ -3,6 +3,7 @@ import type { SlashCommand } from "../../lib/types";
 
 interface Props {
   disabled: boolean;
+  autoFocus?: boolean;
   placeholder?: string;
   slashCommands?: SlashCommand[];
   onSend: (text: string) => void;
@@ -18,10 +19,17 @@ function parseLeadingSlash(text: string): string | null {
   return rest;
 }
 
-export function AgentInputBar({ disabled, placeholder, slashCommands, onSend }: Props) {
+export function AgentInputBar({ disabled, autoFocus, placeholder, slashCommands, onSend }: Props) {
   const [text, setText] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Focus textarea when this tab becomes visible
+  useEffect(() => {
+    if (autoFocus && !disabled) {
+      textareaRef.current?.focus();
+    }
+  }, [autoFocus, disabled]);
 
   // Auto-resize textarea
   useEffect(() => {

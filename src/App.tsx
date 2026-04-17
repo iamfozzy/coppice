@@ -256,7 +256,7 @@ function App() {
                 pointerEvents: t.visible ? "auto" : "none",
               }}
             >
-              <AgentPanel sessionId={t.id} cwd={t.cwd} initialPrompt={t.command} />
+              <AgentPanel sessionId={t.id} cwd={t.cwd} initialPrompt={t.command} visible={t.visible} />
             </div>
           ))}
         </div>

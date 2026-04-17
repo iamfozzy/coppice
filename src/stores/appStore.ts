@@ -127,6 +127,7 @@ interface AppState {
   setAgentStatus: (tabId: string, status: AgentStatus) => void;
   setAgentModel: (tabId: string, model: string) => void;
   setAgentEffort: (tabId: string, effort: EffortLevel) => void;
+  setAgentExtendedContext: (tabId: string, enabled: boolean) => void;
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
   setAgentCost: (tabId: string, cost: AgentCost) => void;
   setAgentSdkSessionId: (tabId: string, id: string) => void;
@@ -220,21 +221,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectProject: (id) => set({ selectedProjectId: id }),
   selectWorktree: (id) => {
     set({ selectedWorktreeId: id });
-    // Clear the idle dot for CLI claude tabs when the user navigates to the
-    // worktree (they're now able to see it). Agent tabs keep the dot until
-    // the user actually sends a new prompt — selecting a worktree isn't
-    // really engagement with the agent tab contents, and losing the dot
-    // here means users who switch away and come back never see the "done"
-    // signal at all.
+    // Clear the idle dot for the active tab when the user navigates to the
+    // worktree — they can now see it, so the notification has served its
+    // purpose. This applies to both CLI claude tabs and agent tabs.
     if (id) {
       const s = get();
       const activeId = s.activeTabByWorktree[id];
-      const activeTab = activeId ? s.tabsByWorktree[id]?.find((t) => t.id === activeId) : undefined;
-      if (
-        activeId &&
-        activeTab?.type === "claude" &&
-        s.claudeStatusByTab[activeId] === "idle"
-      ) {
+      if (activeId && s.claudeStatusByTab[activeId] === "idle") {
         const { [activeId]: _, ...rest } = s.claudeStatusByTab;
         set({ claudeStatusByTab: rest });
       }
@@ -593,9 +586,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionState: AgentSessionState = {
       messages: [],
       status: "idle",
-      model: s.appSettings?.agent_default_model || "claude-opus-4-6",
+      model: s.appSettings?.agent_default_model || "claude-opus-4-7",
       effort: s.appSettings?.agent_default_effort || "high",
-      permissionMode: "acceptEdits",
+      extendedContext: s.appSettings?.agent_default_extended_context ?? false,
+      permissionMode: "bypassPermissions",
       cost: null,
       sdkSessionId: null,
       pendingPermission: null,
@@ -727,6 +721,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         agentSessionByTab: {
           ...s.agentSessionByTab,
           [tabId]: { ...session, effort },
+        },
+      };
+    });
+  },
+
+  setAgentExtendedContext: (tabId, enabled) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, extendedContext: enabled },
         },
       };
     });

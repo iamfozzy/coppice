@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as commands from "../../lib/commands";
 import { useAppStore } from "../../stores/appStore";
-import type { AgentMessage, SlashCommand } from "../../lib/types";
+import type { AgentMessage, EffortLevel, SlashCommand } from "../../lib/types";
 import { AgentToolbar } from "./AgentToolbar";
 import { AgentControls } from "./AgentControls";
 import { MessageList } from "./MessageList";
@@ -14,6 +14,7 @@ interface Props {
   sessionId: string;
   cwd: string;
   initialPrompt?: string;
+  visible?: boolean;
 }
 
 let msgIdCounter = 0;
@@ -21,7 +22,7 @@ function nextMsgId() {
   return `msg-${++msgIdCounter}-${Date.now()}`;
 }
 
-export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
+export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const session = useAppStore((s) => s.agentSessionByTab[sessionId]);
   const appendMessage = useAppStore((s) => s.appendAgentMessage);
   const updateStreaming = useAppStore((s) => s.updateAgentStreamingText);
@@ -103,6 +104,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
       .agentStart(sessionId, cwd, initialPrompt, {
         model: session?.model || undefined,
         effort: session?.effort || undefined,
+        extendedContext: session?.extendedContext || undefined,
         permissionMode: session?.permissionMode || undefined,
         apiKey: appSettings?.agent_api_key || undefined,
       })
@@ -364,6 +366,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
           .agentStart(sessionId, cwd, text, {
             model: currentSession.model || undefined,
             effort: currentSession.effort || undefined,
+            extendedContext: currentSession.extendedContext || undefined,
             permissionMode: currentSession.permissionMode || undefined,
             resume: currentSession.sdkSessionId,
             apiKey: appSettings?.agent_api_key || undefined,
@@ -383,6 +386,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
           .agentStart(sessionId, cwd, text, {
             model: currentSession?.model || undefined,
             effort: currentSession?.effort || undefined,
+            extendedContext: currentSession?.extendedContext || undefined,
             permissionMode: currentSession?.permissionMode || undefined,
             apiKey: appSettings?.agent_api_key || undefined,
           })
@@ -431,8 +435,12 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
     commands.agentSetModel(sessionId, model).catch(() => {});
   };
 
-  const handleEffortChange = (effort: "low" | "medium" | "high" | "max") => {
+  const handleEffortChange = (effort: EffortLevel) => {
     setEffort(sessionId, effort);
+  };
+
+  const handleExtendedContextChange = (enabled: boolean) => {
+    useAppStore.getState().setAgentExtendedContext(sessionId, enabled);
   };
 
   const handlePermissionModeChange = (mode: "default" | "plan" | "acceptEdits" | "bypassPermissions") => {
@@ -484,13 +492,16 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
       <AgentControls
         model={session.model}
         effort={session.effort}
+        extendedContext={session.extendedContext}
         permissionMode={session.permissionMode}
         onModelChange={handleModelChange}
         onEffortChange={handleEffortChange}
+        onExtendedContextChange={handleExtendedContextChange}
         onPermissionModeChange={handlePermissionModeChange}
       />
       <AgentInputBar
         disabled={isInputDisabled}
+        autoFocus={visible}
         placeholder={
           session.status === "done"
             ? "Send a follow-up message..."
