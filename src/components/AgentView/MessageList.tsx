@@ -1,11 +1,50 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useMemo } from "react";
 import type { AgentMessage, AgentStatus } from "../../lib/types";
-import { MessageBubble } from "./MessageBubble";
+import { MessageBubble, MarkdownContent } from "./MessageBubble";
+import { ToolCallCard } from "./ToolCallCard";
 
 interface Props {
   messages: AgentMessage[];
   streamingText: string;
   status: AgentStatus;
+}
+
+/**
+ * Merge adjacent tool_call + tool_result with the same toolUseId into a single
+ * render item so they appear as one unified card.
+ */
+interface MergedToolItem {
+  kind: "merged_tool";
+  callMsg: AgentMessage;
+  resultMsg: AgentMessage | null; // null if result hasn't arrived yet
+}
+
+interface PlainItem {
+  kind: "plain";
+  msg: AgentMessage;
+}
+
+type RenderItem = MergedToolItem | PlainItem;
+
+function mergeMessages(messages: AgentMessage[]): RenderItem[] {
+  const items: RenderItem[] = [];
+  // Index of tool_call items by toolUseId so we can patch them when results arrive
+  const callMap = new Map<string, MergedToolItem>();
+
+  for (const msg of messages) {
+    if (msg.type === "tool_call" && msg.toolUseId) {
+      const merged: MergedToolItem = { kind: "merged_tool", callMsg: msg, resultMsg: null };
+      callMap.set(msg.toolUseId, merged);
+      items.push(merged);
+    } else if (msg.type === "tool_result" && msg.toolUseId && callMap.has(msg.toolUseId)) {
+      // Attach result to the existing call entry — don't create a new item
+      callMap.get(msg.toolUseId)!.resultMsg = msg;
+    } else {
+      items.push({ kind: "plain", msg });
+    }
+  }
+
+  return items;
 }
 
 export function MessageList({ messages, streamingText, status }: Props) {
@@ -25,17 +64,19 @@ export function MessageList({ messages, streamingText, status }: Props) {
     }
   }, [messages.length, streamingText]);
 
+  const items = useMemo(() => mergeMessages(messages), [messages]);
+
   return (
     <div
       ref={containerRef}
-      className="flex-1 overflow-y-auto px-4 py-3 space-y-3"
+      className="flex-1 overflow-y-auto px-4 py-4 space-y-3"
       onScroll={handleScroll}
     >
       {messages.length === 0 && !streamingText && (
         <div className="flex items-center justify-center h-full">
           <div className="text-center text-text-tertiary">
-            <div className="text-3xl mb-2 opacity-20">
-              <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="mx-auto">
+            <div className="mb-3 opacity-15">
+              <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="mx-auto">
                 <rect x="8" y="18" width="32" height="22" rx="6" stroke="currentColor" strokeWidth="2" />
                 <line x1="24" y1="10" x2="24" y2="18" stroke="currentColor" strokeWidth="2" />
                 <circle cx="24" cy="8" r="3" stroke="currentColor" strokeWidth="2" />
@@ -45,22 +86,34 @@ export function MessageList({ messages, streamingText, status }: Props) {
                 <line x1="40" y1="26" x2="44" y2="26" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
               </svg>
             </div>
-            <p className="text-sm">Type a message to start</p>
+            <p className="text-xs">Send a message to start a session</p>
           </div>
         </div>
       )}
 
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
-      ))}
+      {items.map((item) => {
+        if (item.kind === "merged_tool") {
+          const call = item.callMsg;
+          const result = item.resultMsg;
+          return (
+            <ToolCallCard
+              key={call.id}
+              toolName={call.toolName || "Unknown"}
+              toolInput={call.toolInput}
+              toolOutput={result?.toolOutput || result?.content}
+              isError={result?.isError}
+              isActive={!result}
+            />
+          );
+        }
+        return <MessageBubble key={item.msg.id} message={item.msg} />;
+      })}
 
-      {/* Live streaming text */}
+      {/* Live streaming text — render with markdown */}
       {streamingText && (
-        <div className="max-w-[90%]">
-          <div className="text-sm text-text-primary whitespace-pre-wrap break-words">
-            {streamingText}
-            <span className="inline-block w-1.5 h-4 bg-accent/60 animate-pulse ml-0.5 align-text-bottom" />
-          </div>
+        <div className="pr-8">
+          <MarkdownContent text={streamingText} />
+          <span className="inline-block w-1.5 h-3.5 bg-accent/50 animate-pulse rounded-sm ml-0.5 -mb-0.5" />
         </div>
       )}
 
@@ -72,7 +125,7 @@ export function MessageList({ messages, streamingText, status }: Props) {
             <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse [animation-delay:150ms]" />
             <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse [animation-delay:300ms]" />
           </div>
-          <span className="text-xs text-text-tertiary">
+          <span className="text-[11px] text-text-tertiary">
             {status === "tool_use" ? "Running tool..." : "Thinking..."}
           </span>
         </div>

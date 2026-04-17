@@ -11,12 +11,6 @@ import {
 
 export type ClaudeStatus = "active" | "idle";
 
-// Per-tab notification cooldown. After firing a notification for a tab,
-// suppress further notifications for this many ms to prevent chime/popup
-// spam during rapid active→idle→active→idle bouncing.
-const NOTIFICATION_COOLDOWN_MS = 10_000;
-const notificationCooldownUntil = new Map<string, number>();
-
 // ── Session types ──
 
 export interface TabInfo {
@@ -337,11 +331,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     // "focused" means the whole window is in the foreground. Both must be
     // true for us to consider the user present.
     let isVisible = false;
-    let tabType: string | undefined;
     for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
       const tab = tabs.find((t) => t.id === tabId);
       if (tab) {
-        tabType = tab.type;
         isVisible = s.selectedWorktreeId === wtId && s.activeTabByWorktree[wtId] === tabId;
         break;
       }
@@ -365,20 +357,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       claudeStatusByTab: { ...state.claudeStatusByTab, [tabId]: status },
     }));
 
-    // Notify when Claude becomes idle and the user can't see the tab.
-    // "Can't see" = tab is not the active tab of the selected worktree,
-    // OR the window is backgrounded.
+    // Notify when the agent becomes idle and the user can't see the tab.
+    // Only agent SDK tabs drive this path (CLI tabs don't set claude status).
     if (status === "idle" && (prev === "active" || prev === undefined) && !userIsWatching) {
-      // Cooldown: suppress rapid-fire notifications for CLI terminal tabs
-      // where heuristic idle detection bounces between active/idle during
-      // tool-use loops. Agent SDK tabs have clean status transitions and
-      // don't need the cooldown.
-      if (tabType !== "agent") {
-        const cooldownExpiry = notificationCooldownUntil.get(tabId) ?? 0;
-        if (Date.now() < cooldownExpiry) return;
-        notificationCooldownUntil.set(tabId, Date.now() + NOTIFICATION_COOLDOWN_MS);
-      }
-
       if (s.appSettings?.notification_sound) {
         playNotificationSound();
       }

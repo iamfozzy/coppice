@@ -24,10 +24,8 @@ export function WorktreeView() {
   const pendingAgentPrompt = useAppStore((s) => s.pendingAgentPrompt);
   const consumeAgentPrompt = useAppStore((s) => s.consumeAgentPrompt);
 
-  const appSettings = useAppStore((s) => s.appSettings);
   const prCommentsByProject = useAppStore((s) => s.prCommentsByProject);
   const project = projects.find((p) => p.id === selectedProjectId);
-  const claudeCmd = project?.claude_command || appSettings?.claude_command || "claude";
   const worktrees = selectedProjectId
     ? worktreesByProject[selectedProjectId] ?? []
     : [];
@@ -98,19 +96,7 @@ export function WorktreeView() {
     }
   }, [pendingAgentPrompt, worktree, consumeAgentPrompt, addAgentTab]);
 
-  // Auto-create a Claude tab if worktree has no Claude tabs, after a short delay
-  const hasClaude = tabs.some((t) => t.type === "claude");
-  useEffect(() => {
-    if (!worktree || hasClaude) return;
-    const timer = setTimeout(() => {
-      // Re-check current store state in case a tab was added during the delay
-      const currentTabs = useAppStore.getState().tabsByWorktree[worktree.id] ?? [];
-      if (!currentTabs.some((t) => t.type === "claude")) {
-        addTab(worktree.id, "claude", worktree.path, claudeCmd);
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [worktree?.id, hasClaude]);
+  // Claude CLI tabs are no longer auto-created — the user decides when to open one.
 
   if (!worktree || !project) {
     return (
@@ -182,19 +168,20 @@ export function WorktreeView() {
             </svg>
           </button>
           <button
-            className="flex items-center justify-center w-10 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none"
+            className="flex items-center justify-center gap-1 px-2 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none text-[11px]"
             onClick={() => newClaudeTab(wtId)}
             title="New Claude terminal (Ctrl+Shift+T)"
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="6" width="12" height="8" rx="2" />
-              <line x1="8" y1="3" x2="8" y2="6" />
-              <circle cx="8" cy="2.5" r="1.2" />
-              <circle cx="5.5" cy="10" r="1" fill="currentColor" stroke="none" />
-              <circle cx="10.5" cy="10" r="1" fill="currentColor" stroke="none" />
-              <line x1="0.5" y1="9" x2="2" y2="9" />
-              <line x1="14" y1="9" x2="15.5" y2="9" />
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="5" width="10" height="8" rx="1.5" />
+              <path d="M5.5 2.5h5" />
+              <line x1="8" y1="2.5" x2="8" y2="5" />
+              <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
+              <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
+              <line x1="1" y1="8.5" x2="3" y2="8.5" />
+              <line x1="13" y1="8.5" x2="15" y2="8.5" />
             </svg>
+            CLI
           </button>
           <button
             className="flex items-center justify-center w-10 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none"
@@ -202,10 +189,13 @@ export function WorktreeView() {
             title="New Agent session (Ctrl+Shift+A)"
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="8" cy="8" r="6" />
-              <circle cx="6" cy="7" r="1" fill="currentColor" stroke="none" />
-              <circle cx="10" cy="7" r="1" fill="currentColor" stroke="none" />
-              <path d="M5.5 10.5c.7.8 1.5 1 2.5 1s1.8-.2 2.5-1" />
+              <rect x="3" y="5" width="10" height="8" rx="1.5" />
+              <path d="M5.5 2.5h5" />
+              <line x1="8" y1="2.5" x2="8" y2="5" />
+              <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
+              <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
+              <line x1="1" y1="8.5" x2="3" y2="8.5" />
+              <line x1="13" y1="8.5" x2="15" y2="8.5" />
             </svg>
           </button>
         </div>
@@ -261,26 +251,26 @@ function Tab({
   onClick: () => void;
   onClose: () => void;
 }) {
-  // Claude tabs render a status-aware dot on every tab (active or not) so the
-  // user can tell at a glance which tab fired a notification. Non-Claude tabs
-  // keep the original behavior: colored when active, dim when not.
-  const isClaudeType = type === "claude" || type === "agent";
-  const claudeActive = isClaudeType && claudeStatus === "active";
-  const claudeIdle = isClaudeType && claudeStatus === "idle";
+  // Agent tabs render a status-aware dot so the user can tell at a glance
+  // which tab fired a notification. Other tabs keep the original behavior:
+  // colored when active, dim when not.
+  const isAgentType = type === "agent";
+  const agentActive = isAgentType && claudeStatus === "active";
+  const agentIdle = isAgentType && claudeStatus === "idle";
 
   let dotNode: React.ReactNode;
-  if (claudeActive) {
+  if (agentActive) {
     dotNode = (
       <span className="relative flex h-1.5 w-1.5 shrink-0">
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-50" />
         <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
       </span>
     );
-  } else if (claudeIdle) {
+  } else if (agentIdle) {
     dotNode = <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-warning" />;
   } else {
     const activeColor =
-      isClaudeType ? "bg-accent" : type === "diff" ? "bg-warning" : "bg-text-tertiary";
+      type === "agent" || type === "claude" ? "bg-accent" : type === "diff" ? "bg-warning" : "bg-text-tertiary";
     dotNode = (
       <span
         className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? activeColor : "bg-text-tertiary/40"}`}

@@ -40,6 +40,7 @@ let activeQuery = null;
 let activeAbort = null;
 let hasInitialized = false;
 let currentPermissionMode = "default";
+let titleGenerated = false;
 
 // ── Stdin reader ──
 
@@ -146,6 +147,47 @@ async function handleCommand(msg) {
   }
 }
 
+// ── Title generation ──
+
+async function generateTitle(prompt, apiKey) {
+  if (!apiKey) {
+    log("Title generation skipped: no API key");
+    return;
+  }
+  log("Generating title for prompt:", prompt.slice(0, 80));
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 20,
+        messages: [
+          {
+            role: "user",
+            content: `Generate a very short tab title (2-5 words) summarizing this task. Respond with ONLY the title, no quotes or punctuation.\n\nTask: ${prompt.slice(0, 500)}`,
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      log("Title generation API error:", res.status, errBody);
+      return;
+    }
+    const data = await res.json();
+    const title = data.content?.[0]?.text?.trim();
+    log("Generated title:", title);
+    if (title) emit({ type: "title", title });
+  } catch (err) {
+    log("Title generation failed:", err.message);
+  }
+}
+
 // ── Start agent session ──
 
 async function startSession(msg) {
@@ -157,6 +199,12 @@ async function startSession(msg) {
   activeQuery = null;
 
   const opts = msg.options || {};
+
+  // Generate a short tab title from the first prompt (fire-and-forget)
+  if (!titleGenerated && msg.prompt) {
+    titleGenerated = true;
+    generateTitle(msg.prompt, opts.apiKey || process.env.ANTHROPIC_API_KEY);
+  }
   const abortController = new AbortController();
   activeAbort = abortController;
 

@@ -33,10 +33,10 @@ export function AgentInputBar({ disabled, placeholder, onSend }: Props) {
   };
 
   return (
-    <div className="flex items-end gap-2 px-4 py-3 border-t border-border-primary bg-bg-secondary">
+    <div className="flex items-end gap-2 px-3 py-2.5 bg-bg-secondary">
       <textarea
         ref={textareaRef}
-        className="flex-1 resize-none bg-bg-tertiary border border-border-primary rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors font-mono"
+        className="flex-1 resize-none bg-bg-tertiary border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/20 transition-all font-mono leading-relaxed"
         rows={1}
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -46,7 +46,7 @@ export function AgentInputBar({ disabled, placeholder, onSend }: Props) {
         spellCheck={false}
       />
       <button
-        className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
+        className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-30 disabled:cursor-not-allowed text-white transition-colors"
         onClick={handleSend}
         disabled={disabled || !text.trim()}
         title="Send (Enter)"

@@ -4,6 +4,7 @@ import * as commands from "../../lib/commands";
 import { useAppStore } from "../../stores/appStore";
 import type { AgentMessage } from "../../lib/types";
 import { AgentToolbar } from "./AgentToolbar";
+import { AgentControls } from "./AgentControls";
 import { MessageList } from "./MessageList";
 import { AgentInputBar } from "./AgentInputBar";
 import { PermissionDialog } from "./PermissionDialog";
@@ -40,6 +41,28 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
   const activeToolsRef = useRef<Map<string, { name: string; input: unknown }>>(new Map());
   // Track the last assistant message uuid to deduplicate
   const lastAssistantUuidRef = useRef<string | null>(null);
+  // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt)
+  const tabRenamedRef = useRef(false);
+
+  /** Rename this tab by looking up the owning worktree. */
+  const renameThisTab = (label: string) => {
+    const store = useAppStore.getState();
+    for (const [wtId, tabs] of Object.entries(store.tabsByWorktree)) {
+      if (tabs.some((t) => t.id === sessionId)) {
+        store.renameTab(wtId, sessionId, label);
+        break;
+      }
+    }
+  };
+
+  /** Immediately rename tab to a truncated version of the prompt. */
+  const applyQuickTitle = (prompt: string) => {
+    if (tabRenamedRef.current) return;
+    tabRenamedRef.current = true;
+    const words = prompt.trim().split(/\s+/).slice(0, 6).join(" ");
+    const label = words.length > 30 ? words.slice(0, 30) + "..." : words;
+    if (label) renameThisTab(label);
+  };
 
   // Subscribe to agent events from the Rust backend
   useEffect(() => {
@@ -62,6 +85,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
   useEffect(() => {
     if (!initialPrompt || startedRef.current) return;
     startedRef.current = true;
+
+    // Immediately rename tab to a truncated prompt (Haiku title will refine later)
+    applyQuickTitle(initialPrompt);
 
     // Add user message immediately
     appendMessage(sessionId, {
@@ -250,11 +276,20 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
         setStatus(sessionId, "error");
         break;
       }
+
+      case "title": {
+        const title = msg.title as string;
+        if (title) renameThisTab(title);
+        break;
+      }
     }
   }
 
   // Send a follow-up message
   const handleSend = (text: string) => {
+    // Rename tab from first typed message (when no initialPrompt was provided)
+    applyQuickTitle(text);
+
     appendMessage(sessionId, {
       id: nextMsgId(),
       type: "user",
@@ -363,14 +398,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
 
   return (
     <div className="flex flex-col h-full bg-bg-primary">
-      <AgentToolbar
-        session={session}
-        onModelChange={handleModelChange}
-        onEffortChange={handleEffortChange}
-        onPermissionModeChange={handlePermissionModeChange}
-        onInterrupt={handleInterrupt}
-      />
-
       <MessageList
         messages={session.messages}
         streamingText={session.streamingText}
@@ -394,6 +421,19 @@ export function AgentPanel({ sessionId, cwd, initialPrompt }: Props) {
         />
       )}
 
+      {/* Bottom controls: status/cost bar, model/effort/plan, then input */}
+      <AgentToolbar
+        session={session}
+        onInterrupt={handleInterrupt}
+      />
+      <AgentControls
+        model={session.model}
+        effort={session.effort}
+        permissionMode={session.permissionMode}
+        onModelChange={handleModelChange}
+        onEffortChange={handleEffortChange}
+        onPermissionModeChange={handlePermissionModeChange}
+      />
       <AgentInputBar
         disabled={isInputDisabled}
         placeholder={

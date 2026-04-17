@@ -22,7 +22,7 @@ function App() {
 
   // Memoize terminal tab list — only recompute when tabs/active/selection change
   const terminalTabs = useMemo(() => {
-    const result: Array<{ id: string; cwd: string; command?: string; visible: boolean; isClaudeTab: boolean }> = [];
+    const result: Array<{ id: string; cwd: string; command?: string; visible: boolean }> = [];
     for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
       const activeTab = activeTabByWorktree[wtId];
       for (const tab of tabs) {
@@ -32,7 +32,6 @@ function App() {
           cwd: tab.cwd,
           command: tab.command,
           visible: wtId === selectedWorktreeId && tab.id === activeTab,
-          isClaudeTab: tab.type === "claude",
         });
       }
     }
@@ -89,8 +88,8 @@ function App() {
   //      notification gating (appStore.setClaudeStatus) knows whether the
   //      user can actually see the visible tab.
   //   2. When focus is regained, clear the idle indicator on the currently
-  //      visible Claude tab (the tab the user can now actually see). Other
-  //      idle Claude tabs stay lit so the user can tell which specific tab
+  //      visible agent tab (the tab the user can now actually see). Other
+  //      idle agent tabs stay lit so the user can tell which specific tab
   //      needs attention.
   useEffect(() => {
     // Seed the shared flag with the real window state on mount, in case
@@ -112,7 +111,7 @@ function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  // Keep the dock/taskbar badge in sync with the number of idle Claude tabs.
+  // Keep the dock/taskbar badge in sync with the number of idle agent tabs.
   // macOS: shows a number badge on the dock icon.
   // Linux: depends on desktop env (Unity, GNOME with extension).
   // Windows: not supported by set_badge_count (no-op).
@@ -235,7 +234,7 @@ function App() {
                 pointerEvents: t.visible ? "auto" : "none",
               }}
             >
-              <TerminalPanel sessionId={t.id} cwd={t.cwd} command={t.command} fontSize={termFontSize} fontFamily={termFontFamily} keepAlive isClaudeTab={t.isClaudeTab} />
+              <TerminalPanel sessionId={t.id} cwd={t.cwd} command={t.command} fontSize={termFontSize} fontFamily={termFontFamily} keepAlive />
             </div>
           ))}
           {agentTabs.map((t) => (
