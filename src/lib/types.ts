@@ -62,7 +62,6 @@ export interface AppSettings {
   agent_default_model: string;
   agent_default_effort: EffortLevel;
   agent_default_extended_context: boolean;
-  agent_node_path: string;
   agent_api_key: string;
   mcp_servers: Record<string, McpServerEntry>;
 }
@@ -144,6 +143,9 @@ export interface AgentSessionState {
   extendedContext: boolean;
   permissionMode: AgentPermissionMode;
   cost: AgentCost | null;
+  /** Token usage for the most recent completed turn only (not cumulative).
+   *  Used to display current context size (input + cache read + cache write). */
+  lastTurnCost: AgentCost | null;
   sdkSessionId: string | null;
   pendingPermission: AgentPendingPermission | null;
   pendingQuestion: AgentPendingQuestion | null;

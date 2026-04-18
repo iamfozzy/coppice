@@ -5,6 +5,67 @@ import { useAppStore } from "../../stores/appStore";
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20 MB
 
+/** Read a File straight to base64 without any processing. */
+function readAsBase64(file: File): Promise<ImageAttachment | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64 = result.split(",")[1];
+      if (!base64) { resolve(null); return; }
+      resolve({
+        data: base64,
+        mediaType: file.type as ImageAttachment["mediaType"],
+        fileName: file.name,
+      });
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Downscale an image so the long edge is at most `maxDim` pixels, then encode
+ * as base64. Preserves the original media type (JPEG/PNG/WebP) where
+ * possible. Returns null on any failure so callers can fall back.
+ */
+function downscaleImage(file: File, maxDim: number): Promise<ImageAttachment | null> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const longest = Math.max(img.width, img.height);
+        const scale = longest > maxDim ? maxDim / longest : 1;
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { URL.revokeObjectURL(url); reject(new Error("no 2d ctx")); return; }
+        ctx.drawImage(img, 0, 0, w, h);
+        const mediaType = file.type === "image/png" ? "image/png" : "image/jpeg";
+        const quality = mediaType === "image/jpeg" ? 0.85 : undefined;
+        const dataUrl = canvas.toDataURL(mediaType, quality);
+        URL.revokeObjectURL(url);
+        const base64 = dataUrl.split(",")[1];
+        if (!base64) { resolve(null); return; }
+        resolve({
+          data: base64,
+          mediaType: mediaType as ImageAttachment["mediaType"],
+          fileName: file.name,
+        });
+      } catch (e) {
+        URL.revokeObjectURL(url);
+        reject(e);
+      }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image load failed")); };
+    img.src = url;
+  });
+}
+
 interface Props {
   sessionId: string;
   disabled: boolean;
@@ -79,26 +140,18 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
     setActiveIndex(0);
   }, [query]);
 
-  /** Read a File as a base64-encoded ImageAttachment. */
+  /**
+   * Read a File as a base64-encoded ImageAttachment. Downscale oversized
+   * images to cap token cost — Anthropic's vision pipeline gains nothing
+   * above ~1568px on the long edge, and a full-resolution screenshot
+   * otherwise replays on every subsequent turn at full cost.
+   */
   const fileToAttachment = useCallback((file: File): Promise<ImageAttachment | null> => {
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) return Promise.resolve(null);
     if (file.size > MAX_IMAGE_SIZE) return Promise.resolve(null);
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        // Strip the data:...;base64, prefix
-        const base64 = result.split(",")[1];
-        if (!base64) { resolve(null); return; }
-        resolve({
-          data: base64,
-          mediaType: file.type as ImageAttachment["mediaType"],
-          fileName: file.name,
-        });
-      };
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(file);
-    });
+    // GIFs are animated — downscaling would flatten them; pass through as-is.
+    if (file.type === "image/gif") return readAsBase64(file);
+    return downscaleImage(file, 1568).catch(() => readAsBase64(file));
   }, []);
 
   /** Process dropped/pasted/selected files into image attachments. */

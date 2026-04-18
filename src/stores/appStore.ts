@@ -275,8 +275,8 @@ interface AppState {
   setAgentExtendedContext: (tabId: string, enabled: boolean) => void;
   setAgentConciseMode: (tabId: string, enabled: boolean) => void;
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
-  setAgentCost: (tabId: string, cost: AgentCost) => void;
   replaceAgentCost: (tabId: string, cost: AgentCost) => void;
+  setAgentLastTurnCost: (tabId: string, cost: AgentCost) => void;
   setAgentSdkSessionId: (tabId: string, id: string | null) => void;
   setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
   setAgentPendingQuestion: (tabId: string, pending: AgentPendingQuestion | null) => void;
@@ -625,6 +625,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           conciseMode: cached.concise_mode ?? false,
           permissionMode: cached.permission_mode as AgentPermissionMode,
           cost,
+          lastTurnCost: null,
           sdkSessionId: cached.sdk_session_id,
           pendingPermission: null,
           pendingQuestion: null,
@@ -844,6 +845,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       permissionMode: "bypassPermissions",
       conciseMode: true,
       cost: null,
+      lastTurnCost: null,
       sdkSessionId: null,
       pendingPermission: null,
       pendingQuestion: null,
@@ -1025,30 +1027,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  setAgentCost: (tabId, cost) => {
-    set((s) => {
-      const session = s.agentSessionByTab[tabId];
-      if (!session) return s;
-      const prev = session.cost;
-      const accumulated = prev
-        ? {
-            inputTokens: prev.inputTokens + cost.inputTokens,
-            outputTokens: prev.outputTokens + cost.outputTokens,
-            cacheReadTokens: prev.cacheReadTokens + cost.cacheReadTokens,
-            cacheWriteTokens: prev.cacheWriteTokens + cost.cacheWriteTokens,
-            totalCostUsd: prev.totalCostUsd + cost.totalCostUsd,
-          }
-        : cost;
-      return {
-        agentSessionByTab: {
-          ...s.agentSessionByTab,
-          [tabId]: { ...session, cost: accumulated },
-        },
-      };
-    });
-    persistAgentTabDebounced(tabId);
-  },
-
   replaceAgentCost: (tabId, cost) => {
     set((s) => {
       const session = s.agentSessionByTab[tabId];
@@ -1061,6 +1039,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     });
     persistAgentTabDebounced(tabId);
+  },
+
+  setAgentLastTurnCost: (tabId, cost) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, lastTurnCost: cost },
+        },
+      };
+    });
   },
 
   setAgentSdkSessionId: (tabId, id) => {
