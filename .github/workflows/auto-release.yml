@@ -63,8 +63,8 @@ jobs:
           # Update Cargo.toml
           sed -i 's/^version = ".*"/version = "'"$NEW_VERSION"'"/' src-tauri/Cargo.toml
 
-          # Update lock files
-          npm install --package-lock-only
+          # Update lock files (--ignore-scripts: skip postinstall which needs agent-bridge built)
+          npm install --package-lock-only --ignore-scripts
           cd src-tauri && cargo generate-lockfile && cd ..
 
       - name: Commit, tag, and push
