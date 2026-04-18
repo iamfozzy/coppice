@@ -94,6 +94,7 @@ impl Database {
         let _ = conn.execute("ALTER TABLE projects ADD COLUMN pr_create_skill TEXT NOT NULL DEFAULT ''", []);
         let _ = conn.execute("ALTER TABLE projects ADD COLUMN claude_command TEXT NOT NULL DEFAULT ''", []);
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN extended_context INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN concise_mode INTEGER NOT NULL DEFAULT 0", []);
 
         Ok(())
     }
@@ -287,8 +288,8 @@ impl Database {
     pub fn save_agent_tab_cache(&self, tab: &AgentTabCache) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO agent_tab_cache (tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT OR REPLACE INTO agent_tab_cache (tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 tab.tab_id,
                 tab.worktree_id,
@@ -303,6 +304,7 @@ impl Database {
                 tab.messages_json,
                 tab.tab_order,
                 tab.extended_context,
+                tab.concise_mode,
                 tab.created_at,
             ],
         )?;
@@ -312,7 +314,7 @@ impl Database {
     pub fn list_agent_tab_cache(&self, worktree_id: &str) -> Result<Vec<AgentTabCache>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, created_at
+            "SELECT tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, created_at
              FROM agent_tab_cache WHERE worktree_id=?1 ORDER BY tab_order ASC"
         )?;
 
@@ -331,7 +333,8 @@ impl Database {
                 messages_json: row.get(10)?,
                 tab_order: row.get(11)?,
                 extended_context: row.get(12)?,
-                created_at: row.get(13)?,
+                concise_mode: row.get(13)?,
+                created_at: row.get(14)?,
             })
         })?;
 

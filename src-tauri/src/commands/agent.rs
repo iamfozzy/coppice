@@ -55,6 +55,7 @@ pub fn agent_start(
     model: Option<String>,
     effort: Option<String>,
     permission_mode: Option<String>,
+    concise_mode: Option<bool>,
     allowed_tools: Option<Vec<String>>,
     max_turns: Option<u32>,
     max_budget_usd: Option<f64>,
@@ -79,6 +80,9 @@ pub fn agent_start(
             "permissionMode".into(),
             serde_json::Value::String(pm.clone()),
         );
+    }
+    if let Some(cm) = concise_mode {
+        options.insert("conciseMode".into(), serde_json::Value::Bool(cm));
     }
     if let Some(tools) = &allowed_tools {
         let arr: Vec<serde_json::Value> = tools

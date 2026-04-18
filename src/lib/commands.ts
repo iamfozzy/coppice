@@ -280,6 +280,7 @@ export interface AgentStartOptions {
   model?: string;
   effort?: string;
   permissionMode?: string;
+  conciseMode?: boolean;
   allowedTools?: string[];
   maxTurns?: number;
   maxBudgetUsd?: number;
@@ -300,6 +301,7 @@ export async function agentStart(
     model: options?.model,
     effort: options?.effort,
     permissionMode: options?.permissionMode,
+    conciseMode: options?.conciseMode,
     allowedTools: options?.allowedTools,
     maxTurns: options?.maxTurns,
     maxBudgetUsd: options?.maxBudgetUsd,
@@ -393,6 +395,7 @@ export interface AgentTabCache {
   messages_json: string;
   tab_order: number;
   extended_context: boolean;
+  concise_mode: boolean;
   created_at: string;
 }
 

@@ -1,4 +1,5 @@
 import type { AgentSessionState } from "../../lib/types";
+import { useAppStore } from "../../stores/appStore";
 import { AnimatedRobotIcon, AnimatedToolIcon, useRotatingThinkingPhrase } from "./AgentStatusIcons";
 
 interface Props {
@@ -10,6 +11,7 @@ export function AgentToolbar({
   session,
   onInterrupt,
 }: Props) {
+  const hasApiKey = useAppStore((s) => !!s.appSettings?.agent_api_key);
   const isWorking = session.status === "thinking" || session.status === "tool_use";
   const waitingOnPlanApproval =
     session.status === "waiting_permission" &&
@@ -57,9 +59,13 @@ export function AgentToolbar({
 
       {/* Cost display */}
       {session.cost && (
-        <span className="text-text-tertiary font-mono">
-          ${session.cost.totalCostUsd.toFixed(3)}
-          <span className="mx-1 opacity-50">|</span>
+        <span className="text-text-tertiary font-mono" title={hasApiKey ? "Estimated API cost" : "Token usage (subscription — no per-token charge)"}>
+          {hasApiKey && (
+            <>
+              ~${session.cost.totalCostUsd.toFixed(3)}
+              <span className="mx-1 opacity-50">|</span>
+            </>
+          )}
           {formatTokens(session.cost.inputTokens)} in / {formatTokens(session.cost.outputTokens)} out
         </span>
       )}

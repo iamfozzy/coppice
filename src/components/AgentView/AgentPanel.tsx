@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as commands from "../../lib/commands";
 import { useAppStore } from "../../stores/appStore";
-import type { AgentMessage, EffortLevel, SlashCommand } from "../../lib/types";
+import type { AgentMessage, AgentSessionState, EffortLevel, SlashCommand } from "../../lib/types";
 import { AgentToolbar } from "./AgentToolbar";
 import { AgentControls } from "./AgentControls";
 import { MessageList } from "./MessageList";
@@ -46,6 +46,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const setModel = useAppStore((s) => s.setAgentModel);
   const setEffort = useAppStore((s) => s.setAgentEffort);
   const setPermissionMode = useAppStore((s) => s.setAgentPermissionMode);
+  const setConciseMode = useAppStore((s) => s.setAgentConciseMode);
   const setSlashCommands = useAppStore((s) => s.setAgentSlashCommands);
   const pushQueuedMessage = useAppStore((s) => s.pushAgentQueuedMessage);
   const shiftQueuedMessage = useAppStore((s) => s.shiftQueuedMessage);
@@ -84,6 +85,56 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     if (label) renameThisTab(label);
   };
 
+  /**
+   * Build a compact context summary from the conversation history.
+   * Used when resuming a session that has grown too large — starts a fresh
+   * SDK session with a summary prefix instead of replaying the full history.
+   */
+  const buildSessionSummary = (session: AgentSessionState, newPrompt: string): string => {
+    const parts: string[] = [];
+
+    // Extract user requests and assistant responses (skip tool call/result noise)
+    const userMsgs = session.messages.filter((m) => m.type === "user" && !m.isQueued);
+    const assistantMsgs = session.messages.filter((m) => m.type === "assistant" && m.content);
+
+    // Summarize the conversation as prior context
+    parts.push("<prior_session_context>");
+    parts.push("This is a continuation of a previous session. Here is a summary of what was discussed and accomplished:\n");
+
+    // Include all user requests (usually short)
+    for (const msg of userMsgs) {
+      parts.push(`User request: ${msg.content}`);
+    }
+
+    // Include the last few assistant responses (most relevant context)
+    const recentAssistant = assistantMsgs.slice(-3);
+    if (recentAssistant.length > 0) {
+      parts.push("\nRecent assistant responses:");
+      for (const msg of recentAssistant) {
+        // Truncate long assistant responses
+        const text = msg.content!.length > 1000
+          ? msg.content!.slice(0, 1000) + "... [truncated]"
+          : msg.content!;
+        parts.push(text);
+      }
+    }
+
+    // Note any errors that occurred
+    const errors = session.messages.filter((m) => m.type === "error");
+    if (errors.length > 0) {
+      const lastError = errors[errors.length - 1];
+      parts.push(`\nLast error: ${lastError.content}`);
+    }
+
+    parts.push("</prior_session_context>\n");
+    parts.push(`New request: ${newPrompt}`);
+
+    return parts.join("\n");
+  };
+
+  /** Token threshold above which we start a fresh session with summary instead of resuming. */
+  const FRESH_SESSION_TOKEN_THRESHOLD = 100_000;
+
   /** Start or resume an agent session with the given prompt text. */
   const dispatchToAgent = (text: string) => {
     const store = useAppStore.getState();
@@ -94,24 +145,58 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     setStatus(sessionId, "thinking");
 
     if (currentSession?.sdkSessionId) {
-      // Resume the existing session
-      commands
-        .agentStart(sessionId, cwd, text, {
-          model: currentSession.model || undefined,
-          effort: currentSession.effort || undefined,
-          permissionMode: currentSession.permissionMode || undefined,
-          resume: currentSession.sdkSessionId,
-          apiKey: appSettings?.agent_api_key || undefined,
-        })
-        .catch((err) => {
-          appendMessage(sessionId, {
-            id: nextMsgId(),
-            type: "error",
-            content: String(err),
-            timestamp: Date.now(),
-          });
-          setStatus(sessionId, "error");
+      const inputTokens = currentSession.cost?.inputTokens ?? 0;
+
+      if (inputTokens > FRESH_SESSION_TOKEN_THRESHOLD) {
+        // Session is large — start fresh with a context summary to save tokens.
+        // Clear the SDK session ID so subsequent sends also start fresh.
+        const setSdkId = useAppStore.getState().setAgentSdkSessionId;
+        setSdkId(sessionId, null);
+        appendMessage(sessionId, {
+          id: nextMsgId(),
+          type: "system",
+          content: `Session compacted (${Math.round(inputTokens / 1000)}K input tokens) — starting fresh with context summary.`,
+          timestamp: Date.now(),
         });
+        const summaryPrompt = buildSessionSummary(currentSession, text);
+        commands
+          .agentStart(sessionId, cwd, summaryPrompt, {
+            model: currentSession.model || undefined,
+            effort: currentSession.effort || undefined,
+            permissionMode: currentSession.permissionMode || undefined,
+            conciseMode: currentSession.conciseMode || undefined,
+            apiKey: appSettings?.agent_api_key || undefined,
+          })
+          .catch((err) => {
+            appendMessage(sessionId, {
+              id: nextMsgId(),
+              type: "error",
+              content: String(err),
+              timestamp: Date.now(),
+            });
+            setStatus(sessionId, "error");
+          });
+      } else {
+        // Resume the existing session normally
+        commands
+          .agentStart(sessionId, cwd, text, {
+            model: currentSession.model || undefined,
+            effort: currentSession.effort || undefined,
+            permissionMode: currentSession.permissionMode || undefined,
+            conciseMode: currentSession.conciseMode || undefined,
+            resume: currentSession.sdkSessionId,
+            apiKey: appSettings?.agent_api_key || undefined,
+          })
+          .catch((err) => {
+            appendMessage(sessionId, {
+              id: nextMsgId(),
+              type: "error",
+              content: String(err),
+              timestamp: Date.now(),
+            });
+            setStatus(sessionId, "error");
+          });
+      }
     } else {
       // Fresh start
       commands
@@ -119,6 +204,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           model: currentSession?.model || undefined,
           effort: currentSession?.effort || undefined,
           permissionMode: currentSession?.permissionMode || undefined,
+          conciseMode: currentSession?.conciseMode || undefined,
           apiKey: appSettings?.agent_api_key || undefined,
         })
         .catch((err) => {
@@ -172,6 +258,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         model: session?.model || undefined,
         effort: session?.effort || undefined,
         permissionMode: session?.permissionMode || undefined,
+        conciseMode: session?.conciseMode || undefined,
         apiKey: appSettings?.agent_api_key || undefined,
       })
       .catch((err) => {
@@ -553,6 +640,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     commands.agentSetPermissionMode(sessionId, mode).catch(() => {});
   };
 
+  const handleConciseModeChange = (enabled: boolean) => {
+    setConciseMode(sessionId, enabled);
+  };
+
   const handleInterrupt = () => {
     // Stop sends the interrupt signal. The bridge will emit a `result` event
     // which will set status to "done" and auto-dispatch queued messages.
@@ -613,9 +704,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         model={session.model}
         effort={session.effort}
         permissionMode={session.permissionMode}
+        conciseMode={session.conciseMode}
         onModelChange={handleModelChange}
         onEffortChange={handleEffortChange}
         onPermissionModeChange={handlePermissionModeChange}
+        onConciseModeChange={handleConciseModeChange}
       />
       <AgentInputBar
         disabled={isInputDisabled}

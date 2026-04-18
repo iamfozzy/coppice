@@ -137,6 +137,7 @@ export interface AgentSessionState {
   pendingPermission: AgentPendingPermission | null;
   pendingQuestion: AgentPendingQuestion | null;
   streamingText: string;
+  conciseMode: boolean;
   slashCommands: SlashCommand[];
   queuedMessages: string[];
 }

@@ -95,6 +95,7 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
       messages_json: JSON.stringify(session.messages),
       tab_order: tabOrder,
       extended_context: session.extendedContext,
+      concise_mode: session.conciseMode,
       created_at: new Date().toISOString(),
     };
     commands.saveAgentTabCache(cache).catch(() => {});
@@ -140,6 +141,7 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         messages_json: JSON.stringify(session.messages),
         tab_order: i,
         extended_context: session.extendedContext,
+        concise_mode: session.conciseMode,
         created_at: new Date().toISOString(),
       };
       saves.push(commands.saveAgentTabCache(cache));
@@ -268,10 +270,11 @@ interface AppState {
   setAgentModel: (tabId: string, model: string) => void;
   setAgentEffort: (tabId: string, effort: EffortLevel) => void;
   setAgentExtendedContext: (tabId: string, enabled: boolean) => void;
+  setAgentConciseMode: (tabId: string, enabled: boolean) => void;
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
   setAgentCost: (tabId: string, cost: AgentCost) => void;
   replaceAgentCost: (tabId: string, cost: AgentCost) => void;
-  setAgentSdkSessionId: (tabId: string, id: string) => void;
+  setAgentSdkSessionId: (tabId: string, id: string | null) => void;
   setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
   setAgentPendingQuestion: (tabId: string, pending: AgentPendingQuestion | null) => void;
   setAgentSlashCommands: (tabId: string, commands: SlashCommand[]) => void;
@@ -611,6 +614,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           model: cached.model,
           effort: cached.effort as EffortLevel,
           extendedContext: cached.extended_context,
+          conciseMode: cached.concise_mode ?? false,
           permissionMode: cached.permission_mode as AgentPermissionMode,
           cost,
           sdkSessionId: cached.sdk_session_id,
@@ -830,6 +834,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       effort: s.appSettings?.agent_default_effort || "high",
       extendedContext: s.appSettings?.agent_default_extended_context ?? false,
       permissionMode: "bypassPermissions",
+      conciseMode: true,
       cost: null,
       sdkSessionId: null,
       pendingPermission: null,
@@ -981,6 +986,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         agentSessionByTab: {
           ...s.agentSessionByTab,
           [tabId]: { ...session, extendedContext: enabled },
+        },
+      };
+    });
+  },
+
+  setAgentConciseMode: (tabId, enabled) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, conciseMode: enabled },
         },
       };
     });

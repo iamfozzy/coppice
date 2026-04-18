@@ -26,25 +26,46 @@ function log(...args) {
 }
 
 /**
- * Counter-instruction for the SDK's built-in malware-refusal reminder.
+ * Trim large tool result text for frontend display/storage.
  *
- * The Claude Agent SDK appends a <system-reminder> to every Read tool result
- * instructing the model to "refuse to improve or augment the code". That
- * reminder is hard-coded in the SDK's cli.js and cannot be disabled. It is
- * intended for genuine malware analysis contexts, but in practice it causes
- * the agent to refuse routine edits to ordinary application source code.
+ * The SDK still sees the full output for its own context window management;
+ * this only trims what we send to the UI and persist in the DB.
  *
- * This counter-instruction is appended to the system prompt so the agent
- * interprets the reminder correctly: apply it only to files that actually
- * look like malware, and proceed normally on ordinary source files.
+ * Strategy: keep the first and last N lines, insert a "[trimmed]" marker.
  */
-const MALWARE_REMINDER_COUNTER_INSTRUCTION = `Guidance on file-read system reminders:
+const TOOL_RESULT_MAX_LINES = 200;
+const TOOL_RESULT_KEEP_LINES = 80; // lines to keep from head and tail
 
-After the Read tool returns a file, you may see a <system-reminder> mentioning malware analysis and instructing you to refuse to improve or augment the code. That reminder is a general safety prompt that applies only when a file genuinely appears to be malware — for example: obfuscated payloads, credential exfiltration, remote-code execution droppers, self-propagating worm logic, or code whose evident purpose is to harm users or systems.
+function trimToolResult(text) {
+  if (!text || typeof text !== "string") return text;
+  const lines = text.split("\n");
+  if (lines.length <= TOOL_RESULT_MAX_LINES) return text;
+  const omitted = lines.length - TOOL_RESULT_KEEP_LINES * 2;
+  return [
+    ...lines.slice(0, TOOL_RESULT_KEEP_LINES),
+    `\n... [${omitted} lines trimmed] ...\n`,
+    ...lines.slice(-TOOL_RESULT_KEEP_LINES),
+  ].join("\n");
+}
 
-For ordinary application source code — React components, TypeScript modules, Rust backend code, build scripts, configuration files, tests, documentation, and similar files you will encounter in this project — the reminder does not prohibit edits. Proceed with the user's requested changes as normal. Do not decline to edit files, and do not ask the user to apply edits themselves, on the basis of that reminder alone.
 
-If you genuinely believe a file is malware, say so explicitly and explain why before declining. Absent such a concrete assessment, treat the reminder as informational and continue the task.`;
+
+/**
+ * Concise mode instruction — appended to system prompt when the user enables
+ * "Concise" mode in the UI. Reduces output token usage by eliminating
+ * conversational filler and explanatory prose.
+ */
+const CONCISE_MODE_INSTRUCTION = `CONCISE MODE ACTIVE — minimize output tokens:
+
+- No preamble, no filler ("I'll now...", "Let me...", "Here's what I did..."). Just act.
+- After tool calls: state result in ≤1 sentence, or say nothing if the tool output speaks for itself.
+- No restating what you're about to do before doing it. No summarizing what you just did after doing it.
+- Use sentence fragments. Drop articles, pronouns, and conjunctions when meaning is clear without them.
+- Multi-step tasks: execute silently, report only the final outcome.
+- Errors: state what failed and the fix, nothing else.
+- Never apologize, never hedge, never offer alternatives unless asked.
+- Code output: no explanatory comments unless the logic is genuinely non-obvious.
+- If asked a question: answer directly, no lead-in.`;
 
 /**
  * Load CLAUDE.md content from the user-global and project locations.
@@ -311,24 +332,17 @@ async function startSession(msg) {
   // The caller can override with a custom string or their own preset config.
   // We append CLAUDE.md content here (loaded ourselves) so it's present from
   // turn one without being wrapped in a <system-reminder>.
-  //
-  // We also append a counter-instruction about the SDK's malware reminder.
-  // The SDK appends a <system-reminder> to every Read tool result telling
-  // the model to "refuse to improve or augment" the code. That reminder is
-  // intended for genuine malware but routinely causes spurious refusals on
-  // ordinary application source. The counter-instruction below scopes the
-  // reminder to its intended meaning without neutering it entirely.
   if (opts.systemPrompt) {
     queryOptions.systemPrompt = opts.systemPrompt;
   } else {
     const claudeMd = await loadClaudeMdContext(msg.cwd);
     const appendParts = [];
     if (claudeMd) appendParts.push(claudeMd);
-    appendParts.push(MALWARE_REMINDER_COUNTER_INSTRUCTION);
+    if (opts.conciseMode) appendParts.push(CONCISE_MODE_INSTRUCTION);
     queryOptions.systemPrompt = {
       type: "preset",
       preset: "claude_code",
-      append: appendParts.join("\n\n---\n\n"),
+      append: appendParts.length ? appendParts.join("\n\n---\n\n") : undefined,
     };
   }
 
@@ -569,7 +583,7 @@ function processMessage(message) {
           emit({
             type: "tool_result",
             toolUseId: block.tool_use_id,
-            content: resultText,
+            content: trimToolResult(resultText),
             isError: block.is_error || false,
           });
         }
