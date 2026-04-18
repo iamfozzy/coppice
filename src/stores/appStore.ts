@@ -270,6 +270,7 @@ interface AppState {
   setAgentExtendedContext: (tabId: string, enabled: boolean) => void;
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
   setAgentCost: (tabId: string, cost: AgentCost) => void;
+  replaceAgentCost: (tabId: string, cost: AgentCost) => void;
   setAgentSdkSessionId: (tabId: string, id: string) => void;
   setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
   setAgentPendingQuestion: (tabId: string, pending: AgentPendingQuestion | null) => void;
@@ -1016,6 +1017,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         agentSessionByTab: {
           ...s.agentSessionByTab,
           [tabId]: { ...session, cost: accumulated },
+        },
+      };
+    });
+    persistAgentTabDebounced(tabId);
+  },
+
+  replaceAgentCost: (tabId, cost) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, cost },
         },
       };
     });

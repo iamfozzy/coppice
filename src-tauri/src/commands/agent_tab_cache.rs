@@ -33,3 +33,11 @@ pub fn delete_agent_tab_cache_for_worktree(
 ) -> Result<(), String> {
     db.delete_agent_tab_cache_for_worktree(&worktree_id).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn purge_old_agent_tab_cache(
+    db: State<'_, Database>,
+    max_age_days: u32,
+) -> Result<usize, String> {
+    db.purge_old_agent_tab_cache(max_age_days).map_err(|e| e.to_string())
+}

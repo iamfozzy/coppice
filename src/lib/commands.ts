@@ -279,7 +279,6 @@ export async function githubAuthLogout(): Promise<void> {
 export interface AgentStartOptions {
   model?: string;
   effort?: string;
-  extendedContext?: boolean;
   permissionMode?: string;
   allowedTools?: string[];
   maxTurns?: number;
@@ -300,7 +299,6 @@ export async function agentStart(
     prompt,
     model: options?.model,
     effort: options?.effort,
-    extendedContext: options?.extendedContext,
     permissionMode: options?.permissionMode,
     allowedTools: options?.allowedTools,
     maxTurns: options?.maxTurns,

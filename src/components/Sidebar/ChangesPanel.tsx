@@ -293,9 +293,18 @@ export const ChangesPanel = memo(function ChangesPanel() {
             branch={worktree.branch}
             worktreePath={worktree.path}
             onFixWithClaude={(context) => {
-              sendToAgent(
-                `The CI checks have failed. Here are the logs:\n\n${context.substring(0, 5000)}\n\nPlease analyze and fix the failures.`
-              );
+              if (typeof context === "object" && "prNumber" in context) {
+                const checkList = context.failedChecks.length > 0
+                  ? `Failed checks: ${context.failedChecks.join(", ")}`
+                  : "";
+                sendToAgent(
+                  `The CI checks have failed for PR #${context.prNumber}. ${checkList}\n\nPlease fetch the failed CI logs using \`gh run list\` and \`gh run view\`, analyze the failures, and fix them.`
+                );
+              } else {
+                sendToAgent(
+                  `The CI checks have failed. Here are the logs:\n\n${context.substring(0, 5000)}\n\nPlease analyze and fix the failures.`
+                );
+              }
             }}
             onOpenFile={(file) => openDiffTab(worktree.id, file, worktree.path, "pr", baseBranch)}
           />

@@ -332,10 +332,6 @@ async function startSession(msg) {
     };
   }
 
-  if (opts.extendedContext) {
-    queryOptions.betas = [...(queryOptions.betas || []), "context-1m-2025-08-07"];
-  }
-
   if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
     queryOptions.mcpServers = opts.mcpServers;
   }
@@ -518,6 +514,20 @@ function processMessage(message) {
         uuid: message.uuid,
         content: blocks,
       });
+
+      // Emit per-turn usage if available so the UI can show running cost
+      const usage = message.message?.usage;
+      if (usage) {
+        emit({
+          type: "turn_cost",
+          cost: {
+            inputTokens: usage.input_tokens || 0,
+            outputTokens: usage.output_tokens || 0,
+            cacheReadTokens: usage.cache_read_input_tokens || 0,
+            cacheWriteTokens: usage.cache_creation_input_tokens || 0,
+          },
+        });
+      }
       break;
     }
 

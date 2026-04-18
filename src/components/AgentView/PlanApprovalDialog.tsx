@@ -15,8 +15,7 @@ interface Props {
  */
 export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDeny }: Props) {
   const plan = useMemo(() => extractPlanDraft(pending), [pending]);
-  const [draftPlan, setDraftPlan] = useState(plan.planText);
-  const canEdit = plan.canEdit;
+  const draftPlan = plan.planText;
   const [feedback, setFeedback] = useState("");
 
   const handleApprove = () => {
@@ -55,19 +54,6 @@ export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDen
               <p className="text-[12px] text-text-tertiary">No plan text found in payload. Use JSON fallback below.</p>
             )}
           </div>
-        </div>
-
-        <div>
-          <label className="block text-[11px] text-text-secondary mb-1">
-            Editable plan{!canEdit && <span className="ml-1 text-text-tertiary">(read-only — unknown payload structure)</span>}
-          </label>
-          <textarea
-            value={draftPlan}
-            onChange={(e) => setDraftPlan(e.target.value)}
-            readOnly={!canEdit}
-            placeholder="Edit the plan before approving..."
-            className={`w-full min-h-[130px] max-h-[240px] resize-y rounded-md border border-border-primary bg-bg-tertiary px-2.5 py-2 text-[12px] text-text-primary font-mono leading-relaxed${!canEdit ? " opacity-70 cursor-not-allowed" : ""}`}
-          />
         </div>
 
         <details className="rounded-md border border-border-primary bg-bg-tertiary/40">

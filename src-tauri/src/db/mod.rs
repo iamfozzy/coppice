@@ -349,4 +349,15 @@ impl Database {
         conn.execute("DELETE FROM agent_tab_cache WHERE worktree_id=?1", params![worktree_id])?;
         Ok(())
     }
+
+    /// Delete agent tab cache entries older than the given number of days.
+    /// Returns the number of rows deleted.
+    pub fn purge_old_agent_tab_cache(&self, max_age_days: u32) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let deleted = conn.execute(
+            "DELETE FROM agent_tab_cache WHERE created_at < datetime('now', '-' || ?1 || ' days')",
+            params![max_age_days],
+        )?;
+        Ok(deleted)
+    }
 }
