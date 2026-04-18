@@ -23,16 +23,6 @@ function nextMsgId() {
   return `msg-${++msgIdCounter}-${Date.now()}`;
 }
 
-/** Rough per-million-token pricing by model family for live cost estimation. */
-function estimateTurnCostUsd(model: string, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number): number {
-  // Pricing: [inputPerMTok, outputPerMTok, cacheReadPerMTok, cacheWritePerMTok]
-  let pricing = [15, 75, 1.5, 18.75]; // opus default
-  if (model.includes("sonnet")) pricing = [3, 15, 0.3, 3.75];
-  else if (model.includes("haiku")) pricing = [0.8, 4, 0.08, 1];
-  const [inp, out, cr, cw] = pricing;
-  return (inputTokens * inp + outputTokens * out + cacheReadTokens * cr + cacheWriteTokens * cw) / 1_000_000;
-}
-
 export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const session = useAppStore((s) => s.agentSessionByTab[sessionId]);
   const appendMessage = useAppStore((s) => s.appendAgentMessage);
@@ -58,7 +48,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   // Track the last assistant message uuid to deduplicate
   const lastAssistantUuidRef = useRef<string | null>(null);
   // Snapshot of cumulative cost before the current query started, so the
-  // authoritative `result` event can replace turn_cost estimates cleanly.
+  // authoritative `result` event can add onto the true pre-query total.
   const preQueryCostRef = useRef(session?.cost ?? null);
   // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt).
   // If the tab was restored from cache (has existing messages), treat it as already renamed.
@@ -138,15 +128,22 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const dispatchToAgent = (text: string, images?: ImageAttachment[]) => {
     const store = useAppStore.getState();
     const currentSession = store.agentSessionByTab[sessionId];
-    // Snapshot cost before this query so we can replace turn_cost estimates
-    // with the authoritative total from the result event.
+    // Snapshot cost before this query so the authoritative result event can
+    // add onto the true pre-query total.
     preQueryCostRef.current = currentSession?.cost ?? null;
     setStatus(sessionId, "thinking");
 
     if (currentSession?.sdkSessionId) {
-      const inputTokens = currentSession.cost?.inputTokens ?? 0;
+      // Use the last turn's context window size (fresh + cache read + cache write)
+      // to decide whether to compact. Cumulative cost.inputTokens only tracks
+      // fresh (uncached) input which grows slowly due to caching and would
+      // rarely trigger compaction even at huge context sizes.
+      const lastTurn = currentSession.lastTurnCost;
+      const contextSize = lastTurn
+        ? lastTurn.inputTokens + lastTurn.cacheReadTokens + lastTurn.cacheWriteTokens
+        : 0;
 
-      if (inputTokens > FRESH_SESSION_TOKEN_THRESHOLD) {
+      if (contextSize > FRESH_SESSION_TOKEN_THRESHOLD) {
         // Session is large — start fresh with a context summary to save tokens.
         // Clear the SDK session ID so subsequent sends also start fresh.
         const setSdkId = useAppStore.getState().setAgentSdkSessionId;
@@ -154,7 +151,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         appendMessage(sessionId, {
           id: nextMsgId(),
           type: "system",
-          content: `Session compacted (${Math.round(inputTokens / 1000)}K input tokens) — starting fresh with context summary.`,
+          content: `Session compacted (${Math.round(contextSize / 1000)}K context tokens) — starting fresh with context summary.`,
           timestamp: Date.now(),
         });
         const summaryPrompt = buildSessionSummary(currentSession, text);
@@ -277,6 +274,13 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     switch (type) {
       case "init": {
         setSdkSessionId(sessionId, msg.sessionId as string);
+        // Sync the model the SDK actually resolved (matters when no explicit
+        // model was requested and the SDK picked its own default).
+        const sdkModel = msg.model as string | undefined;
+        if (sdkModel) {
+          const cur = useAppStore.getState().agentSessionByTab[sessionId];
+          if (!cur?.model) setModel(sessionId, sdkModel);
+        }
         // Seed slash commands from the init payload (names only); the bridge
         // follows up with a richer `commands` event that includes descriptions.
         const names = msg.slashCommands as string[] | undefined;
@@ -295,7 +299,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           appendMessage(sessionId, {
             id: nextMsgId(),
             type: "system",
-            content: `Session started (model: ${msg.model || "default"})${mcpInfo}`,
+            content: `Session started (model: ${sdkModel || "default"})${mcpInfo}`,
             timestamp: Date.now(),
           });
         }
@@ -381,26 +385,19 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       }
 
       case "turn_cost": {
-        // Per-turn usage on each assistant message reports cumulative-for-that-message
-        // input tokens (including full prior context), so accumulating every event
-        // badly over-counts. Instead, treat the latest message's usage as the
-        // running total for the current turn and show pre-query snapshot + that.
-        // The authoritative `result` event will replace this with exact totals.
+        // Each turn_cost carries one API call's usage. We only use it to
+        // refresh `lastTurnCost` — which represents the context window size
+        // of the most recent call. We deliberately do NOT sum these into
+        // session `cost`: in a tool loop, each call's cache_read already
+        // includes the full cached prefix, so summing inflates totals ~N×.
+        // The authoritative session totals arrive in the `result` event via
+        // SDK modelUsage.
         const tc = msg.cost as { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         if (tc) {
-          const currentModel = useAppStore.getState().agentSessionByTab[sessionId]?.model || "";
-          const estimated = estimateTurnCostUsd(currentModel, tc.inputTokens, tc.outputTokens, tc.cacheReadTokens, tc.cacheWriteTokens);
-          const pre = preQueryCostRef.current;
-          const running = pre
-            ? {
-                inputTokens: pre.inputTokens + tc.inputTokens,
-                outputTokens: pre.outputTokens + tc.outputTokens,
-                cacheReadTokens: pre.cacheReadTokens + tc.cacheReadTokens,
-                cacheWriteTokens: pre.cacheWriteTokens + tc.cacheWriteTokens,
-                totalCostUsd: pre.totalCostUsd + estimated,
-              }
-            : { ...tc, totalCostUsd: estimated };
-          useAppStore.getState().replaceAgentCost(sessionId, running);
+          useAppStore.getState().setAgentLastTurnCost(sessionId, {
+            ...tc,
+            totalCostUsd: 0,
+          });
         }
         break;
       }
@@ -429,11 +426,14 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         clearStreaming(sessionId);
         // Don't emit resultText as a message — it duplicates the last assistant message.
         const cost = msg.cost as { totalCostUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
+        const lastTurn = msg.lastTurnCost as { totalCostUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         if (cost) {
-          // The result event carries the authoritative cost for this query.
-          // Replace turn_cost estimates: set cost = pre-query snapshot + authoritative.
+          // `cost` from modelUsage covers only this query (the SDK spawns a
+          // fresh child process per query() and state restoration across
+          // resumes is unreliable). Accumulate onto the pre-query snapshot
+          // to get the true session total.
           const pre = preQueryCostRef.current;
-          const finalCost = pre
+          const sessionCost = pre
             ? {
                 inputTokens: pre.inputTokens + cost.inputTokens,
                 outputTokens: pre.outputTokens + cost.outputTokens,
@@ -442,10 +442,12 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
                 totalCostUsd: pre.totalCostUsd + cost.totalCostUsd,
               }
             : cost;
-          useAppStore.getState().replaceAgentCost(sessionId, finalCost);
-          // Store just this turn's usage — sum of fresh + cache read + cache write
-          // approximates the current context window size.
-          useAppStore.getState().setAgentLastTurnCost(sessionId, cost);
+          useAppStore.getState().replaceAgentCost(sessionId, sessionCost);
+          // The last API call's usage (fresh + cache read + cache write)
+          // approximates the context window going into the next turn.
+          // Prefer the bridge-provided lastTurnCost; fall back to the
+          // per-query aggregate if the bridge didn't send one.
+          useAppStore.getState().setAgentLastTurnCost(sessionId, lastTurn ?? cost);
         }
         const subtype = msg.subtype as string;
         activeToolsRef.current.clear();

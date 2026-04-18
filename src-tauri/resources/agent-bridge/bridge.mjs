@@ -588,19 +588,19 @@ function processMessage(message) {
         content: blocks,
       });
 
-      // Emit per-turn usage if available so the UI can show running cost
+      // Emit per-turn usage so the UI can show the current context size.
+      // Emit even if some fields are missing — the frontend only uses this
+      // to refresh `lastTurnCost` (the latest call's snapshot).
       const usage = message.message?.usage;
-      if (usage) {
-        emit({
-          type: "turn_cost",
-          cost: {
-            inputTokens: usage.input_tokens || 0,
-            outputTokens: usage.output_tokens || 0,
-            cacheReadTokens: usage.cache_read_input_tokens || 0,
-            cacheWriteTokens: usage.cache_creation_input_tokens || 0,
-          },
-        });
-      }
+      emit({
+        type: "turn_cost",
+        cost: {
+          inputTokens: usage?.input_tokens || 0,
+          outputTokens: usage?.output_tokens || 0,
+          cacheReadTokens: usage?.cache_read_input_tokens || 0,
+          cacheWriteTokens: usage?.cache_creation_input_tokens || 0,
+        },
+      });
       break;
     }
 
@@ -650,17 +650,50 @@ function processMessage(message) {
       break;
     }
 
-    case "result":
+    case "result": {
       // Clear active references immediately so a follow-up startSession()
       // (e.g. from a queued message) won't abort the already-finished query.
       activeQuery = null;
       activeAbort = null;
+      // `message.usage` only reflects the LAST API call in a multi-turn tool
+      // loop, so using it under-reports output and over-reports cache_read
+      // (which grows each iteration as context is replayed). `modelUsage`
+      // is the aggregate across every API call in this query — this is what
+      // Anthropic actually bills and what Claude Code's CLI displays.
+      const modelUsage = message.modelUsage || {};
+      let aggInput = 0;
+      let aggOutput = 0;
+      let aggCacheRead = 0;
+      let aggCacheWrite = 0;
+      for (const mu of Object.values(modelUsage)) {
+        aggInput += mu.inputTokens || 0;
+        aggOutput += mu.outputTokens || 0;
+        aggCacheRead += mu.cacheReadInputTokens || 0;
+        aggCacheWrite += mu.cacheCreationInputTokens || 0;
+      }
+      // Fall back to `usage` if modelUsage is empty (shouldn't happen for
+      // success/error subtypes, but be defensive).
+      if (Object.keys(modelUsage).length === 0) {
+        aggInput = message.usage?.input_tokens || 0;
+        aggOutput = message.usage?.output_tokens || 0;
+        aggCacheRead = message.usage?.cache_read_input_tokens || 0;
+        aggCacheWrite = message.usage?.cache_creation_input_tokens || 0;
+      }
       emit({
         type: "result",
         subtype: message.subtype,
         sessionId: message.session_id,
         cost: {
           totalCostUsd: message.total_cost_usd || 0,
+          inputTokens: aggInput,
+          outputTokens: aggOutput,
+          cacheReadTokens: aggCacheRead,
+          cacheWriteTokens: aggCacheWrite,
+        },
+        // The last API call's usage represents the current context window
+        // going into the next turn (fresh + cache read + cache write).
+        lastTurnCost: {
+          totalCostUsd: 0,
           inputTokens: message.usage?.input_tokens || 0,
           outputTokens: message.usage?.output_tokens || 0,
           cacheReadTokens: message.usage?.cache_read_input_tokens || 0,
@@ -670,6 +703,7 @@ function processMessage(message) {
         numTurns: message.num_turns || 0,
       });
       break;
+    }
 
     case "stream_event": {
       // SDKPartialAssistantMessage — raw streaming events

@@ -77,9 +77,9 @@ export function AgentToolbar({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Cost display — "in" combines fresh input + cache reads + cache writes
-          to reflect the actual context size the model processed. Detailed
-          breakdown lives in the custom hover tooltip. */}
+      {/* Cost display — cumulative session totals. "in" shows fresh input
+          tokens (billed at full price). Detailed breakdown with cache reads
+          and writes lives in the hover tooltip. */}
       {session.cost && (
         <CostDisplay
           cost={session.cost}
@@ -122,7 +122,10 @@ function CostDisplay({
 }) {
   const anchorRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
-  const sessionIn = cost.inputTokens + cost.cacheReadTokens + cost.cacheWriteTokens;
+  // Show fresh + cache write as "in" — these are billed at full price or more.
+  // Cache reads (replayed context at ~10% price) are excluded to avoid
+  // inflating the headline number with cheap repeated reads.
+  const sessionIn = cost.inputTokens + cost.cacheWriteTokens;
 
   return (
     <>
@@ -284,11 +287,12 @@ function CostTooltip({
         <div>
           <span className="text-text-primary font-medium">Cache read</span>: prior
           conversation replayed from Anthropic's prompt cache. ~10% of fresh price.
-          Accumulates every turn because each turn re-reads all prior context.
+          Accumulates every turn as each turn re-reads all prior context.
         </div>
         <div>
           <span className="text-text-primary font-medium">Cache write</span>: new
-          content added to the cache this turn. ~125% of fresh price, charged once.
+          content written to the cache each turn (system prompt on first turn,
+          then incremental conversation growth). ~125% of fresh price per write.
         </div>
         <div className="text-text-tertiary">
           Session totals are cumulative across every turn. Current context shows

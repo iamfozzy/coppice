@@ -839,7 +839,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionState: AgentSessionState = {
       messages: [],
       status: "idle",
-      model: model || s.appSettings?.agent_default_model || "claude-opus-4-7",
+      model: model || s.appSettings?.agent_default_model || "",
       effort: s.appSettings?.agent_default_effort || "high",
       extendedContext: s.appSettings?.agent_default_extended_context ?? false,
       permissionMode: "bypassPermissions",
