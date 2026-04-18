@@ -11,6 +11,13 @@ use services::pty_manager::PtyManager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let database = Database::new().expect("Failed to initialize database");
+
+    // Purge agent tab cache entries older than 30 days
+    match database.purge_old_agent_tab_cache(30) {
+        Ok(n) if n > 0 => eprintln!("Purged {n} stale agent tab cache entries (>30 days old)"),
+        Ok(_) => {}
+        Err(e) => eprintln!("Warning: failed to purge old agent tab cache: {e}"),
+    }
     let pty_manager = PtyManager::new();
     let agent_manager = AgentManager::new();
     let settings_state = settings::SettingsState::new();
@@ -87,6 +94,7 @@ pub fn run() {
             commands::agent_tab_cache::list_agent_tab_cache,
             commands::agent_tab_cache::delete_agent_tab_cache,
             commands::agent_tab_cache::delete_agent_tab_cache_for_worktree,
+            commands::agent_tab_cache::purge_old_agent_tab_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

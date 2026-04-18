@@ -8,7 +8,7 @@ interface Props {
   projectId: string;
   branch: string;
   worktreePath: string;
-  onFixWithClaude: (context: string) => void;
+  onFixWithClaude: (context: string | { prNumber: number; failedChecks: string[] }) => void;
   onOpenFile?: (file: string) => void;
 }
 
@@ -160,14 +160,12 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
     return () => { clearTimeout(timer); clearInterval(interval); };
   }, [cacheKey, commentsCacheKey, refresh]);
 
-  const handleFixWithClaude = async () => {
+  const handleFixWithClaude = () => {
     if (!prStatus?.pr) return;
-    try {
-      const logs = await commands.getFailedActionLogs(projectId, prStatus.pr.number);
-      onFixWithClaude(logs);
-    } catch (e) {
-      onFixWithClaude(`Failed to fetch logs: ${e}`);
-    }
+    const failedChecks = checks
+      .filter((c) => (c.conclusion ?? c.status) === "FAILURE")
+      .map((c) => c.name);
+    onFixWithClaude({ prNumber: prStatus.pr.number, failedChecks });
   };
 
   if (!checked) {

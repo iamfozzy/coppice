@@ -199,28 +199,6 @@ export function AppSettingsModal() {
                 </div>
                 <p className="mt-0.5 text-[10px] text-text-tertiary">Controls how much effort the agent puts into responses</p>
               </div>
-              <div>
-                <label className="block text-xs text-text-secondary mb-1">Extended context window</label>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setForm({ ...form, agent_default_extended_context: !form.agent_default_extended_context })}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                      form.agent_default_extended_context ? "bg-accent" : "bg-bg-tertiary border border-border-primary"
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                        form.agent_default_extended_context ? "translate-x-[18px]" : "translate-x-[3px]"
-                      }`}
-                    />
-                  </button>
-                  <span className="text-[11px] text-text-secondary">
-                    {form.agent_default_extended_context ? "1M context window" : "200K context window (default)"}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-[10px] text-text-tertiary">Enable 1M token context window for new agent sessions (Sonnet 4+ only)</p>
-              </div>
               <Field
                 label="Node.js path"
                 value={form.agent_node_path}

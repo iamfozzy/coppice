@@ -28,8 +28,8 @@ export function AskUserDialog({ pending, onSubmit }: Props) {
   };
 
   return (
-    <div className="mx-4 mb-2 border border-accent/20 bg-accent/4 rounded-lg overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-accent/8 border-b border-accent/15">
+    <div className="mx-4 mb-2 border border-accent/20 bg-accent/4 rounded-lg overflow-hidden flex flex-col max-h-[60vh] min-h-0">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-accent/8 border-b border-accent/15 shrink-0">
         <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
           <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.2" className="text-accent" />
           <path d="M5 5.5a2 2 0 013.5 1.5c0 1-1.5 1.2-1.5 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" className="text-accent" />
@@ -38,7 +38,7 @@ export function AskUserDialog({ pending, onSubmit }: Props) {
         <span className="text-[11px] font-medium text-accent">Claude has a question</span>
       </div>
 
-      <div className="px-3 py-2 space-y-3">
+      <div className="px-3 py-2 space-y-3 overflow-y-auto min-h-0">
         {pending.questions.map((q) => (
           <div key={q.question} className="space-y-1.5">
             <div className="text-[12px] text-text-primary font-medium">{q.question}</div>

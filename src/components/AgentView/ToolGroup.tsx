@@ -25,7 +25,7 @@ export function ToolGroup({ tools }: Props) {
   const anyError = tools.some((t) => t.resultMsg?.isError);
 
   const [manualOverride, setManualOverride] = useState<boolean | null>(null);
-  const expanded = manualOverride ?? anyActive;
+  const expanded = manualOverride ?? false;
 
   if (tools.length === 1) {
     const t = tools[0];

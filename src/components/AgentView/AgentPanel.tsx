@@ -23,6 +23,16 @@ function nextMsgId() {
   return `msg-${++msgIdCounter}-${Date.now()}`;
 }
 
+/** Rough per-million-token pricing by model family for live cost estimation. */
+function estimateTurnCostUsd(model: string, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number): number {
+  // Pricing: [inputPerMTok, outputPerMTok, cacheReadPerMTok, cacheWritePerMTok]
+  let pricing = [15, 75, 1.5, 18.75]; // opus default
+  if (model.includes("sonnet")) pricing = [3, 15, 0.3, 3.75];
+  else if (model.includes("haiku")) pricing = [0.8, 4, 0.08, 1];
+  const [inp, out, cr, cw] = pricing;
+  return (inputTokens * inp + outputTokens * out + cacheReadTokens * cr + cacheWriteTokens * cw) / 1_000_000;
+}
+
 export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const session = useAppStore((s) => s.agentSessionByTab[sessionId]);
   const appendMessage = useAppStore((s) => s.appendAgentMessage);
@@ -47,6 +57,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const activeToolsRef = useRef<Map<string, { name: string; input: unknown }>>(new Map());
   // Track the last assistant message uuid to deduplicate
   const lastAssistantUuidRef = useRef<string | null>(null);
+  // Snapshot of cumulative cost before the current query started, so the
+  // authoritative `result` event can replace turn_cost estimates cleanly.
+  const preQueryCostRef = useRef(session?.cost ?? null);
   // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt).
   // If the tab was restored from cache (has existing messages), treat it as already renamed.
   const tabRenamedRef = useRef((session?.messages?.length ?? 0) > 0);
@@ -75,6 +88,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const dispatchToAgent = (text: string) => {
     const store = useAppStore.getState();
     const currentSession = store.agentSessionByTab[sessionId];
+    // Snapshot cost before this query so we can replace turn_cost estimates
+    // with the authoritative total from the result event.
+    preQueryCostRef.current = currentSession?.cost ?? null;
     setStatus(sessionId, "thinking");
 
     if (currentSession?.sdkSessionId) {
@@ -83,7 +99,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         .agentStart(sessionId, cwd, text, {
           model: currentSession.model || undefined,
           effort: currentSession.effort || undefined,
-          extendedContext: currentSession.extendedContext || undefined,
           permissionMode: currentSession.permissionMode || undefined,
           resume: currentSession.sdkSessionId,
           apiKey: appSettings?.agent_api_key || undefined,
@@ -103,7 +118,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         .agentStart(sessionId, cwd, text, {
           model: currentSession?.model || undefined,
           effort: currentSession?.effort || undefined,
-          extendedContext: currentSession?.extendedContext || undefined,
           permissionMode: currentSession?.permissionMode || undefined,
           apiKey: appSettings?.agent_api_key || undefined,
         })
@@ -157,7 +171,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       .agentStart(sessionId, cwd, initialPrompt, {
         model: session?.model || undefined,
         effort: session?.effort || undefined,
-        extendedContext: session?.extendedContext || undefined,
         permissionMode: session?.permissionMode || undefined,
         apiKey: appSettings?.agent_api_key || undefined,
       })
@@ -281,6 +294,18 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         break;
       }
 
+      case "turn_cost": {
+        // Per-turn token usage from the bridge — estimate USD so the toolbar
+        // can show a running cost before the final result event arrives.
+        const tc = msg.cost as { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
+        if (tc) {
+          const currentModel = useAppStore.getState().agentSessionByTab[sessionId]?.model || "";
+          const estimated = estimateTurnCostUsd(currentModel, tc.inputTokens, tc.outputTokens, tc.cacheReadTokens, tc.cacheWriteTokens);
+          setCost(sessionId, { ...tc, totalCostUsd: estimated });
+        }
+        break;
+      }
+
       case "tool_permission": {
         setPendingPermission(sessionId, {
           callId: msg.callId as string,
@@ -306,7 +331,19 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         // Don't emit resultText as a message — it duplicates the last assistant message.
         const cost = msg.cost as { totalCostUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         if (cost) {
-          setCost(sessionId, cost);
+          // The result event carries the authoritative cost for this query.
+          // Replace turn_cost estimates: set cost = pre-query snapshot + authoritative.
+          const pre = preQueryCostRef.current;
+          const finalCost = pre
+            ? {
+                inputTokens: pre.inputTokens + cost.inputTokens,
+                outputTokens: pre.outputTokens + cost.outputTokens,
+                cacheReadTokens: pre.cacheReadTokens + cost.cacheReadTokens,
+                cacheWriteTokens: pre.cacheWriteTokens + cost.cacheWriteTokens,
+                totalCostUsd: pre.totalCostUsd + cost.totalCostUsd,
+              }
+            : cost;
+          useAppStore.getState().replaceAgentCost(sessionId, finalCost);
         }
         const subtype = msg.subtype as string;
         activeToolsRef.current.clear();
@@ -511,10 +548,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     setEffort(sessionId, effort);
   };
 
-  const handleExtendedContextChange = (enabled: boolean) => {
-    useAppStore.getState().setAgentExtendedContext(sessionId, enabled);
-  };
-
   const handlePermissionModeChange = (mode: "default" | "plan" | "acceptEdits" | "bypassPermissions") => {
     setPermissionMode(sessionId, mode);
     commands.agentSetPermissionMode(sessionId, mode).catch(() => {});
@@ -579,11 +612,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       <AgentControls
         model={session.model}
         effort={session.effort}
-        extendedContext={session.extendedContext}
         permissionMode={session.permissionMode}
         onModelChange={handleModelChange}
         onEffortChange={handleEffortChange}
-        onExtendedContextChange={handleExtendedContextChange}
         onPermissionModeChange={handlePermissionModeChange}
       />
       <AgentInputBar
