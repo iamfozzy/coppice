@@ -1,13 +1,18 @@
-import { useState, useRef, useEffect, useMemo } from "react";
-import type { SlashCommand } from "../../lib/types";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import type { SlashCommand, ImageAttachment } from "../../lib/types";
+import { useAppStore } from "../../stores/appStore";
+
+const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20 MB
 
 interface Props {
+  sessionId: string;
   disabled: boolean;
   isAgentBusy: boolean;
   autoFocus?: boolean;
   placeholder?: string;
   slashCommands?: SlashCommand[];
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: ImageAttachment[]) => void;
 }
 
 /** Return the command name the user is currently typing, or null. */
@@ -20,10 +25,23 @@ function parseLeadingSlash(text: string): string | null {
   return rest;
 }
 
-export function AgentInputBar({ disabled, isAgentBusy, autoFocus, placeholder, slashCommands, onSend }: Props) {
+export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, placeholder, slashCommands, onSend }: Props) {
   const [text, setText] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
+
+  // Consume images dropped via Tauri's native drag-drop handler (App.tsx).
+  const pendingImages = useAppStore((s) => s.pendingDroppedImages[sessionId]);
+  useEffect(() => {
+    if (pendingImages && pendingImages.length > 0) {
+      setImages((prev) => [...prev, ...pendingImages]);
+      useAppStore.getState().consumeDroppedImages(sessionId);
+    }
+  }, [pendingImages, sessionId]);
 
   // Focus textarea when this tab becomes visible (tab switch, worktree switch,
   // or a new worktree selection all flip `autoFocus` via the `visible` prop).
@@ -61,11 +79,93 @@ export function AgentInputBar({ disabled, isAgentBusy, autoFocus, placeholder, s
     setActiveIndex(0);
   }, [query]);
 
+  /** Read a File as a base64-encoded ImageAttachment. */
+  const fileToAttachment = useCallback((file: File): Promise<ImageAttachment | null> => {
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) return Promise.resolve(null);
+    if (file.size > MAX_IMAGE_SIZE) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        // Strip the data:...;base64, prefix
+        const base64 = result.split(",")[1];
+        if (!base64) { resolve(null); return; }
+        resolve({
+          data: base64,
+          mediaType: file.type as ImageAttachment["mediaType"],
+          fileName: file.name,
+        });
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+  }, []);
+
+  /** Process dropped/pasted/selected files into image attachments. */
+  const addFiles = useCallback(async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    const results = await Promise.all(fileArray.map(fileToAttachment));
+    const valid = results.filter((r): r is ImageAttachment => r !== null);
+    if (valid.length > 0) {
+      setImages((prev) => [...prev, ...valid]);
+    }
+  }, [fileToAttachment]);
+
+  /** Remove an image attachment by index. */
+  const removeImage = useCallback((index: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Drag-and-drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (disabled) return;
+    setIsDragOver(true);
+  }, [disabled]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only clear if leaving the drop zone entirely
+    if (dropZoneRef.current && !dropZoneRef.current.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    if (disabled) return;
+    if (e.dataTransfer.files.length > 0) {
+      addFiles(e.dataTransfer.files);
+    }
+  }, [disabled, addFiles]);
+
+  // Paste handler for images
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles: File[] = [];
+    for (const item of items) {
+      if (item.kind === "file" && ACCEPTED_IMAGE_TYPES.includes(item.type)) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      addFiles(imageFiles);
+    }
+  }, [addFiles]);
+
   const sendText = (value: string) => {
     const trimmed = value.trim();
-    if (!trimmed || disabled) return;
-    onSend(trimmed);
+    if ((!trimmed && images.length === 0) || disabled) return;
+    onSend(trimmed, images.length > 0 ? images : undefined);
     setText("");
+    setImages([]);
   };
 
   const applyCommand = (cmd: SlashCommand) => {
@@ -120,7 +220,20 @@ export function AgentInputBar({ disabled, isAgentBusy, autoFocus, placeholder, s
   const showQueueButton = isAgentBusy && !disabled;
 
   return (
-    <div className="relative">
+    <div
+      ref={dropZoneRef}
+      className="relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-accent/10 border-2 border-dashed border-accent rounded-lg pointer-events-none">
+          <span className="text-accent text-sm font-medium">Drop images here</span>
+        </div>
+      )}
+
       {pickerOpen && (
         <div className="absolute bottom-full left-3 right-3 mb-1 max-h-60 overflow-y-auto rounded-lg border border-border-primary bg-bg-secondary shadow-lg z-10">
           {filtered.map((cmd, i) => (
@@ -153,7 +266,59 @@ export function AgentInputBar({ disabled, isAgentBusy, autoFocus, placeholder, s
         </div>
       )}
 
+      {/* Image thumbnails */}
+      {images.length > 0 && (
+        <div className="flex gap-2 px-3 pt-2 pb-1 bg-bg-secondary overflow-x-auto">
+          {images.map((img, i) => (
+            <div key={i} className="relative shrink-0 group">
+              <img
+                src={`data:${img.mediaType};base64,${img.data}`}
+                alt={img.fileName}
+                className="h-16 w-16 object-cover rounded-md border border-border-primary"
+              />
+              <button
+                type="button"
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={() => removeImage(i)}
+                title="Remove image"
+              >
+                ×
+              </button>
+              <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[9px] px-1 truncate rounded-b-md">
+                {img.fileName}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-end gap-2 px-3 py-2.5 bg-bg-secondary">
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_IMAGE_TYPES.join(",")}
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files) addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        {/* Attach image button */}
+        <button
+          type="button"
+          className="shrink-0 self-stretch flex items-center justify-center w-8 rounded-lg text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={disabled}
+          title="Attach images"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.3" />
+            <circle cx="5.5" cy="5.5" r="1.25" stroke="currentColor" strokeWidth="1.1" />
+            <path d="M2 11l3-3 2 2 3-4 4 5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
         <textarea
           ref={textareaRef}
           className="flex-1 resize-none bg-bg-tertiary border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/20 transition-all font-mono leading-relaxed"
@@ -161,6 +326,7 @@ export function AgentInputBar({ disabled, isAgentBusy, autoFocus, placeholder, s
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder={placeholder || "Send a message..."}
           disabled={disabled}
           spellCheck={false}
@@ -172,7 +338,7 @@ export function AgentInputBar({ disabled, isAgentBusy, autoFocus, placeholder, s
               : "bg-accent hover:bg-accent-hover w-8"
           }`}
           onClick={() => sendText(text)}
-          disabled={disabled || !text.trim()}
+          disabled={disabled || (!text.trim() && images.length === 0)}
           title={showQueueButton ? "Queue (Enter)" : "Send (Enter)"}
         >
           {showQueueButton ? (

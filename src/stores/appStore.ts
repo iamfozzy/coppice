@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment } from "../lib/types";
 import { DEFAULT_SLASH_COMMANDS } from "../lib/slashCommandDefaults";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
@@ -203,6 +203,9 @@ interface AppState {
   // Agent session state (keyed by tab ID)
   agentSessionByTab: Record<string, AgentSessionState>;
 
+  // Pending dropped images for agent tabs (keyed by tab ID)
+  pendingDroppedImages: Record<string, ImageAttachment[]>;
+
   // PR comments (keyed by project ID)
   prCommentsByProject: Record<string, import("../lib/commands").PrComment[]>;
 
@@ -284,6 +287,10 @@ interface AppState {
   shiftQueuedMessage: (tabId: string) => void;
   promoteAllQueuedMessages: (tabId: string) => void;
 
+  // Actions — dropped images for agent input
+  pushDroppedImages: (tabId: string, images: ImageAttachment[]) => void;
+  consumeDroppedImages: (tabId: string) => ImageAttachment[];
+
   // Actions — runners
   expandRunner: (worktreeId: string, key: string, command: string, cwd: string) => void;
   openOrRestartRunner: (worktreeId: string, key: string, command: string, cwd: string) => void;
@@ -313,6 +320,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   runnersByWorktree: {},
   claudeStatusByTab: {},
   agentSessionByTab: {},
+  pendingDroppedImages: {},
   prCommentsByProject: {},
   editingAppSettings: false,
 
@@ -1193,6 +1201,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     });
   },
+  // ── Dropped images for agent input ──
+
+  pushDroppedImages: (tabId, images) => {
+    set((s) => ({
+      pendingDroppedImages: {
+        ...s.pendingDroppedImages,
+        [tabId]: [...(s.pendingDroppedImages[tabId] ?? []), ...images],
+      },
+    }));
+  },
+
+  consumeDroppedImages: (tabId) => {
+    const images = get().pendingDroppedImages[tabId] ?? [];
+    if (images.length > 0) {
+      set((s) => {
+        const { [tabId]: _, ...rest } = s.pendingDroppedImages;
+        return { pendingDroppedImages: rest };
+      });
+    }
+    return images;
+  },
+
   // ── Runners ──
 
   expandRunner: (worktreeId, key, command, cwd) => {

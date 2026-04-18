@@ -61,6 +61,7 @@ pub fn agent_start(
     max_budget_usd: Option<f64>,
     resume: Option<String>,
     api_key: Option<String>,
+    images: Option<Vec<serde_json::Value>>,
     agent_manager: State<'_, AgentManager>,
     settings: State<'_, crate::settings::SettingsState>,
     app: AppHandle,
@@ -165,6 +166,7 @@ pub fn agent_start(
         "cwd": cwd,
         "prompt": prompt,
         "options": options,
+        "images": images,
     });
 
     agent_manager.start(
@@ -181,11 +183,13 @@ pub fn agent_start(
 pub fn agent_send_input(
     session_id: String,
     text: String,
+    images: Option<Vec<serde_json::Value>>,
     agent_manager: State<'_, AgentManager>,
 ) -> Result<(), String> {
     let msg = serde_json::json!({
         "type": "input",
         "text": text,
+        "images": images,
     });
     agent_manager.send(&session_id, &msg.to_string())
 }
@@ -347,4 +351,57 @@ pub fn agent_check_available(app: AppHandle) -> Result<AgentAvailability, String
 pub struct AgentAvailability {
     pub available: bool,
     pub reason: Option<String>,
+}
+
+/// Read an image file from disk and return it as a base64-encoded string with
+/// its MIME type. Used by the frontend to convert native file drops into image
+/// attachments for the agent SDK.
+#[tauri::command]
+pub fn read_image_base64(path: String) -> Result<ImageFileData, String> {
+    use std::path::Path;
+
+    let file_path = Path::new(&path);
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let media_type = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => return Err(format!("Unsupported image format: .{ext}")),
+    };
+
+    let bytes = std::fs::read(file_path)
+        .map_err(|e| format!("Failed to read image file: {e}"))?;
+
+    // 20 MB limit
+    if bytes.len() > 20 * 1024 * 1024 {
+        return Err("Image file exceeds 20 MB size limit".to_string());
+    }
+
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    let file_name = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("image")
+        .to_string();
+
+    Ok(ImageFileData {
+        data,
+        media_type: media_type.to_string(),
+        file_name,
+    })
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ImageFileData {
+    pub data: String,
+    pub media_type: String,
+    pub file_name: String,
 }

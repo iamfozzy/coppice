@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as commands from "../../lib/commands";
 import { useAppStore } from "../../stores/appStore";
-import type { AgentMessage, AgentSessionState, EffortLevel, SlashCommand } from "../../lib/types";
+import type { AgentMessage, AgentSessionState, EffortLevel, ImageAttachment, SlashCommand } from "../../lib/types";
 import { AgentToolbar } from "./AgentToolbar";
 import { AgentControls } from "./AgentControls";
 import { MessageList } from "./MessageList";
@@ -136,7 +136,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const FRESH_SESSION_TOKEN_THRESHOLD = 100_000;
 
   /** Start or resume an agent session with the given prompt text. */
-  const dispatchToAgent = (text: string) => {
+  const dispatchToAgent = (text: string, images?: ImageAttachment[]) => {
     const store = useAppStore.getState();
     const currentSession = store.agentSessionByTab[sessionId];
     // Snapshot cost before this query so we can replace turn_cost estimates
@@ -166,7 +166,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
             permissionMode: currentSession.permissionMode || undefined,
             conciseMode: currentSession.conciseMode || undefined,
             apiKey: appSettings?.agent_api_key || undefined,
-          })
+          }, images)
           .catch((err) => {
             appendMessage(sessionId, {
               id: nextMsgId(),
@@ -186,7 +186,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
             conciseMode: currentSession.conciseMode || undefined,
             resume: currentSession.sdkSessionId,
             apiKey: appSettings?.agent_api_key || undefined,
-          })
+          }, images)
           .catch((err) => {
             appendMessage(sessionId, {
               id: nextMsgId(),
@@ -206,7 +206,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           permissionMode: currentSession?.permissionMode || undefined,
           conciseMode: currentSession?.conciseMode || undefined,
           apiKey: appSettings?.agent_api_key || undefined,
-        })
+        }, images)
         .catch((err) => {
           appendMessage(sessionId, {
             id: nextMsgId(),
@@ -544,28 +544,31 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   }
 
   // Send a follow-up message (or queue it if agent is busy)
-  const handleSend = (text: string) => {
+  const handleSend = (text: string, images?: ImageAttachment[]) => {
     // Rename tab from first typed message (when no initialPrompt was provided)
     applyQuickTitle(text);
 
     const store = useAppStore.getState();
     const currentSession = store.agentSessionByTab[sessionId];
 
+    // Build display content including image count for the message bubble
+    const imageNote = images?.length ? ` [${images.length} image${images.length > 1 ? "s" : ""} attached]` : "";
+
     if (currentSession?.status === "done" || currentSession?.status === "error" || currentSession?.status === "idle") {
       // Direct send — session is not busy
       appendMessage(sessionId, {
         id: nextMsgId(),
         type: "user",
-        content: text,
+        content: text + imageNote,
         timestamp: Date.now(),
       });
-      dispatchToAgent(text);
+      dispatchToAgent(text, images);
     } else if (
       currentSession?.status === "thinking" ||
       currentSession?.status === "tool_use"
     ) {
       // Queue the message — agent is actively processing.
-      // Multiple messages can be queued; they dispatch in order.
+      // Note: images cannot be queued — they are dropped for queued messages.
       pushQueuedMessage(sessionId, text);
       appendMessage(sessionId, {
         id: nextMsgId(),
@@ -579,11 +582,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       appendMessage(sessionId, {
         id: nextMsgId(),
         type: "user",
-        content: text,
+        content: text + imageNote,
         timestamp: Date.now(),
       });
       setStatus(sessionId, "thinking");
-      commands.agentSendInput(sessionId, text).catch((err) => {
+      commands.agentSendInput(sessionId, text, images).catch((err) => {
         appendMessage(sessionId, {
           id: nextMsgId(),
           type: "error",
@@ -711,6 +714,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         onConciseModeChange={handleConciseModeChange}
       />
       <AgentInputBar
+        sessionId={sessionId}
         disabled={isInputDisabled}
         isAgentBusy={isAgentBusy}
         autoFocus={visible}

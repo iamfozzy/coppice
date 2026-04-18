@@ -109,6 +109,39 @@ function nextCallId() {
   return String(++callIdCounter);
 }
 
+/**
+ * Build an Anthropic content block array from text + optional images.
+ * Returns an array of content blocks (image blocks first, then text).
+ */
+function buildContentBlocks(text, images) {
+  const blocks = [];
+  if (images && Array.isArray(images)) {
+    for (const img of images) {
+      if (img.data && img.mediaType) {
+        blocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: img.mediaType,
+            data: img.data,
+          },
+        });
+      }
+    }
+  }
+  if (text) {
+    blocks.push({ type: "text", text });
+  }
+  return blocks;
+}
+
+/**
+ * Check whether a message carries image attachments.
+ */
+function hasImages(msg) {
+  return msg.images && Array.isArray(msg.images) && msg.images.length > 0;
+}
+
 // ── State ──
 
 let activeQuery = null;
@@ -150,11 +183,14 @@ async function handleCommand(msg) {
 
     case "input":
       if (activeQuery) {
+        const inputBlocks = hasImages(msg)
+          ? buildContentBlocks(msg.text, msg.images)
+          : msg.text;
         await activeQuery.streamInput(
           (async function* () {
             yield {
               type: "user",
-              message: { role: "user", content: msg.text },
+              message: { role: "user", content: inputBlocks },
             };
           })()
         );
@@ -459,8 +495,27 @@ async function startSession(msg) {
   }
 
   try {
+    // When images are attached, we must use the AsyncIterable<SDKUserMessage>
+    // form of `prompt` because the SDK's query() only accepts `string` or
+    // `AsyncIterable` — not content block arrays.  A plain string prompt is
+    // wrapped by the SDK internally; an iterable lets us provide image blocks.
+    let promptArg;
+    if (hasImages(msg)) {
+      const contentBlocks = buildContentBlocks(msg.prompt, msg.images);
+      promptArg = (async function* () {
+        yield {
+          type: "user",
+          session_id: "",
+          message: { role: "user", content: contentBlocks },
+          parent_tool_use_id: null,
+        };
+      })();
+    } else {
+      promptArg = msg.prompt;
+    }
+
     const result = query({
-      prompt: msg.prompt,
+      prompt: promptArg,
       options: queryOptions,
     });
     activeQuery = result;

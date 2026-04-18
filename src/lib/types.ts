@@ -75,6 +75,17 @@ export interface McpServerEntry {
   env?: Record<string, string>;
 }
 
+// ── Image attachment type ──
+
+export interface ImageAttachment {
+  /** base64-encoded image data */
+  data: string;
+  /** MIME type: image/jpeg, image/png, image/gif, image/webp */
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+  /** Original filename (for display only) */
+  fileName: string;
+}
+
 // ── Agent SDK types ──
 
 export type AgentStatus = "idle" | "thinking" | "tool_use" | "waiting_permission" | "waiting_input" | "done" | "error";

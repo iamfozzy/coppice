@@ -156,16 +156,48 @@ function App() {
     return () => { listener.then((l) => l.unregister()); };
   }, []);
 
-  // Single window-level file drop handler — routes to active session only
+  // Single window-level file drop handler — routes to active session only.
+  // For agent tabs, image files are converted to base64 and queued as image
+  // attachments for the agent input bar; for terminal tabs, file paths are
+  // written as text.
   useEffect(() => {
+    const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp"]);
+
     const unlisten = getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type !== "drop") return;
-      const { selectedWorktreeId: wtId, activeTabByWorktree: activeTab } = useAppStore.getState();
+      const store = useAppStore.getState();
+      const wtId = store.selectedWorktreeId;
       if (!wtId) return;
-      const activeSessionId = activeTab[wtId];
+      const activeSessionId = store.activeTabByWorktree[wtId];
       if (!activeSessionId) return;
-      const paths = event.payload.paths;
-      if (paths.length > 0) {
+
+      const paths: string[] = event.payload.paths;
+      if (paths.length === 0) return;
+
+      // Determine if the active tab is an agent tab
+      const tabs = store.tabsByWorktree[wtId] ?? [];
+      const activeTab = tabs.find((t) => t.id === activeSessionId);
+
+      if (activeTab?.type === "agent") {
+        // Filter to image files only and read them as base64
+        const imagePaths = paths.filter((p) => {
+          const ext = p.split(".").pop()?.toLowerCase() ?? "";
+          return IMAGE_EXTENSIONS.has(ext);
+        });
+        if (imagePaths.length === 0) return;
+
+        Promise.all(imagePaths.map((p) => commands.readImageBase64(p)))
+          .then((results) => {
+            const attachments = results.map((r) => ({
+              data: r.data,
+              mediaType: r.media_type as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+              fileName: r.file_name,
+            }));
+            useAppStore.getState().pushDroppedImages(activeSessionId, attachments);
+          })
+          .catch(() => {});
+      } else {
+        // Terminal tab — write file paths as text
         const text = paths.map((p: string) => `"${p}"`).join(" ");
         commands.terminalWrite(activeSessionId, text).catch(() => {});
       }
