@@ -55,17 +55,16 @@ function trimToolResult(text) {
  * "Concise" mode in the UI. Reduces output token usage by eliminating
  * conversational filler and explanatory prose.
  */
-const CONCISE_MODE_INSTRUCTION = `CONCISE MODE ACTIVE — minimize output tokens:
+const CONCISE_MODE_INSTRUCTION = `CONCISE MODE: no preamble, no filler, no restating plans or summaries. Execute multi-step tasks silently; report only final outcome. Sentence fragments ok. Errors: state failure + fix only. No apologies, hedges, unrequested alternatives, or explanatory code comments.`;
 
-- No preamble, no filler ("I'll now...", "Let me...", "Here's what I did..."). Just act.
-- After tool calls: state result in ≤1 sentence, or say nothing if the tool output speaks for itself.
-- No restating what you're about to do before doing it. No summarizing what you just did after doing it.
-- Use sentence fragments. Drop articles, pronouns, and conjunctions when meaning is clear without them.
-- Multi-step tasks: execute silently, report only the final outcome.
-- Errors: state what failed and the fix, nothing else.
-- Never apologize, never hedge, never offer alternatives unless asked.
-- Code output: no explanatory comments unless the logic is genuinely non-obvious.
-- If asked a question: answer directly, no lead-in.`;
+/**
+ * Always-on guidance to keep tool outputs small — tool results stay in the
+ * context window for every subsequent turn, so verbose commands compound in
+ * cost. Prefer narrow searches (Grep with path/glob filters), bounded reads
+ * (Read with offset/limit), and piped pagination (| head -N) over dumping
+ * whole files or running wide recursive greps.
+ */
+const TOOL_FRUGALITY_INSTRUCTION = `Keep tool outputs small: they persist in context for every later turn. Prefer Grep with path/glob filters over wide searches; read files with offset/limit when you know the region; pipe noisy commands through head/tail. Don't cat whole large files or directories to browse — target what you need.`;
 
 /**
  * Load CLAUDE.md content from the user-global and project locations.
@@ -367,13 +366,18 @@ async function startSession(msg) {
   // Claude Code (aggressive tool use, codebase-first answers, etc.).
   // The caller can override with a custom string or their own preset config.
   // We append CLAUDE.md content here (loaded ourselves) so it's present from
-  // turn one without being wrapped in a <system-reminder>.
+  // turn one without being wrapped in a <system-reminder>. On `resume`, the
+  // SDK replays the original system prompt from the session, so skip the
+  // re-load to avoid redundant token cost.
   if (opts.systemPrompt) {
     queryOptions.systemPrompt = opts.systemPrompt;
+  } else if (opts.resume) {
+    // Resuming — SDK restores the original system prompt. Nothing to do.
   } else {
     const claudeMd = await loadClaudeMdContext(msg.cwd);
     const appendParts = [];
     if (claudeMd) appendParts.push(claudeMd);
+    appendParts.push(TOOL_FRUGALITY_INSTRUCTION);
     if (opts.conciseMode) appendParts.push(CONCISE_MODE_INSTRUCTION);
     queryOptions.systemPrompt = {
       type: "preset",

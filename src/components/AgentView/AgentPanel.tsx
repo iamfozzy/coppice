@@ -39,7 +39,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const updateStreaming = useAppStore((s) => s.updateAgentStreamingText);
   const clearStreaming = useAppStore((s) => s.clearAgentStreamingText);
   const setStatus = useAppStore((s) => s.setAgentStatus);
-  const setCost = useAppStore((s) => s.setAgentCost);
   const setSdkSessionId = useAppStore((s) => s.setAgentSdkSessionId);
   const setPendingPermission = useAppStore((s) => s.setAgentPendingPermission);
   const setPendingQuestion = useAppStore((s) => s.setAgentPendingQuestion);
@@ -133,7 +132,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   };
 
   /** Token threshold above which we start a fresh session with summary instead of resuming. */
-  const FRESH_SESSION_TOKEN_THRESHOLD = 100_000;
+  const FRESH_SESSION_TOKEN_THRESHOLD = 60_000;
 
   /** Start or resume an agent session with the given prompt text. */
   const dispatchToAgent = (text: string, images?: ImageAttachment[]) => {
@@ -382,13 +381,26 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       }
 
       case "turn_cost": {
-        // Per-turn token usage from the bridge — estimate USD so the toolbar
-        // can show a running cost before the final result event arrives.
+        // Per-turn usage on each assistant message reports cumulative-for-that-message
+        // input tokens (including full prior context), so accumulating every event
+        // badly over-counts. Instead, treat the latest message's usage as the
+        // running total for the current turn and show pre-query snapshot + that.
+        // The authoritative `result` event will replace this with exact totals.
         const tc = msg.cost as { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         if (tc) {
           const currentModel = useAppStore.getState().agentSessionByTab[sessionId]?.model || "";
           const estimated = estimateTurnCostUsd(currentModel, tc.inputTokens, tc.outputTokens, tc.cacheReadTokens, tc.cacheWriteTokens);
-          setCost(sessionId, { ...tc, totalCostUsd: estimated });
+          const pre = preQueryCostRef.current;
+          const running = pre
+            ? {
+                inputTokens: pre.inputTokens + tc.inputTokens,
+                outputTokens: pre.outputTokens + tc.outputTokens,
+                cacheReadTokens: pre.cacheReadTokens + tc.cacheReadTokens,
+                cacheWriteTokens: pre.cacheWriteTokens + tc.cacheWriteTokens,
+                totalCostUsd: pre.totalCostUsd + estimated,
+              }
+            : { ...tc, totalCostUsd: estimated };
+          useAppStore.getState().replaceAgentCost(sessionId, running);
         }
         break;
       }
@@ -431,6 +443,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
               }
             : cost;
           useAppStore.getState().replaceAgentCost(sessionId, finalCost);
+          // Store just this turn's usage — sum of fresh + cache read + cache write
+          // approximates the current context window size.
+          useAppStore.getState().setAgentLastTurnCost(sessionId, cost);
         }
         const subtype = msg.subtype as string;
         activeToolsRef.current.clear();

@@ -32,7 +32,6 @@ pub struct AppSettings {
     pub agent_default_model: String,
     pub agent_default_effort: String,
     pub agent_default_extended_context: bool,
-    pub agent_node_path: String,
     pub agent_api_key: String,
     pub mcp_servers: HashMap<String, McpServerEntry>,
 }
@@ -51,9 +50,8 @@ impl Default for AppSettings {
             notification_popup: true,
             default_claude_mode: "agent".to_string(),
             agent_default_model: String::new(),
-            agent_default_effort: "high".to_string(),
+            agent_default_effort: "medium".to_string(),
             agent_default_extended_context: false,
-            agent_node_path: String::new(),
             agent_api_key: String::new(),
             mcp_servers: HashMap::new(),
         }

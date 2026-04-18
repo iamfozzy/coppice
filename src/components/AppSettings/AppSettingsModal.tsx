@@ -17,7 +17,6 @@ const defaultSettings: AppSettings = {
   agent_default_model: "",
   agent_default_effort: "high",
   agent_default_extended_context: false,
-  agent_node_path: "",
   agent_api_key: "",
   mcp_servers: {},
 };
@@ -199,13 +198,6 @@ export function AppSettingsModal() {
                 </div>
                 <p className="mt-0.5 text-[10px] text-text-tertiary">Controls how much effort the agent puts into responses</p>
               </div>
-              <Field
-                label="Node.js path"
-                value={form.agent_node_path}
-                onChange={(agent_node_path) => setForm({ ...form, agent_node_path })}
-                placeholder="(auto-detect)"
-                hint="Path to node binary — only needed if node isn't on your PATH"
-              />
               <McpServersEditor
                 servers={form.mcp_servers}
                 onChange={(mcp_servers) => setForm({ ...form, mcp_servers })}
