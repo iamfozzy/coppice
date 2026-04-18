@@ -5,9 +5,11 @@ interface Props {
   model: string;
   effort: EffortLevel;
   permissionMode: AgentPermissionMode;
+  conciseMode: boolean;
   onModelChange: (model: string) => void;
   onEffortChange: (effort: EffortLevel) => void;
   onPermissionModeChange: (mode: AgentPermissionMode) => void;
+  onConciseModeChange: (enabled: boolean) => void;
 }
 
 const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
@@ -51,9 +53,11 @@ export function AgentControls({
   model,
   effort,
   permissionMode,
+  conciseMode,
   onModelChange,
   onEffortChange,
   onPermissionModeChange,
+  onConciseModeChange,
 }: Props) {
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 pb-0 pt-2 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
@@ -83,6 +87,22 @@ export function AgentControls({
         mode={permissionMode}
         onModeChange={onPermissionModeChange}
       />
+
+      {/* Concise mode toggle */}
+      <button
+        className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
+          conciseMode
+            ? "border-accent bg-accent/10 text-accent"
+            : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+        }`}
+        onClick={() => onConciseModeChange(!conciseMode)}
+        title={conciseMode ? "Concise mode: ON — Claude uses minimal tokens" : "Concise mode: OFF — Claude responds normally"}
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 4h10M3 8h6M3 12h8" />
+        </svg>
+        Concise
+      </button>
 
       {permissionMode === "plan" && (
         <div className="ml-1 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] text-warning">
