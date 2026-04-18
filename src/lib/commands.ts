@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Project, ProjectFormData, Worktree, AppSettings } from "./types";
+import type { Project, ProjectFormData, Worktree, AppSettings, ImageAttachment } from "./types";
 
 // Project commands
 export async function listProjects(): Promise<Project[]> {
@@ -292,7 +292,8 @@ export async function agentStart(
   sessionId: string,
   cwd: string,
   prompt: string,
-  options?: AgentStartOptions
+  options?: AgentStartOptions,
+  images?: ImageAttachment[]
 ): Promise<void> {
   return invoke("agent_start", {
     sessionId,
@@ -307,14 +308,20 @@ export async function agentStart(
     maxBudgetUsd: options?.maxBudgetUsd,
     resume: options?.resume,
     apiKey: options?.apiKey,
+    images: images?.length ? images : undefined,
   });
 }
 
 export async function agentSendInput(
   sessionId: string,
-  text: string
+  text: string,
+  images?: ImageAttachment[]
 ): Promise<void> {
-  return invoke("agent_send_input", { sessionId, text });
+  return invoke("agent_send_input", {
+    sessionId,
+    text,
+    images: images?.length ? images : undefined,
+  });
 }
 
 export async function agentInterrupt(sessionId: string): Promise<void> {
@@ -378,6 +385,16 @@ export interface AgentAvailability {
 
 export async function agentCheckAvailable(): Promise<AgentAvailability> {
   return invoke("agent_check_available");
+}
+
+export interface ImageFileData {
+  data: string;
+  media_type: string;
+  file_name: string;
+}
+
+export async function readImageBase64(path: string): Promise<ImageFileData> {
+  return invoke("read_image_base64", { path });
 }
 
 // Agent tab cache types
