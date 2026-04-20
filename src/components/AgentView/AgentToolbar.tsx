@@ -10,11 +10,15 @@ interface Props {
 }
 
 /** Resolve the effective context window size for a given model + extended-context flag.
+ *  Prefers the SDK-reported value when available. Falls back to heuristic:
  *  - Opus 4.6, Opus 4.7, Sonnet 4.6: 1M by default (no beta header required)
  *  - Haiku 4.5 and anything else recognized: 200k
  *  - Older Opus/Sonnet versions still gated behind the 1M beta are treated as
  *    200k unless extendedContext is explicitly enabled. */
-function contextWindowFor(model: string, extendedContext: boolean): number {
+function contextWindowFor(model: string, extendedContext: boolean, sdkContextWindow?: number | null): number {
+  // The SDK reports the actual context window in modelUsage — trust it.
+  if (sdkContextWindow && sdkContextWindow > 0) return sdkContextWindow;
+
   const m = model.toLowerCase();
   const has1MByDefault =
     m.includes("opus-4-6") ||
@@ -87,6 +91,7 @@ export function AgentToolbar({
           hasApiKey={hasApiKey}
           model={session.model}
           extendedContext={session.extendedContext}
+          sdkContextWindow={session.sdkContextWindow}
         />
       )}
 
@@ -113,12 +118,14 @@ function CostDisplay({
   hasApiKey,
   model,
   extendedContext,
+  sdkContextWindow,
 }: {
   cost: AgentCost;
   lastTurnCost: AgentCost | null;
   hasApiKey: boolean;
   model: string;
   extendedContext: boolean;
+  sdkContextWindow: number | null;
 }) {
   const anchorRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -156,6 +163,7 @@ function CostDisplay({
           hasApiKey={hasApiKey}
           model={model}
           extendedContext={extendedContext}
+          sdkContextWindow={sdkContextWindow}
         />
       )}
     </>
@@ -170,6 +178,7 @@ function CostTooltip({
   hasApiKey,
   model,
   extendedContext,
+  sdkContextWindow,
 }: {
   anchor: HTMLElement;
   cost: AgentCost;
@@ -177,6 +186,7 @@ function CostTooltip({
   hasApiKey: boolean;
   model: string;
   extendedContext: boolean;
+  sdkContextWindow: number | null;
 }) {
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -203,7 +213,7 @@ function CostTooltip({
   const lastContext = lastTurnCost
     ? lastTurnCost.inputTokens + lastTurnCost.cacheReadTokens + lastTurnCost.cacheWriteTokens
     : 0;
-  const contextWindow = contextWindowFor(model, extendedContext);
+  const contextWindow = contextWindowFor(model, extendedContext, sdkContextWindow);
   const contextPct = lastContext > 0 ? Math.min(100, (lastContext / contextWindow) * 100) : 0;
 
   return createPortal(

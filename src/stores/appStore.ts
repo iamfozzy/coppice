@@ -277,6 +277,7 @@ interface AppState {
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
   replaceAgentCost: (tabId: string, cost: AgentCost) => void;
   setAgentLastTurnCost: (tabId: string, cost: AgentCost) => void;
+  setAgentSdkContextWindow: (tabId: string, contextWindow: number) => void;
   setAgentSdkSessionId: (tabId: string, id: string | null) => void;
   setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
   setAgentPendingQuestion: (tabId: string, pending: AgentPendingQuestion | null) => void;
@@ -626,6 +627,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           permissionMode: cached.permission_mode as AgentPermissionMode,
           cost,
           lastTurnCost: null,
+          sdkContextWindow: null,
           sdkSessionId: cached.sdk_session_id,
           pendingPermission: null,
           pendingQuestion: null,
@@ -846,6 +848,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       conciseMode: true,
       cost: null,
       lastTurnCost: null,
+      sdkContextWindow: null,
       sdkSessionId: null,
       pendingPermission: null,
       pendingQuestion: null,
@@ -1049,6 +1052,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         agentSessionByTab: {
           ...s.agentSessionByTab,
           [tabId]: { ...session, lastTurnCost: cost },
+        },
+      };
+    });
+  },
+
+  setAgentSdkContextWindow: (tabId, contextWindow) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, sdkContextWindow: contextWindow },
         },
       };
     });

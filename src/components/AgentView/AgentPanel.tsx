@@ -428,10 +428,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         const cost = msg.cost as { totalCostUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         const lastTurn = msg.lastTurnCost as { totalCostUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         if (cost) {
-          // `cost` from modelUsage covers only this query (the SDK spawns a
-          // fresh child process per query() and state restoration across
-          // resumes is unreliable). Accumulate onto the pre-query snapshot
-          // to get the true session total.
+          // `cost` from the bridge is the per-query delta (computed from
+          // result.usage which resets each query). Accumulate onto the
+          // pre-query snapshot to get the true session total.
           const pre = preQueryCostRef.current;
           const sessionCost = pre
             ? {
@@ -443,11 +442,16 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
               }
             : cost;
           useAppStore.getState().replaceAgentCost(sessionId, sessionCost);
-          // The last API call's usage (fresh + cache read + cache write)
-          // approximates the context window going into the next turn.
-          // Prefer the bridge-provided lastTurnCost; fall back to the
-          // per-query aggregate if the bridge didn't send one.
+          // `lastTurnCost` from the bridge is the last individual API
+          // call's usage (tracked per-turn in the bridge), NOT the
+          // per-query aggregate. This represents what the model actually
+          // held in its context window on the final call.
           useAppStore.getState().setAgentLastTurnCost(sessionId, lastTurn ?? cost);
+        }
+        // Store the SDK-reported context window size if provided.
+        const sdkContextWindow = msg.contextWindow as number | undefined;
+        if (sdkContextWindow && sdkContextWindow > 0) {
+          useAppStore.getState().setAgentSdkContextWindow(sessionId, sdkContextWindow);
         }
         const subtype = msg.subtype as string;
         activeToolsRef.current.clear();

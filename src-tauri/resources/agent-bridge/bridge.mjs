@@ -149,6 +149,16 @@ let hasInitialized = false;
 let currentPermissionMode = "default";
 let titleGenerated = false;
 
+// Track per-turn usage for accurate context window display.
+// The SDK's result.usage is the aggregate across ALL API calls in a query,
+// not the last call. We need the last call's usage for context display.
+let lastTurnUsage = null;
+
+// Track the SDK's running total_cost_usd across queries so we can compute
+// per-query deltas. The SDK accumulates total_cost_usd in global state
+// (especially on resume), so we must delta to avoid double-counting.
+let prevTotalCostUsd = 0;
+
 // ── Stdin reader ──
 
 const rl = createInterface({ input: process.stdin, terminal: false });
@@ -589,16 +599,25 @@ function processMessage(message) {
       });
 
       // Emit per-turn usage so the UI can show the current context size.
-      // Emit even if some fields are missing — the frontend only uses this
-      // to refresh `lastTurnCost` (the latest call's snapshot).
+      // Also save it — result.usage is the aggregate across ALL API calls
+      // in the query, so we need this per-call snapshot for accurate
+      // context window display.
       const usage = message.message?.usage;
+      if (usage) {
+        lastTurnUsage = {
+          inputTokens: usage.input_tokens || 0,
+          outputTokens: usage.output_tokens || 0,
+          cacheReadTokens: usage.cache_read_input_tokens || 0,
+          cacheWriteTokens: usage.cache_creation_input_tokens || 0,
+        };
+      }
       emit({
         type: "turn_cost",
-        cost: {
-          inputTokens: usage?.input_tokens || 0,
-          outputTokens: usage?.output_tokens || 0,
-          cacheReadTokens: usage?.cache_read_input_tokens || 0,
-          cacheWriteTokens: usage?.cache_creation_input_tokens || 0,
+        cost: lastTurnUsage ?? {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
         },
       });
       break;
@@ -655,53 +674,62 @@ function processMessage(message) {
       // (e.g. from a queued message) won't abort the already-finished query.
       activeQuery = null;
       activeAbort = null;
-      // `message.usage` only reflects the LAST API call in a multi-turn tool
-      // loop, so using it under-reports output and over-reports cache_read
-      // (which grows each iteration as context is replayed). `modelUsage`
-      // is the aggregate across every API call in this query — this is what
-      // Anthropic actually bills and what Claude Code's CLI displays.
+
+      // ── Per-query cost via result.usage ──
+      // result.usage is a local accumulator (K1 in SDK source) that starts
+      // at zero for each query() invocation and sums every API call's usage.
+      // This is the true per-query aggregate. We use it instead of
+      // modelUsage (from the global STATE.modelUsage) which accumulates
+      // across queries — especially on resume — causing double-counting
+      // when the frontend adds it to the pre-query snapshot.
+      const resultUsage = message.usage || {};
+      const queryCost = {
+        inputTokens: resultUsage.input_tokens || 0,
+        outputTokens: resultUsage.output_tokens || 0,
+        cacheReadTokens: resultUsage.cache_read_input_tokens || 0,
+        cacheWriteTokens: resultUsage.cache_creation_input_tokens || 0,
+      };
+
+      // total_cost_usd from the SDK is a running total in global state.
+      // Compute the delta for this query to avoid double-counting.
+      const currentTotalCostUsd = message.total_cost_usd || 0;
+      const queryCostUsd = Math.max(0, currentTotalCostUsd - prevTotalCostUsd);
+      prevTotalCostUsd = currentTotalCostUsd;
+
+      // ── Context window from SDK modelUsage ──
+      // modelUsage entries include a contextWindow field that reflects
+      // the model's actual context window (200K, 1M, etc.). Forward it
+      // so the frontend doesn't have to guess from the model name.
       const modelUsage = message.modelUsage || {};
-      let aggInput = 0;
-      let aggOutput = 0;
-      let aggCacheRead = 0;
-      let aggCacheWrite = 0;
+      let contextWindow = 0;
       for (const mu of Object.values(modelUsage)) {
-        aggInput += mu.inputTokens || 0;
-        aggOutput += mu.outputTokens || 0;
-        aggCacheRead += mu.cacheReadInputTokens || 0;
-        aggCacheWrite += mu.cacheCreationInputTokens || 0;
+        if (mu.contextWindow > contextWindow) contextWindow = mu.contextWindow;
       }
-      // Fall back to `usage` if modelUsage is empty (shouldn't happen for
-      // success/error subtypes, but be defensive).
-      if (Object.keys(modelUsage).length === 0) {
-        aggInput = message.usage?.input_tokens || 0;
-        aggOutput = message.usage?.output_tokens || 0;
-        aggCacheRead = message.usage?.cache_read_input_tokens || 0;
-        aggCacheWrite = message.usage?.cache_creation_input_tokens || 0;
-      }
+
       emit({
         type: "result",
         subtype: message.subtype,
         sessionId: message.session_id,
         cost: {
-          totalCostUsd: message.total_cost_usd || 0,
-          inputTokens: aggInput,
-          outputTokens: aggOutput,
-          cacheReadTokens: aggCacheRead,
-          cacheWriteTokens: aggCacheWrite,
+          totalCostUsd: queryCostUsd,
+          ...queryCost,
         },
-        // The last API call's usage represents the current context window
-        // going into the next turn (fresh + cache read + cache write).
+        // Use the last per-turn usage we tracked (from the final assistant
+        // message). This represents what the model held in its context
+        // window for the last API call — the correct value for the context
+        // percentage display. Falls back to the per-query aggregate only
+        // if no turn_cost was emitted (shouldn't normally happen).
         lastTurnCost: {
           totalCostUsd: 0,
-          inputTokens: message.usage?.input_tokens || 0,
-          outputTokens: message.usage?.output_tokens || 0,
-          cacheReadTokens: message.usage?.cache_read_input_tokens || 0,
-          cacheWriteTokens: message.usage?.cache_creation_input_tokens || 0,
+          ...(lastTurnUsage ?? queryCost),
         },
+        contextWindow: contextWindow || 0,
         durationMs: message.duration_ms || 0,
         numTurns: message.num_turns || 0,
       });
+
+      // Reset per-query tracking for the next query.
+      lastTurnUsage = null;
       break;
     }
 

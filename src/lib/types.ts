@@ -146,6 +146,9 @@ export interface AgentSessionState {
   /** Token usage for the most recent completed turn only (not cumulative).
    *  Used to display current context size (input + cache read + cache write). */
   lastTurnCost: AgentCost | null;
+  /** Context window size reported by the SDK (e.g. 200000 or 1000000).
+   *  More reliable than guessing from the model name string. */
+  sdkContextWindow: number | null;
   sdkSessionId: string | null;
   pendingPermission: AgentPendingPermission | null;
   pendingQuestion: AgentPendingQuestion | null;
