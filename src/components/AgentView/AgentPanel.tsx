@@ -89,21 +89,24 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
 
     // Summarize the conversation as prior context
     parts.push("<prior_session_context>");
-    parts.push("This is a continuation of a previous session. Here is a summary of what was discussed and accomplished:\n");
+    parts.push("Continuation of a previous session. Summary:\n");
 
-    // Include all user requests (usually short)
-    for (const msg of userMsgs) {
-      parts.push(`User request: ${msg.content}`);
+    // Include only the last 5 user requests (most relevant), truncated
+    const recentUser = userMsgs.slice(-5);
+    for (const msg of recentUser) {
+      const text = msg.content!.length > 200
+        ? msg.content!.slice(0, 200) + "..."
+        : msg.content!;
+      parts.push(`User: ${text}`);
     }
 
-    // Include the last few assistant responses (most relevant context)
-    const recentAssistant = assistantMsgs.slice(-3);
+    // Include only the last 2 assistant responses, more aggressively truncated
+    const recentAssistant = assistantMsgs.slice(-2);
     if (recentAssistant.length > 0) {
-      parts.push("\nRecent assistant responses:");
+      parts.push("\nRecent responses:");
       for (const msg of recentAssistant) {
-        // Truncate long assistant responses
-        const text = msg.content!.length > 1000
-          ? msg.content!.slice(0, 1000) + "... [truncated]"
+        const text = msg.content!.length > 500
+          ? msg.content!.slice(0, 500) + "... [truncated]"
           : msg.content!;
         parts.push(text);
       }
@@ -123,7 +126,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   };
 
   /** Token threshold above which we start a fresh session with summary instead of resuming. */
-  const FRESH_SESSION_TOKEN_THRESHOLD = 60_000;
+  const FRESH_SESSION_TOKEN_THRESHOLD = 40_000;
 
   /** Start or resume an agent session with the given prompt text. */
   const dispatchToAgent = (text: string, images?: ImageAttachment[]) => {
