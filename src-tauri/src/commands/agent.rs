@@ -56,6 +56,7 @@ pub fn agent_start(
     effort: Option<String>,
     permission_mode: Option<String>,
     concise_mode: Option<bool>,
+    chat_mode: Option<bool>,
     allowed_tools: Option<Vec<String>>,
     max_turns: Option<u32>,
     max_budget_usd: Option<f64>,
@@ -84,6 +85,9 @@ pub fn agent_start(
     }
     if let Some(cm) = concise_mode {
         options.insert("conciseMode".into(), serde_json::Value::Bool(cm));
+    }
+    if let Some(chat) = chat_mode {
+        options.insert("chatMode".into(), serde_json::Value::Bool(chat));
     }
     if let Some(tools) = &allowed_tools {
         let arr: Vec<serde_json::Value> = tools

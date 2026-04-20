@@ -213,7 +213,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
 
   const handlePush = () => {
     if (uncommittedFiles.length > 0) {
-      sendToAgent("Commit all the changes in this worktree with a clear, descriptive commit message, then push to origin.", HAIKU_MODEL);
+      sendToAgent("Commit all the changes in this worktree with a clear, descriptive commit message, then push to origin. Do NOT add any Co-Authored-By or attribution lines to the commit message.", HAIKU_MODEL);
     } else {
       sendToAgent("Push the current branch to origin.", HAIKU_MODEL);
     }

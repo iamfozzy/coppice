@@ -151,6 +151,7 @@ export interface AgentSessionState {
   pendingQuestion: AgentPendingQuestion | null;
   streamingText: string;
   conciseMode: boolean;
+  chatMode: boolean;
   slashCommands: SlashCommand[];
   queuedMessages: string[];
 }

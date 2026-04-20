@@ -281,6 +281,7 @@ export interface AgentStartOptions {
   effort?: string;
   permissionMode?: string;
   conciseMode?: boolean;
+  chatMode?: boolean;
   allowedTools?: string[];
   maxTurns?: number;
   maxBudgetUsd?: number;
@@ -303,6 +304,7 @@ export async function agentStart(
     effort: options?.effort,
     permissionMode: options?.permissionMode,
     conciseMode: options?.conciseMode,
+    chatMode: options?.chatMode,
     allowedTools: options?.allowedTools,
     maxTurns: options?.maxTurns,
     maxBudgetUsd: options?.maxBudgetUsd,
@@ -413,6 +415,7 @@ export interface AgentTabCache {
   tab_order: number;
   extended_context: boolean;
   concise_mode: boolean;
+  chat_mode: boolean;
   created_at: string;
 }
 
