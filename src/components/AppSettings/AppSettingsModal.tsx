@@ -18,6 +18,10 @@ const defaultSettings: AppSettings = {
   agent_default_effort: "high",
   agent_default_extended_context: false,
   agent_api_key: "",
+  agent_small_fast_model: "",
+  agent_subagent_model: "",
+  agent_bash_max_output: 0,
+  agent_task_max_output: 0,
   mcp_servers: {},
 };
 
@@ -198,6 +202,34 @@ export function AppSettingsModal() {
                 </div>
                 <p className="mt-0.5 text-[10px] text-text-tertiary">Controls how much effort the agent puts into responses</p>
               </div>
+              <Field
+                label="Small/fast model override"
+                value={form.agent_small_fast_model}
+                onChange={(agent_small_fast_model) => setForm({ ...form, agent_small_fast_model })}
+                placeholder="(SDK default — Haiku)"
+                hint="Model used for lightweight tool calls. Set to your primary model to prevent Haiku switching, or leave blank for SDK default."
+              />
+              <Field
+                label="Subagent model"
+                value={form.agent_subagent_model}
+                onChange={(agent_subagent_model) => setForm({ ...form, agent_subagent_model })}
+                placeholder="(SDK default — Sonnet)"
+                hint="Model for Task (subagent) tool calls. Use 'haiku' for cheaper subagents, 'inherit' to match parent model."
+              />
+              <Field
+                label="Bash max output length"
+                value={form.agent_bash_max_output ? String(form.agent_bash_max_output) : ""}
+                onChange={(v) => setForm({ ...form, agent_bash_max_output: parseInt(v) || 0 })}
+                placeholder="30000"
+                hint="Max characters of Bash tool output kept in context (SDK default: 30000). Lower values reduce token usage."
+              />
+              <Field
+                label="Task max output length"
+                value={form.agent_task_max_output ? String(form.agent_task_max_output) : ""}
+                onChange={(v) => setForm({ ...form, agent_task_max_output: parseInt(v) || 0 })}
+                placeholder="30000"
+                hint="Max characters of Task (subagent) output returned to parent context (SDK default: 30000)."
+              />
               <McpServersEditor
                 servers={form.mcp_servers}
                 onChange={(mcp_servers) => setForm({ ...form, mcp_servers })}

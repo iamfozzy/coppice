@@ -122,6 +122,35 @@ pub fn agent_start(
         options.insert("apiKey".into(), serde_json::Value::String(key.clone()));
     }
 
+    // Pass token-saving env overrides from settings
+    {
+        let s = settings.inner().get();
+        if !s.agent_small_fast_model.is_empty() {
+            options.insert(
+                "smallFastModel".into(),
+                serde_json::Value::String(s.agent_small_fast_model.clone()),
+            );
+        }
+        if !s.agent_subagent_model.is_empty() {
+            options.insert(
+                "subagentModel".into(),
+                serde_json::Value::String(s.agent_subagent_model.clone()),
+            );
+        }
+        if s.agent_bash_max_output > 0 {
+            options.insert(
+                "bashMaxOutputLength".into(),
+                serde_json::Value::Number(s.agent_bash_max_output.into()),
+            );
+        }
+        if s.agent_task_max_output > 0 {
+            options.insert(
+                "taskMaxOutputLength".into(),
+                serde_json::Value::Number(s.agent_task_max_output.into()),
+            );
+        }
+    }
+
     // Pass MCP servers from settings
     {
         let s = settings.inner().get();

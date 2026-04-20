@@ -33,6 +33,10 @@ pub struct AppSettings {
     pub agent_default_effort: String,
     pub agent_default_extended_context: bool,
     pub agent_api_key: String,
+    pub agent_small_fast_model: String,
+    pub agent_subagent_model: String,
+    pub agent_bash_max_output: u32,
+    pub agent_task_max_output: u32,
     pub mcp_servers: HashMap<String, McpServerEntry>,
 }
 
@@ -53,6 +57,10 @@ impl Default for AppSettings {
             agent_default_effort: "medium".to_string(),
             agent_default_extended_context: false,
             agent_api_key: String::new(),
+            agent_small_fast_model: String::new(),
+            agent_subagent_model: String::new(),
+            agent_bash_max_output: 0,
+            agent_task_max_output: 0,
             mcp_servers: HashMap::new(),
         }
     }

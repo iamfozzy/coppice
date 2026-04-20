@@ -11,7 +11,7 @@
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInterface } from "readline";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -96,6 +96,82 @@ async function loadClaudeMdContext(cwd) {
   return sections.length ? sections.join("\n\n---\n\n") : "";
 }
 
+/**
+ * Load project-level slash commands from .claude/commands/ directories.
+ *
+ * Scans both the user-global (~/.claude/commands/) and the project-local
+ * (.claude/commands/) directories for *.md files. Each file becomes a slash
+ * command where the filename (minus extension) is the command name and the
+ * first non-empty line of content is used as the description.
+ *
+ * We load these ourselves because "project" is excluded from settingSources
+ * (see comment in handleMessage) to avoid the SDK's <system-reminder>
+ * wrapping of CLAUDE.md which triggers spurious refusals.
+ */
+async function loadProjectCommands(cwd) {
+  const commands = [];
+  const dirs = [
+    join(homedir(), ".claude", "commands"),
+    join(cwd, ".claude", "commands"),
+  ];
+  for (const dir of dirs) {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue; // Directory missing or unreadable
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const name = entry.name.slice(0, -3); // strip .md
+      try {
+        const content = await readFile(join(dir, entry.name), "utf8");
+        const firstLine = content.split("\n").find((l) => l.trim()) || "";
+        commands.push({
+          name,
+          description: firstLine.trim(),
+          argumentHint: "$ARGUMENTS" ,
+        });
+      } catch {
+        // Unreadable file — skip silently
+      }
+    }
+  }
+  return commands;
+}
+
+/**
+ * Expand a project slash command into its markdown content.
+ *
+ * If `prompt` starts with "/<name>" and a matching .claude/commands/<name>.md
+ * file exists (project-local first, then user-global), returns the file content
+ * with $ARGUMENTS replaced by any trailing arguments. Returns null if no match.
+ */
+async function expandProjectCommand(prompt, cwd) {
+  if (!prompt || !prompt.startsWith("/")) return null;
+  const match = prompt.match(/^\/(\S+)(?:\s+(.*))?$/s);
+  if (!match) return null;
+  const [, name, args] = match;
+  const candidates = [
+    join(cwd, ".claude", "commands", `${name}.md`),
+    join(homedir(), ".claude", "commands", `${name}.md`),
+  ];
+  for (const filePath of candidates) {
+    try {
+      let content = await readFile(filePath, "utf8");
+      if (args !== undefined) {
+        content = content.replaceAll("$ARGUMENTS", args);
+      } else {
+        content = content.replaceAll("$ARGUMENTS", "");
+      }
+      return content.trim();
+    } catch {
+      // File not found — try next candidate
+    }
+  }
+  return null;
+}
+
 // ── Pending callback maps ──
 // canUseTool and AskUserQuestion block until the frontend responds.
 // Each pending callback stores { resolve } keyed by callId.
@@ -148,6 +224,7 @@ let activeAbort = null;
 let hasInitialized = false;
 let currentPermissionMode = "default";
 let titleGenerated = false;
+let currentCwd = process.cwd();
 
 // Track per-turn usage for accurate context window display.
 // The SDK's result.usage is the aggregate across ALL API calls in a query,
@@ -280,8 +357,16 @@ async function handleCommand(msg) {
 async function emitCommands() {
   if (!activeQuery) return;
   try {
-    const commands = await activeQuery.supportedCommands();
-    emit({ type: "commands", commands });
+    const sdkCommands = await activeQuery.supportedCommands();
+    // Merge in project-level commands from .claude/commands/ directories
+    // (loaded manually since "project" is excluded from settingSources).
+    const projectCommands = await loadProjectCommands(currentCwd);
+    const sdkNames = new Set(sdkCommands.map((c) => c.name));
+    const merged = [
+      ...sdkCommands,
+      ...projectCommands.filter((c) => !sdkNames.has(c.name)),
+    ];
+    emit({ type: "commands", commands: merged });
   } catch (err) {
     log("supportedCommands error:", err.message);
   }
@@ -340,6 +425,8 @@ async function startSession(msg) {
     activeAbort = null;
   }
   activeQuery = null;
+
+  if (msg.cwd) currentCwd = msg.cwd;
 
   const opts = msg.options || {};
 
@@ -526,14 +613,53 @@ async function startSession(msg) {
     };
   }
 
+  // Token-saving env overrides — these control SDK internals.
+  //
+  // ANTHROPIC_SMALL_FAST_MODEL: override the "small fast" model that the SDK
+  // uses for lightweight tool calls (default: Haiku). Set to the same model
+  // as the primary to disable Haiku switching entirely.
+  //
+  // CLAUDE_CODE_SUBAGENT_MODEL: override the model used by the Task (subagent)
+  // tool. Default: "sonnet". Set to "haiku" for cheaper subagents, or
+  // "inherit" to use the parent conversation's model.
+  //
+  // BASH_MAX_OUTPUT_LENGTH: cap how many characters of Bash tool output the
+  // SDK keeps in context (default: 30000). Lower values shrink context growth
+  // from verbose commands. Range: 1–150000.
+  //
+  // TASK_MAX_OUTPUT_LENGTH: same as above but for Task (subagent) tool output
+  // that flows back into the parent context. Default: 30000.
+  if (opts.smallFastModel) {
+    process.env.ANTHROPIC_SMALL_FAST_MODEL = opts.smallFastModel;
+  }
+  if (opts.subagentModel) {
+    process.env.CLAUDE_CODE_SUBAGENT_MODEL = opts.subagentModel;
+  }
+  if (opts.bashMaxOutputLength) {
+    process.env.BASH_MAX_OUTPUT_LENGTH = String(opts.bashMaxOutputLength);
+  }
+  if (opts.taskMaxOutputLength) {
+    process.env.TASK_MAX_OUTPUT_LENGTH = String(opts.taskMaxOutputLength);
+  }
+
   try {
+    // Expand project slash commands: if the prompt starts with "/<name>" and
+    // a matching .claude/commands/<name>.md file exists, replace the prompt
+    // with its content ($ARGUMENTS substituted). This is needed because
+    // "project" is excluded from settingSources (see comment above).
+    let effectivePrompt = msg.prompt;
+    const expanded = await expandProjectCommand(msg.prompt, currentCwd);
+    if (expanded !== null) {
+      effectivePrompt = expanded;
+    }
+
     // When images are attached, we must use the AsyncIterable<SDKUserMessage>
     // form of `prompt` because the SDK's query() only accepts `string` or
     // `AsyncIterable` — not content block arrays.  A plain string prompt is
     // wrapped by the SDK internally; an iterable lets us provide image blocks.
     let promptArg;
     if (hasImages(msg)) {
-      const contentBlocks = buildContentBlocks(msg.prompt, msg.images);
+      const contentBlocks = buildContentBlocks(effectivePrompt, msg.images);
       promptArg = (async function* () {
         yield {
           type: "user",
@@ -543,7 +669,7 @@ async function startSession(msg) {
         };
       })();
     } else {
-      promptArg = msg.prompt;
+      promptArg = effectivePrompt;
     }
 
     const result = query({
@@ -578,7 +704,10 @@ function processMessage(message) {
           model: message.model || "",
           permissionMode: message.permissionMode || "",
           mcpServers: message.mcp_servers || [],
-          slashCommands: message.slash_commands || [],
+          slashCommands: [
+            ...(message.slash_commands || []),
+            ...(message.skills || []),
+          ],
           isResume: !isFirst,
         });
         // Fetch the richer command list (name, description, argumentHint) —
