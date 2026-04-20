@@ -63,5 +63,6 @@ pub struct AgentTabCache {
     pub tab_order: i32,
     pub extended_context: bool,
     pub concise_mode: bool,
+    pub chat_mode: bool,
     pub created_at: String,
 }

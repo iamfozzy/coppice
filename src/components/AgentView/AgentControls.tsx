@@ -6,10 +6,12 @@ interface Props {
   effort: EffortLevel;
   permissionMode: AgentPermissionMode;
   conciseMode: boolean;
+  chatMode: boolean;
   onModelChange: (model: string) => void;
   onEffortChange: (effort: EffortLevel) => void;
   onPermissionModeChange: (mode: AgentPermissionMode) => void;
   onConciseModeChange: (enabled: boolean) => void;
+  onChatModeChange: (enabled: boolean) => void;
 }
 
 const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
@@ -54,10 +56,12 @@ export function AgentControls({
   effort,
   permissionMode,
   conciseMode,
+  chatMode,
   onModelChange,
   onEffortChange,
   onPermissionModeChange,
   onConciseModeChange,
+  onChatModeChange,
 }: Props) {
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 pb-0 pt-2 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
@@ -102,6 +106,22 @@ export function AgentControls({
           <path d="M3 4h10M3 8h6M3 12h8" />
         </svg>
         Concise
+      </button>
+
+      {/* Chat mode toggle */}
+      <button
+        className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
+          chatMode
+            ? "border-accent bg-accent/10 text-accent"
+            : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+        }`}
+        onClick={() => onChatModeChange(!chatMode)}
+        title={chatMode ? "Chat mode: ON — no tools, minimal system prompt, lower cost" : "Chat mode: OFF — full agent with tools"}
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 3h12v8H6l-3 3v-3H2z" />
+        </svg>
+        Chat
       </button>
 
       {permissionMode === "plan" && (

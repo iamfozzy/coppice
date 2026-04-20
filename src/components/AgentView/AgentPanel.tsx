@@ -36,6 +36,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const setEffort = useAppStore((s) => s.setAgentEffort);
   const setPermissionMode = useAppStore((s) => s.setAgentPermissionMode);
   const setConciseMode = useAppStore((s) => s.setAgentConciseMode);
+  const setChatMode = useAppStore((s) => s.setAgentChatMode);
   const setSlashCommands = useAppStore((s) => s.setAgentSlashCommands);
   const pushQueuedMessage = useAppStore((s) => s.pushAgentQueuedMessage);
   const shiftQueuedMessage = useAppStore((s) => s.shiftQueuedMessage);
@@ -161,6 +162,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
             effort: currentSession.effort || undefined,
             permissionMode: currentSession.permissionMode || undefined,
             conciseMode: currentSession.conciseMode || undefined,
+            chatMode: currentSession.chatMode || undefined,
             apiKey: appSettings?.agent_api_key || undefined,
           }, images)
           .catch((err) => {
@@ -180,6 +182,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
             effort: currentSession.effort || undefined,
             permissionMode: currentSession.permissionMode || undefined,
             conciseMode: currentSession.conciseMode || undefined,
+            chatMode: currentSession.chatMode || undefined,
             resume: currentSession.sdkSessionId,
             apiKey: appSettings?.agent_api_key || undefined,
           }, images)
@@ -201,6 +204,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           effort: currentSession?.effort || undefined,
           permissionMode: currentSession?.permissionMode || undefined,
           conciseMode: currentSession?.conciseMode || undefined,
+          chatMode: currentSession?.chatMode || undefined,
           apiKey: appSettings?.agent_api_key || undefined,
         }, images)
         .catch((err) => {
@@ -255,6 +259,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         effort: session?.effort || undefined,
         permissionMode: session?.permissionMode || undefined,
         conciseMode: session?.conciseMode || undefined,
+        chatMode: session?.chatMode || undefined,
         apiKey: appSettings?.agent_api_key || undefined,
       })
       .catch((err) => {
@@ -664,6 +669,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     setConciseMode(sessionId, enabled);
   };
 
+  const handleChatModeChange = (enabled: boolean) => {
+    setChatMode(sessionId, enabled);
+  };
+
   const handleInterrupt = () => {
     // Stop sends the interrupt signal. The bridge will emit a `result` event
     // which will set status to "done" and auto-dispatch queued messages.
@@ -725,10 +734,12 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         effort={session.effort}
         permissionMode={session.permissionMode}
         conciseMode={session.conciseMode}
+        chatMode={session.chatMode}
         onModelChange={handleModelChange}
         onEffortChange={handleEffortChange}
         onPermissionModeChange={handlePermissionModeChange}
         onConciseModeChange={handleConciseModeChange}
+        onChatModeChange={handleChatModeChange}
       />
       <AgentInputBar
         sessionId={sessionId}

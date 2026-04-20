@@ -96,6 +96,7 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
       tab_order: tabOrder,
       extended_context: session.extendedContext,
       concise_mode: session.conciseMode,
+      chat_mode: session.chatMode,
       created_at: new Date().toISOString(),
     };
     commands.saveAgentTabCache(cache).catch(() => {});
@@ -142,6 +143,7 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         tab_order: i,
         extended_context: session.extendedContext,
         concise_mode: session.conciseMode,
+        chat_mode: session.chatMode,
         created_at: new Date().toISOString(),
       };
       saves.push(commands.saveAgentTabCache(cache));
@@ -274,6 +276,7 @@ interface AppState {
   setAgentEffort: (tabId: string, effort: EffortLevel) => void;
   setAgentExtendedContext: (tabId: string, enabled: boolean) => void;
   setAgentConciseMode: (tabId: string, enabled: boolean) => void;
+  setAgentChatMode: (tabId: string, enabled: boolean) => void;
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
   replaceAgentCost: (tabId: string, cost: AgentCost) => void;
   setAgentLastTurnCost: (tabId: string, cost: AgentCost) => void;
@@ -623,6 +626,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           effort: cached.effort as EffortLevel,
           extendedContext: cached.extended_context,
           conciseMode: cached.concise_mode ?? false,
+          chatMode: cached.chat_mode ?? false,
           permissionMode: cached.permission_mode as AgentPermissionMode,
           cost,
           lastTurnCost: null,
@@ -844,6 +848,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       extendedContext: s.appSettings?.agent_default_extended_context ?? false,
       permissionMode: "bypassPermissions",
       conciseMode: true,
+      chatMode: false,
       cost: null,
       lastTurnCost: null,
       sdkSessionId: null,
@@ -1009,6 +1014,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         agentSessionByTab: {
           ...s.agentSessionByTab,
           [tabId]: { ...session, conciseMode: enabled },
+        },
+      };
+    });
+  },
+
+  setAgentChatMode: (tabId, enabled) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, chatMode: enabled },
         },
       };
     });

@@ -367,12 +367,30 @@ async function startSession(msg) {
   // The caller can override with a custom string or their own preset config.
   // We append CLAUDE.md content here (loaded ourselves) so it's present from
   // turn one without being wrapped in a <system-reminder>. On `resume`, the
+  // Chat mode — disable tools regardless of whether we're starting fresh or
+  // resuming. This must be set before the systemPrompt branching below so that
+  // resumed chat-mode sessions don't silently pick up the default tool set
+  // (~15K tokens of tool definitions).
+  if (opts.chatMode) {
+    queryOptions.tools = [];
+  }
+
   // SDK replays the original system prompt from the session, so skip the
   // re-load to avoid redundant token cost.
   if (opts.systemPrompt) {
     queryOptions.systemPrompt = opts.systemPrompt;
   } else if (opts.resume) {
     // Resuming — SDK restores the original system prompt. Nothing to do.
+  } else if (opts.chatMode) {
+    // Chat mode — minimal system prompt, no tools. Much smaller token footprint
+    // than the claude_code preset since we skip tool definitions entirely.
+    const claudeMd = await loadClaudeMdContext(msg.cwd);
+    const parts = [
+      "You are a helpful coding assistant. Answer questions clearly and concisely.",
+    ];
+    if (claudeMd) parts.push(claudeMd);
+    if (opts.conciseMode) parts.push(CONCISE_MODE_INSTRUCTION);
+    queryOptions.systemPrompt = parts.join("\n\n---\n\n");
   } else {
     const claudeMd = await loadClaudeMdContext(msg.cwd);
     const appendParts = [];
