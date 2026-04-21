@@ -66,6 +66,33 @@ const CONCISE_MODE_INSTRUCTION = `CONCISE MODE: no preamble, no filler, no resta
  */
 const TOOL_FRUGALITY_INSTRUCTION = `Keep tool outputs small: they persist in context for every later turn. Prefer Grep with path/glob filters over wide searches; read files with offset/limit when you know the region; pipe noisy commands through head/tail. Don't cat whole large files or directories to browse — target what you need.`;
 
+const NO_ATTRIBUTION_INSTRUCTION = `IMPORTANT: Do NOT add any Co-Authored-By lines, attribution trailers, or similar attribution metadata to git commit messages. The user has disabled git attribution in their settings.`;
+
+/**
+ * Load the user's ~/.claude/settings.json and check whether git attribution
+ * is disabled. The SDK's `settingSources: ["user"]` reads this file for
+ * permissions and allowed tools, but the `claude_code` preset system prompt
+ * still contains instructions to add Co-Authored-By lines. We read the file
+ * ourselves so we can append a countermanding instruction when the user has
+ * opted out.
+ */
+async function loadUserClaudeSettings() {
+  try {
+    const settingsPath = join(homedir(), ".claude", "settings.json");
+    const raw = await readFile(settingsPath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function isAttributionDisabled(settings) {
+  if (!settings) return false;
+  if (settings.includeCoAuthoredBy === false) return true;
+  if (settings.gitAttribution === false) return true;
+  return false;
+}
+
 /**
  * Load CLAUDE.md content from the user-global and project locations.
  *
@@ -472,6 +499,12 @@ async function startSession(msg) {
     queryOptions.tools = [];
   }
 
+  // Check whether the user has disabled git attribution in ~/.claude/settings.json.
+  // The claude_code preset system prompt instructs the model to add Co-Authored-By
+  // lines; we append a countermanding instruction when the user has opted out.
+  const userClaudeSettings = await loadUserClaudeSettings();
+  const noAttribution = isAttributionDisabled(userClaudeSettings);
+
   // SDK replays the original system prompt from the session, so skip the
   // re-load to avoid redundant token cost.
   if (opts.systemPrompt) {
@@ -487,6 +520,7 @@ async function startSession(msg) {
     ];
     if (claudeMd) parts.push(claudeMd);
     if (opts.conciseMode) parts.push(CONCISE_MODE_INSTRUCTION);
+    if (noAttribution) parts.push(NO_ATTRIBUTION_INSTRUCTION);
     queryOptions.systemPrompt = parts.join("\n\n---\n\n");
   } else {
     const claudeMd = await loadClaudeMdContext(msg.cwd);
@@ -494,6 +528,7 @@ async function startSession(msg) {
     if (claudeMd) appendParts.push(claudeMd);
     appendParts.push(TOOL_FRUGALITY_INSTRUCTION);
     if (opts.conciseMode) appendParts.push(CONCISE_MODE_INSTRUCTION);
+    if (noAttribution) appendParts.push(NO_ATTRIBUTION_INSTRUCTION);
     queryOptions.systemPrompt = {
       type: "preset",
       preset: "claude_code",
