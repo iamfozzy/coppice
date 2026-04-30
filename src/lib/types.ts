@@ -107,6 +107,8 @@ export interface AgentMessage {
   isError?: boolean;
   isQueued?: boolean;
   thinkingText?: string;
+  /** MCP server status for system "session started" messages */
+  mcpServers?: Array<{ name: string; status: string }>;
   timestamp: number;
 }
 

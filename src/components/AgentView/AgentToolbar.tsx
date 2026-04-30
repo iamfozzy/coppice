@@ -2,7 +2,6 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentCost, TokenUsage, AgentSessionState } from "../../lib/types";
 import { useAppStore } from "../../stores/appStore";
-import { AnimatedRobotIcon, AnimatedToolIcon, useRotatingThinkingPhrase } from "./AgentStatusIcons";
 
 interface Props {
   session: AgentSessionState;
@@ -34,47 +33,12 @@ export function AgentToolbar({
 }: Props) {
   const hasApiKey = useAppStore((s) => !!s.appSettings?.agent_api_key);
   const isWorking = session.status === "thinking" || session.status === "tool_use";
-  const waitingOnPlanApproval =
-    session.status === "waiting_permission" &&
-    !!session.pendingPermission &&
-    session.pendingPermission.toolName.toLowerCase().includes("plan");
-  const thinkingPhrase = useRotatingThinkingPhrase();
 
-  // Only show the toolbar when there is something to display
-  const hasCost = !!session.cost;
-  const hasStatus = isWorking || session.status === "waiting_permission" || session.status === "done";
-  if (!hasCost && !hasStatus) return null;
+  // Only show the toolbar when there is cost info to display
+  if (!session.cost) return null;
 
   return (
     <div className="flex items-center gap-3 px-4 py-1.5 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
-      {/* Status indicator */}
-      {isWorking && (
-        <div className="flex items-center gap-1.5 text-accent">
-          {session.status === "tool_use" ? (
-            <AnimatedToolIcon size={12} />
-          ) : (
-            <AnimatedRobotIcon size={12} />
-          )}
-          <span className="text-[10px] font-medium">
-            {session.status === "tool_use" ? "Running tool" : thinkingPhrase.replace(/\.{3}$/, "")}
-          </span>
-        </div>
-      )}
-      {session.status === "waiting_permission" && (
-        <div className="flex items-center gap-1.5 text-warning">
-          <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
-          <span className="text-[10px] font-medium">
-            {waitingOnPlanApproval ? "Waiting for plan approval" : "Waiting for approval"}
-          </span>
-        </div>
-      )}
-      {session.status === "done" && (
-        <div className="flex items-center gap-1.5 text-success">
-          <span className="w-2 h-2 rounded-full bg-success" />
-          <span className="text-[10px] font-medium">Done</span>
-        </div>
-      )}
-
       {/* Spacer */}
       <div className="flex-1" />
 

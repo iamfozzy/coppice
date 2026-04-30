@@ -286,6 +286,21 @@ let lastTurnUsage = null;
 // (especially on resume), so we must delta to avoid double-counting.
 let prevTotalCostUsd = 0;
 
+// Cumulative session totals across every query handled by this bridge
+// process. Since one bridge = one session, this is the per-session total.
+// Seeded from `start.options.priorCost` on the first start() call so that
+// resumed tabs include cost from previous app sessions. The frontend
+// receives these absolute totals on every `result` event and just replaces
+// its session.cost with them — no client-side accumulation.
+let sessionTotals = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  totalCostUsd: 0,
+};
+let sessionTotalsSeeded = false;
+
 // ── Stdin reader ──
 
 const rl = createInterface({ input: process.stdin, terminal: false });
@@ -480,6 +495,23 @@ async function startSession(msg) {
   if (msg.cwd) currentCwd = msg.cwd;
 
   const opts = msg.options || {};
+
+  // Seed cumulative session totals from the frontend's persisted cost on the
+  // first start of this bridge process. Resumed tabs carry forward their
+  // tokens/USD from before the app restart so the toolbar stays accurate.
+  if (!sessionTotalsSeeded) {
+    sessionTotalsSeeded = true;
+    const prior = opts.priorCost;
+    if (prior && typeof prior === "object") {
+      sessionTotals = {
+        inputTokens: Number(prior.inputTokens) || 0,
+        outputTokens: Number(prior.outputTokens) || 0,
+        cacheReadTokens: Number(prior.cacheReadTokens) || 0,
+        cacheWriteTokens: Number(prior.cacheWriteTokens) || 0,
+        totalCostUsd: Number(prior.totalCostUsd) || 0,
+      };
+    }
+  }
 
   // Generate a short tab title from the first prompt (fire-and-forget)
   if (!titleGenerated && msg.prompt) {
@@ -916,6 +948,15 @@ function processMessage(message) {
       const queryCostUsd = Math.max(0, currentTotalCostUsd - prevTotalCostUsd);
       prevTotalCostUsd = currentTotalCostUsd;
 
+      // Accumulate per-query usage into the bridge-side session totals.
+      // The frontend treats `cost` on a result event as the absolute
+      // session total, so it just replaces session.cost with this value.
+      sessionTotals.inputTokens += queryCost.inputTokens;
+      sessionTotals.outputTokens += queryCost.outputTokens;
+      sessionTotals.cacheReadTokens += queryCost.cacheReadTokens;
+      sessionTotals.cacheWriteTokens += queryCost.cacheWriteTokens;
+      sessionTotals.totalCostUsd += queryCostUsd;
+
       // ── Context window from SDK modelUsage ──
       // modelUsage entries include a contextWindow field that reflects
       // the model's actual context window (200K, 1M, etc.). Forward it
@@ -930,10 +971,7 @@ function processMessage(message) {
         type: "result",
         subtype: message.subtype,
         sessionId: message.session_id,
-        cost: {
-          totalCostUsd: queryCostUsd,
-          ...queryCost,
-        },
+        cost: { ...sessionTotals },
         // Use the last per-turn usage we tracked (from the final assistant
         // message). This represents what the model held in its context
         // window for the last API call — the correct value for the context

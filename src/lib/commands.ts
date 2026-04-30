@@ -289,6 +289,9 @@ export interface AgentStartOptions {
   maxBudgetUsd?: number;
   resume?: string;
   apiKey?: string;
+  /** Cumulative session cost from a previous app run — seeds the bridge's
+   *  in-process session totals so resumed tabs keep their running totals. */
+  priorCost?: import("./types").AgentCost;
 }
 
 export async function agentStart(
@@ -313,6 +316,7 @@ export async function agentStart(
     maxBudgetUsd: options?.maxBudgetUsd,
     resume: options?.resume,
     apiKey: options?.apiKey,
+    priorCost: options?.priorCost,
     images: images?.length ? images : undefined,
   });
 }

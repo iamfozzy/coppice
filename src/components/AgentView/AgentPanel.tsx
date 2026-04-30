@@ -40,6 +40,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const setExtendedContext = useAppStore((s) => s.setAgentExtendedContext);
   const setSlashCommands = useAppStore((s) => s.setAgentSlashCommands);
   const pushQueuedMessage = useAppStore((s) => s.pushAgentQueuedMessage);
+  const cancelQueuedMessage = useAppStore((s) => s.cancelQueuedAgentMessage);
   const shiftQueuedMessage = useAppStore((s) => s.shiftQueuedMessage);
   const promoteAllQueuedMessages = useAppStore((s) => s.promoteAllQueuedMessages);
   const appSettings = useAppStore((s) => s.appSettings);
@@ -49,9 +50,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const activeToolsRef = useRef<Map<string, { name: string; input: unknown }>>(new Map());
   // Track the last assistant message uuid to deduplicate
   const lastAssistantUuidRef = useRef<string | null>(null);
-  // Snapshot of cumulative cost before the current query started, so the
-  // authoritative `result` event can add onto the true pre-query total.
-  const preQueryCostRef = useRef(session?.cost ?? null);
   // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt).
   // If the tab was restored from cache (has existing messages), treat it as already renamed.
   const tabRenamedRef = useRef((session?.messages?.length ?? 0) > 0);
@@ -80,9 +78,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const dispatchToAgent = (text: string, images?: ImageAttachment[]) => {
     const store = useAppStore.getState();
     const currentSession = store.agentSessionByTab[sessionId];
-    // Snapshot cost before this query so the authoritative result event can
-    // add onto the true pre-query total.
-    preQueryCostRef.current = currentSession?.cost ?? null;
     setStatus(sessionId, "thinking");
 
     if (currentSession?.sdkSessionId) {
@@ -97,6 +92,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           extendedContext: currentSession.extendedContext || undefined,
           resume: currentSession.sdkSessionId,
           apiKey: appSettings?.agent_api_key || undefined,
+          priorCost: currentSession.cost ?? undefined,
         }, images)
         .catch((err) => {
           appendMessage(sessionId, {
@@ -118,6 +114,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           chatMode: currentSession?.chatMode || undefined,
           extendedContext: currentSession?.extendedContext || undefined,
           apiKey: appSettings?.agent_api_key || undefined,
+          priorCost: currentSession?.cost ?? undefined,
         }, images)
         .catch((err) => {
           appendMessage(sessionId, {
@@ -200,6 +197,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         chatMode: session?.chatMode || undefined,
         extendedContext: session?.extendedContext || undefined,
         apiKey: appSettings?.agent_api_key || undefined,
+        priorCost: session?.cost ?? undefined,
       })
       .catch((err) => {
         appendMessage(sessionId, {
@@ -247,13 +245,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         // Only show "Session started" for the first init, not on resume
         if (!msg.isResume) {
           const mcpServers = msg.mcpServers as Array<{ name: string; status: string }> | undefined;
-          const mcpInfo = mcpServers?.length
-            ? ` · MCPs: ${mcpServers.map((s) => `${s.name} (${s.status})`).join(", ")}`
-            : "";
           appendMessage(sessionId, {
             id: nextMsgId(),
             type: "system",
-            content: `Session started (model: ${sdkModel || "default"})${mcpInfo}`,
+            content: `Session started (model: ${sdkModel || "default"})`,
+            mcpServers: mcpServers?.length ? mcpServers : undefined,
             timestamp: Date.now(),
           });
         }
@@ -379,20 +375,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         const cost = msg.cost as { totalCostUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         const lastTurn = msg.lastTurnCost as { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         if (cost) {
-          // `cost` from the bridge is the per-query delta (computed from
-          // result.usage which resets each query). Accumulate onto the
-          // pre-query snapshot to get the true session total.
-          const pre = preQueryCostRef.current;
-          const sessionCost = pre
-            ? {
-                inputTokens: pre.inputTokens + cost.inputTokens,
-                outputTokens: pre.outputTokens + cost.outputTokens,
-                cacheReadTokens: pre.cacheReadTokens + cost.cacheReadTokens,
-                cacheWriteTokens: pre.cacheWriteTokens + cost.cacheWriteTokens,
-                totalCostUsd: pre.totalCostUsd + cost.totalCostUsd,
-              }
-            : cost;
-          useAppStore.getState().replaceAgentCost(sessionId, sessionCost);
+          // `cost` from the bridge is now the absolute cumulative session
+          // total (the bridge accumulates internally and seeds from
+          // priorCost on first start). Replace session.cost directly —
+          // no client-side accumulation.
+          useAppStore.getState().replaceAgentCost(sessionId, cost);
           // `lastTurnCost` from the bridge is the last individual API
           // call's usage (tracked per-turn in the bridge), NOT the
           // per-query aggregate. This represents what the model actually
@@ -677,6 +664,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         messages={session.messages}
         streamingText={session.streamingText}
         status={session.status}
+        onCancelQueued={(msgId) => cancelQueuedMessage(sessionId, msgId)}
       />
 
       {/* Permission dialog */}

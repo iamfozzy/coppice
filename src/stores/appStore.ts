@@ -288,6 +288,7 @@ interface AppState {
   removeAgentSession: (tabId: string) => void;
   pushAgentQueuedMessage: (tabId: string, text: string) => void;
   removeQueuedAgentMessages: (tabId: string) => void;
+  cancelQueuedAgentMessage: (tabId: string, messageId: string) => void;
   shiftQueuedMessage: (tabId: string) => void;
   promoteAllQueuedMessages: (tabId: string) => void;
 
@@ -1174,6 +1175,31 @@ export const useAppStore = create<AppState>((set, get) => ({
             ...session,
             queuedMessages: [],
             messages: session.messages.filter((m) => !m.isQueued),
+          },
+        },
+      };
+    });
+  },
+
+  cancelQueuedAgentMessage: (tabId, messageId) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      // Find the message to cancel
+      const msgIndex = session.messages.findIndex((m) => m.id === messageId && m.isQueued);
+      if (msgIndex === -1) return s;
+      // Count how many queued messages appear before this one to determine queue index
+      let queueIndex = 0;
+      for (let i = 0; i < msgIndex; i++) {
+        if (session.messages[i].isQueued) queueIndex++;
+      }
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: {
+            ...session,
+            queuedMessages: session.queuedMessages.filter((_, i) => i !== queueIndex),
+            messages: session.messages.filter((m) => m.id !== messageId),
           },
         },
       };

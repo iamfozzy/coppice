@@ -63,6 +63,7 @@ pub fn agent_start(
     max_budget_usd: Option<f64>,
     resume: Option<String>,
     api_key: Option<String>,
+    prior_cost: Option<serde_json::Value>,
     images: Option<Vec<serde_json::Value>>,
     agent_manager: State<'_, AgentManager>,
     settings: State<'_, crate::settings::SettingsState>,
@@ -113,6 +114,9 @@ pub fn agent_start(
     }
     if let Some(r) = &resume {
         options.insert("resume".into(), serde_json::Value::String(r.clone()));
+    }
+    if let Some(pc) = prior_cost {
+        options.insert("priorCost".into(), pc);
     }
 
     // Pass API key from settings if not provided directly
