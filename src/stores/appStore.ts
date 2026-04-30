@@ -1241,7 +1241,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const session = s.agentSessionByTab[tabId];
       if (!session || session.queuedMessages.length === 0) return s;
       const [, ...rest] = session.queuedMessages;
-      let promotedMsg: typeof session.messages[0] | null = null;
+      let promotedMsg: AgentMessage | null = null;
       const remaining = session.messages.filter((m) => {
         if (!promotedMsg && m.isQueued) {
           promotedMsg = m;
@@ -1249,9 +1249,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
         return true;
       });
-      const updatedMessages = promotedMsg
-        ? [...remaining, { ...promotedMsg, isQueued: false, timestamp: Date.now() }]
-        : remaining;
+      let updatedMessages = remaining;
+      if (promotedMsg) {
+        updatedMessages = [...remaining, { ...(promotedMsg as AgentMessage), isQueued: false, timestamp: Date.now() }];
+      }
       return {
         agentSessionByTab: {
           ...s.agentSessionByTab,
