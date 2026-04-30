@@ -8,6 +8,7 @@ const emptyForm: ProjectFormData = {
   local_path: "",
   github_remote: "",
   base_branch: "main",
+  target_branch: "",
   setup_scripts: [],
   build_command: "",
   run_command: "",
@@ -42,6 +43,7 @@ export function ProjectSettingsModal() {
         local_path: existingProject.local_path,
         github_remote: existingProject.github_remote,
         base_branch: existingProject.base_branch || "main",
+        target_branch: existingProject.target_branch || "",
         setup_scripts: existingProject.setup_scripts,
         build_command: existingProject.build_command,
         run_command: existingProject.run_command,
@@ -150,6 +152,12 @@ export function ProjectSettingsModal() {
             value={form.base_branch}
             onChange={(base_branch) => setForm({ ...form, base_branch })}
             placeholder="main"
+          />
+          <Field
+            label="Target branch (PR target, defaults to base branch)"
+            value={form.target_branch}
+            onChange={(target_branch) => setForm({ ...form, target_branch })}
+            placeholder={form.base_branch || "main"}
           />
           <Field
             label="Build command"

@@ -469,9 +469,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         const latestSession = useAppStore.getState().agentSessionByTab[sessionId];
         const hasQueue = latestSession && latestSession.queuedMessages.length > 0;
 
-        // Only show error subtypes when there's nothing queued — abort/interrupt
-        // subtypes during queue dispatch are expected and shouldn't alarm the user.
-        if (subtype && subtype.startsWith("error_") && !hasQueue) {
+        // Show error subtypes only when they indicate a real failure the user
+        // should know about. `error_during_execution` is a common SDK
+        // termination reason when a tool returned an error that the agent
+        // already handled gracefully — surfacing it alarms users needlessly.
+        if (subtype && subtype.startsWith("error_") && !hasQueue && subtype !== "error_during_execution") {
           appendMessage(sessionId, {
             id: nextMsgId(),
             type: "error",

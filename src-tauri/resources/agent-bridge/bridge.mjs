@@ -131,9 +131,8 @@ async function loadClaudeMdContext(cwd) {
  * command where the filename (minus extension) is the command name and the
  * first non-empty line of content is used as the description.
  *
- * We load these ourselves because "project" is excluded from settingSources
- * (see comment in handleMessage) to avoid the SDK's <system-reminder>
- * wrapping of CLAUDE.md which triggers spurious refusals.
+ * We load these ourselves so that slash commands work regardless of
+ * how settingSources is configured.
  */
 async function loadProjectCommands(cwd) {
   const commands = [];
@@ -385,8 +384,9 @@ async function emitCommands() {
   if (!activeQuery) return;
   try {
     const sdkCommands = await activeQuery.supportedCommands();
-    // Merge in project-level commands from .claude/commands/ directories
-    // (loaded manually since "project" is excluded from settingSources).
+    // Merge in project-level commands from .claude/commands/ directories.
+    // The SDK also discovers these via settingSources, but we load manually
+    // as a fallback. SDK commands take priority (deduped by name).
     const projectCommands = await loadProjectCommands(currentCwd);
     const sdkNames = new Set(sdkCommands.map((c) => c.name));
     const merged = [
@@ -465,14 +465,19 @@ async function startSession(msg) {
   const abortController = new AbortController();
   activeAbort = abortController;
 
-  // Exclude "project" from settingSources by default: we load CLAUDE.md
-  // ourselves and append it as plain text (see loadClaudeMdContext) to avoid
-  // the SDK's <system-reminder> wrapping, which triggers spurious refusals.
+  // Include "project" in settingSources so project-level .claude/settings.json
+  // (permissions, allowed tools, etc.) is loaded. We still load CLAUDE.md
+  // ourselves and append it as plain text to the system prompt (see
+  // loadClaudeMdContext) to avoid the SDK's <system-reminder> wrapping which
+  // triggers spurious refusals. The SDK may also inject CLAUDE.md content
+  // from "project" settingSources, but since we provide our own systemPrompt
+  // (preset + append), the duplication is minimal and much better than
+  // missing project permissions/skills.
   const queryOptions = {
     cwd: msg.cwd,
     abortController,
     includePartialMessages: true,
-    settingSources: opts.settingSources || ["user", "local"],
+    settingSources: opts.settingSources || ["user", "project", "local"],
   };
 
   if (opts.model) queryOptions.model = opts.model;
@@ -680,8 +685,7 @@ async function startSession(msg) {
   try {
     // Expand project slash commands: if the prompt starts with "/<name>" and
     // a matching .claude/commands/<name>.md file exists, replace the prompt
-    // with its content ($ARGUMENTS substituted). This is needed because
-    // "project" is excluded from settingSources (see comment above).
+    // with its content ($ARGUMENTS substituted).
     let effectivePrompt = msg.prompt;
     const expanded = await expandProjectCommand(msg.prompt, currentCwd);
     if (expanded !== null) {

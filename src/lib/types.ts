@@ -4,6 +4,7 @@ export interface Project {
   local_path: string;
   github_remote: string;
   base_branch: string;
+  target_branch: string;
   setup_scripts: string[];
   build_command: string;
   run_command: string;

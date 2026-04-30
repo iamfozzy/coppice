@@ -76,10 +76,10 @@ export const ChangesPanel = memo(function ChangesPanel() {
   // Use refs for async operations to avoid stale closures and dependency churn
   const wtPathRef = useRef(worktree?.path);
   const wtIdRef = useRef(worktree?.id);
-  const baseBranchRef = useRef(worktree?.target_branch || project?.base_branch || "main");
+  const baseBranchRef = useRef(worktree?.target_branch || project?.target_branch || project?.base_branch || "main");
   wtPathRef.current = worktree?.path;
   wtIdRef.current = worktree?.id;
-  baseBranchRef.current = worktree?.target_branch || project?.base_branch || "main";
+  baseBranchRef.current = worktree?.target_branch || project?.target_branch || project?.base_branch || "main";
 
   // Deferred uncommitted refresh + unpushed count
   useEffect(() => {

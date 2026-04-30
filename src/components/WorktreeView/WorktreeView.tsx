@@ -117,9 +117,10 @@ export function WorktreeView() {
         <span className="text-xs text-text-tertiary font-mono">{liveBranch ?? worktree.branch}</span>
         <TargetBranchPicker
           projectId={project.id}
-          currentTarget={worktree.target_branch || project.base_branch}
+          currentTarget={worktree.target_branch || project.target_branch || project.base_branch}
           onChange={(branch) => {
-            const value = branch === project.base_branch ? null : branch;
+            const defaultTarget = project.target_branch || project.base_branch;
+            const value = branch === defaultTarget ? null : branch;
             setWorktreeTargetBranch(worktree.id, project.id, value);
           }}
         />
