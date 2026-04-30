@@ -41,6 +41,7 @@ impl Database {
                 local_path TEXT NOT NULL,
                 github_remote TEXT NOT NULL DEFAULT '',
                 base_branch TEXT NOT NULL DEFAULT 'main',
+                target_branch TEXT NOT NULL DEFAULT '',
                 setup_scripts TEXT NOT NULL DEFAULT '[]',
                 build_command TEXT NOT NULL DEFAULT '',
                 run_command TEXT NOT NULL DEFAULT '',
@@ -90,6 +91,7 @@ impl Database {
 
         // Migrations (ignore errors if columns already exist)
         let _ = conn.execute("ALTER TABLE projects ADD COLUMN base_branch TEXT NOT NULL DEFAULT 'main'", []);
+        let _ = conn.execute("ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT ''", []);
         let _ = conn.execute("ALTER TABLE worktrees ADD COLUMN target_branch TEXT", []);
         let _ = conn.execute("ALTER TABLE projects ADD COLUMN pr_create_skill TEXT NOT NULL DEFAULT ''", []);
         let _ = conn.execute("ALTER TABLE projects ADD COLUMN claude_command TEXT NOT NULL DEFAULT ''", []);
@@ -105,26 +107,27 @@ impl Database {
     pub fn list_projects(&self) -> Result<Vec<Project>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, local_path, github_remote, base_branch, setup_scripts, build_command, run_command, env_files, pr_create_skill, claude_command, created_at
+            "SELECT id, name, local_path, github_remote, base_branch, target_branch, setup_scripts, build_command, run_command, env_files, pr_create_skill, claude_command, created_at
              FROM projects ORDER BY name"
         )?;
 
         let rows = stmt.query_map([], |row| {
-            let setup_scripts_json: String = row.get(5)?;
-            let env_files_json: String = row.get(8)?;
+            let setup_scripts_json: String = row.get(6)?;
+            let env_files_json: String = row.get(9)?;
             Ok(Project {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 local_path: row.get(2)?,
                 github_remote: row.get(3)?,
                 base_branch: row.get(4)?,
+                target_branch: row.get(5)?,
                 setup_scripts: serde_json::from_str(&setup_scripts_json).unwrap_or_default(),
-                build_command: row.get(6)?,
-                run_command: row.get(7)?,
+                build_command: row.get(7)?,
+                run_command: row.get(8)?,
                 env_files: serde_json::from_str(&env_files_json).unwrap_or_default(),
-                pr_create_skill: row.get(9)?,
-                claude_command: row.get(10)?,
-                created_at: row.get(11)?,
+                pr_create_skill: row.get(10)?,
+                claude_command: row.get(11)?,
+                created_at: row.get(12)?,
             })
         })?;
 
@@ -139,9 +142,9 @@ impl Database {
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO projects (id, name, local_path, github_remote, base_branch, setup_scripts, build_command, run_command, env_files, pr_create_skill, claude_command, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![id, data.name, data.local_path, data.github_remote, data.base_branch, setup_scripts_json, data.build_command, data.run_command, env_files_json, data.pr_create_skill, data.claude_command, now],
+            "INSERT INTO projects (id, name, local_path, github_remote, base_branch, target_branch, setup_scripts, build_command, run_command, env_files, pr_create_skill, claude_command, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![id, data.name, data.local_path, data.github_remote, data.base_branch, data.target_branch, setup_scripts_json, data.build_command, data.run_command, env_files_json, data.pr_create_skill, data.claude_command, now],
         )?;
 
         Ok(Project {
@@ -150,6 +153,7 @@ impl Database {
             local_path: data.local_path.clone(),
             github_remote: data.github_remote.clone(),
             base_branch: data.base_branch.clone(),
+            target_branch: data.target_branch.clone(),
             setup_scripts: data.setup_scripts.clone(),
             build_command: data.build_command.clone(),
             run_command: data.run_command.clone(),
@@ -166,31 +170,32 @@ impl Database {
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE projects SET name=?1, local_path=?2, github_remote=?3, base_branch=?4, setup_scripts=?5, build_command=?6, run_command=?7, env_files=?8, pr_create_skill=?9, claude_command=?10
-             WHERE id=?11",
-            params![data.name, data.local_path, data.github_remote, data.base_branch, setup_scripts_json, data.build_command, data.run_command, env_files_json, data.pr_create_skill, data.claude_command, id],
+            "UPDATE projects SET name=?1, local_path=?2, github_remote=?3, base_branch=?4, target_branch=?5, setup_scripts=?6, build_command=?7, run_command=?8, env_files=?9, pr_create_skill=?10, claude_command=?11
+             WHERE id=?12",
+            params![data.name, data.local_path, data.github_remote, data.base_branch, data.target_branch, setup_scripts_json, data.build_command, data.run_command, env_files_json, data.pr_create_skill, data.claude_command, id],
         )?;
 
         // Fetch updated record
         let mut stmt = conn.prepare(
-            "SELECT id, name, local_path, github_remote, base_branch, setup_scripts, build_command, run_command, env_files, pr_create_skill, claude_command, created_at FROM projects WHERE id=?1"
+            "SELECT id, name, local_path, github_remote, base_branch, target_branch, setup_scripts, build_command, run_command, env_files, pr_create_skill, claude_command, created_at FROM projects WHERE id=?1"
         )?;
         stmt.query_row(params![id], |row| {
-            let setup_scripts_json: String = row.get(5)?;
-            let env_files_json: String = row.get(8)?;
+            let setup_scripts_json: String = row.get(6)?;
+            let env_files_json: String = row.get(9)?;
             Ok(Project {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 local_path: row.get(2)?,
                 github_remote: row.get(3)?,
                 base_branch: row.get(4)?,
+                target_branch: row.get(5)?,
                 setup_scripts: serde_json::from_str(&setup_scripts_json).unwrap_or_default(),
-                build_command: row.get(6)?,
-                run_command: row.get(7)?,
+                build_command: row.get(7)?,
+                run_command: row.get(8)?,
                 env_files: serde_json::from_str(&env_files_json).unwrap_or_default(),
-                pr_create_skill: row.get(9)?,
-                claude_command: row.get(10)?,
-                created_at: row.get(11)?,
+                pr_create_skill: row.get(10)?,
+                claude_command: row.get(11)?,
+                created_at: row.get(12)?,
             })
         })
     }

@@ -38,15 +38,6 @@ fn get_project_path(db: &Database, project_id: &str) -> Result<String, String> {
         .ok_or_else(|| "Project not found".to_string())
 }
 
-fn _get_github_remote(db: &Database, project_id: &str) -> Result<String, String> {
-    let projects = db.list_projects().map_err(|e| e.to_string())?;
-    projects
-        .iter()
-        .find(|p| p.id == project_id)
-        .map(|p| p.github_remote.clone())
-        .ok_or_else(|| "Project not found".to_string())
-}
-
 #[tauri::command]
 pub async fn get_pr_for_branch(
     db: State<'_, Database>,
@@ -126,6 +117,7 @@ pub async fn create_pr(
     worktree_path: String,
     title: String,
     body: String,
+    base_branch: Option<String>,
 ) -> Result<PrInfo, String> {
     let cwd = if worktree_path.is_empty() {
         get_project_path(&db, &project_id)?
@@ -146,13 +138,19 @@ pub async fn create_pr(
     }
 
     // Create the PR
+    let mut pr_args = vec![
+        "pr", "create",
+        "--title", &title,
+        "--body", &body,
+    ];
+    if let Some(ref base) = base_branch {
+        pr_args.push("--base");
+        pr_args.push(base);
+    }
+    pr_args.extend(["--json", "number,title,state,url,isDraft,mergeable,headRefName"]);
+
     let output = user_command(&bin("gh"))
-        .args([
-            "pr", "create",
-            "--title", &title,
-            "--body", &body,
-            "--json", "number,title,state,url,isDraft,mergeable,headRefName",
-        ])
+        .args(&pr_args)
         .current_dir(&cwd)
         .output()
         .map_err(|e| format!("Failed to create PR: {}", e))?;

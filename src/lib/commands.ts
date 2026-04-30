@@ -214,9 +214,10 @@ export async function createPr(
   projectId: string,
   worktreePath: string,
   title: string,
-  body: string
+  body: string,
+  baseBranch?: string
 ): Promise<PrInfo> {
-  return invoke("create_pr", { projectId, worktreePath, title, body });
+  return invoke("create_pr", { projectId, worktreePath, title, body, baseBranch });
 }
 
 export async function getFailedActionLogs(
