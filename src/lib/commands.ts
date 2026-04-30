@@ -283,6 +283,7 @@ export interface AgentStartOptions {
   permissionMode?: string;
   conciseMode?: boolean;
   chatMode?: boolean;
+  extendedContext?: boolean;
   allowedTools?: string[];
   maxTurns?: number;
   maxBudgetUsd?: number;
@@ -306,6 +307,7 @@ export async function agentStart(
     permissionMode: options?.permissionMode,
     conciseMode: options?.conciseMode,
     chatMode: options?.chatMode,
+    extendedContext: options?.extendedContext,
     allowedTools: options?.allowedTools,
     maxTurns: options?.maxTurns,
     maxBudgetUsd: options?.maxBudgetUsd,
@@ -398,6 +400,16 @@ export interface ImageFileData {
 
 export async function readImageBase64(path: string): Promise<ImageFileData> {
   return invoke("read_image_base64", { path });
+}
+
+export interface ProjectSlashCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
+export async function getProjectCommands(cwd: string): Promise<ProjectSlashCommand[]> {
+  return invoke("get_project_commands", { cwd });
 }
 
 // Agent tab cache types

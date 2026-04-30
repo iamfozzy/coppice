@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { EffortLevel, AgentPermissionMode } from "../../lib/types";
+import { SUPPORTED_MODELS, modelSupports1MContext } from "../../lib/supportedModels";
 
 interface Props {
   model: string;
@@ -7,22 +8,18 @@ interface Props {
   permissionMode: AgentPermissionMode;
   conciseMode: boolean;
   chatMode: boolean;
+  extendedContext: boolean;
   onModelChange: (model: string) => void;
   onEffortChange: (effort: EffortLevel) => void;
   onPermissionModeChange: (mode: AgentPermissionMode) => void;
   onConciseModeChange: (enabled: boolean) => void;
   onChatModeChange: (enabled: boolean) => void;
+  onExtendedContextChange: (enabled: boolean) => void;
 }
 
 const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
-const MODELS = [
-  { value: "", label: "Default" },
-  { value: "claude-opus-4-7", label: "Opus 4.7" },
-  { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
-  { value: "claude-opus-4-6", label: "Opus 4.6" },
-  { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-];
+const MODELS = SUPPORTED_MODELS;
 
 const PERMISSION_MODES: {
   value: AgentPermissionMode;
@@ -57,16 +54,38 @@ export function AgentControls({
   permissionMode,
   conciseMode,
   chatMode,
+  extendedContext,
   onModelChange,
   onEffortChange,
   onPermissionModeChange,
   onConciseModeChange,
   onChatModeChange,
+  onExtendedContextChange,
 }: Props) {
+  const supports1M = modelSupports1MContext(model);
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 pb-0 pt-2 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
       {/* Model selector — custom dropdown */}
       <ModelPicker model={model} onModelChange={onModelChange} />
+
+      {/* 1M context toggle — only visible for models that support it */}
+      {supports1M && (
+        <button
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
+            extendedContext
+              ? "border-accent bg-accent/10 text-accent"
+              : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+          }`}
+          onClick={() => onExtendedContextChange(!extendedContext)}
+          title={
+            extendedContext
+              ? "1M context: ON — extended window enabled (>200K input billed at long-context rates)"
+              : "1M context: OFF — using default 200K window"
+          }
+        >
+          1M
+        </button>
+      )}
 
       {/* Effort selector */}
       <div className="flex items-center rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">

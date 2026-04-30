@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { AgentCost, AgentSessionState } from "../../lib/types";
+import type { AgentCost, TokenUsage, AgentSessionState } from "../../lib/types";
 import { useAppStore } from "../../stores/appStore";
 import { AnimatedRobotIcon, AnimatedToolIcon, useRotatingThinkingPhrase } from "./AgentStatusIcons";
 
@@ -10,24 +10,21 @@ interface Props {
 }
 
 /** Resolve the effective context window size for a given model + extended-context flag.
- *  Prefers the SDK-reported value when available. Falls back to heuristic:
- *  - Opus 4.6, Opus 4.7, Sonnet 4.6: 1M by default (no beta header required)
- *  - Haiku 4.5 and anything else recognized: 200k
- *  - Older Opus/Sonnet versions still gated behind the 1M beta are treated as
- *    200k unless extendedContext is explicitly enabled. */
+ *  When the user has explicitly enabled 1M context on a supporting model (via the
+ *  [1m] model suffix), trust that — the SDK's modelUsage.contextWindow may not
+ *  always reflect the extended window. Otherwise prefer the SDK-reported value,
+ *  falling back to a heuristic:
+ *  - 4.x Opus/Sonnet: 1M when extendedContext is enabled, otherwise 200k
+ *  - Haiku 4.5 and anything else: 200k */
 function contextWindowFor(model: string, extendedContext: boolean, sdkContextWindow?: number | null): number {
-  // The SDK reports the actual context window in modelUsage — trust it.
+  const m = model.toLowerCase();
+  const supports1M = m.includes("opus-4") || m.includes("sonnet-4");
+  if (supports1M && extendedContext) return 1_000_000;
+
+  // The SDK reports the actual context window in modelUsage — trust it
+  // when the user hasn't asked for the extended window.
   if (sdkContextWindow && sdkContextWindow > 0) return sdkContextWindow;
 
-  const m = model.toLowerCase();
-  const has1MByDefault =
-    m.includes("opus-4-6") ||
-    m.includes("opus-4-7") ||
-    m.includes("sonnet-4-6");
-  if (has1MByDefault) return 1_000_000;
-  // Legacy fallback: other 4.x models could opt into 1M via beta.
-  const supportsBeta = m.includes("opus-4") || m.includes("sonnet-4");
-  if (supportsBeta && extendedContext) return 1_000_000;
   return 200_000;
 }
 
@@ -81,9 +78,8 @@ export function AgentToolbar({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Cost display — cumulative session totals. "in" shows fresh input
-          tokens (billed at full price). Detailed breakdown with cache reads
-          and writes lives in the hover tooltip. */}
+      {/* Cost display — toolbar shows *current* context size (last turn).
+          Cumulative session totals live in the hover tooltip. */}
       {session.cost && (
         <CostDisplay
           cost={session.cost}
@@ -121,7 +117,7 @@ function CostDisplay({
   sdkContextWindow,
 }: {
   cost: AgentCost;
-  lastTurnCost: AgentCost | null;
+  lastTurnCost: TokenUsage | null;
   hasApiKey: boolean;
   model: string;
   extendedContext: boolean;
@@ -129,10 +125,14 @@ function CostDisplay({
 }) {
   const anchorRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
-  // Show fresh + cache write as "in" — these are billed at full price or more.
-  // Cache reads (replayed context at ~10% price) are excluded to avoid
-  // inflating the headline number with cheap repeated reads.
-  const sessionIn = cost.inputTokens + cost.cacheWriteTokens;
+  // The toolbar "in" number shows the *current* context size (last turn),
+  // not the inflated cumulative total.  Cache reads re-send the entire prior
+  // conversation every turn, so summing across turns produces a misleadingly
+  // large number.  The cumulative breakdown stays in the hover tooltip.
+  const currentIn = lastTurnCost
+    ? lastTurnCost.inputTokens + lastTurnCost.cacheReadTokens + lastTurnCost.cacheWriteTokens
+    : cost.inputTokens + cost.cacheReadTokens + cost.cacheWriteTokens;
+  const currentOut = lastTurnCost ? lastTurnCost.outputTokens : cost.outputTokens;
 
   return (
     <>
@@ -151,9 +151,9 @@ function CostDisplay({
             <span className="mx-1 opacity-50">|</span>
           </>
         )}
-        {formatTokens(sessionIn)} in
+        {formatTokens(currentIn)} in
         {" / "}
-        {formatTokens(cost.outputTokens)} out
+        {formatTokens(currentOut)} out
       </span>
       {open && anchorRef.current && (
         <CostTooltip
@@ -182,7 +182,7 @@ function CostTooltip({
 }: {
   anchor: HTMLElement;
   cost: AgentCost;
-  lastTurnCost: AgentCost | null;
+  lastTurnCost: TokenUsage | null;
   hasApiKey: boolean;
   model: string;
   extendedContext: boolean;
@@ -210,8 +210,9 @@ function CostTooltip({
   const sessionInput = cost.inputTokens + cost.cacheReadTokens + cost.cacheWriteTokens;
   const pct = (n: number) =>
     sessionInput > 0 ? ((n / sessionInput) * 100).toFixed(1) + "%" : "0%";
+  // Context window is consumed by both input and output tokens.
   const lastContext = lastTurnCost
-    ? lastTurnCost.inputTokens + lastTurnCost.cacheReadTokens + lastTurnCost.cacheWriteTokens
+    ? lastTurnCost.inputTokens + lastTurnCost.cacheReadTokens + lastTurnCost.cacheWriteTokens + lastTurnCost.outputTokens
     : 0;
   const contextWindow = contextWindowFor(model, extendedContext, sdkContextWindow);
   const contextPct = lastContext > 0 ? Math.min(100, (lastContext / contextWindow) * 100) : 0;
@@ -284,7 +285,7 @@ function CostTooltip({
 
           <span className="text-text-tertiary">output</span>
           <span className="text-right">{fmt(cost.outputTokens)}</span>
-          <span />
+          <span className="text-text-tertiary">{sessionInput + cost.outputTokens > 0 ? ((cost.outputTokens / (sessionInput + cost.outputTokens)) * 100).toFixed(1) + "% total" : "0%"}</span>
         </div>
       </div>
 
@@ -306,7 +307,7 @@ function CostTooltip({
         </div>
         <div className="text-text-tertiary">
           Session totals are cumulative across every turn. Current context shows
-          just the last turn — roughly what the model held in its context window.
+          the last turn's input + output — what consumed the model's context window.
         </div>
       </div>
 

@@ -126,11 +126,16 @@ export interface AgentPendingQuestion {
   }>;
 }
 
-export interface AgentCost {
+/** Raw token counts for a single API call or accumulated session. */
+export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+}
+
+/** Token counts plus estimated USD cost — used for cumulative session totals. */
+export interface AgentCost extends TokenUsage {
   totalCostUsd: number;
 }
 
@@ -149,8 +154,8 @@ export interface AgentSessionState {
   permissionMode: AgentPermissionMode;
   cost: AgentCost | null;
   /** Token usage for the most recent completed turn only (not cumulative).
-   *  Used to display current context size (input + cache read + cache write). */
-  lastTurnCost: AgentCost | null;
+   *  Used to display current context size (input + cache + output tokens). */
+  lastTurnCost: TokenUsage | null;
   /** Context window size reported by the SDK (e.g. 200000 or 1000000).
    *  More reliable than guessing from the model name string. */
   sdkContextWindow: number | null;

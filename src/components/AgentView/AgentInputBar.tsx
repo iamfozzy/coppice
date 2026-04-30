@@ -94,6 +94,13 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
+  const activeItemRef = useRef<HTMLButtonElement>(null);
+
+  // Keep the highlighted command visible when arrow-key navigating a long
+  // (scrollable) command list.
+  useEffect(() => {
+    activeItemRef.current?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
 
   // Consume images dropped via Tauri's native drag-drop handler (App.tsx).
   const pendingImages = useAppStore((s) => s.pendingDroppedImages[sessionId]);
@@ -128,9 +135,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
   const filtered = useMemo<SlashCommand[]>(() => {
     if (query === null || !slashCommands?.length) return [];
     const q = query.toLowerCase();
-    return slashCommands
-      .filter((c) => c.name.toLowerCase().startsWith(q))
-      .slice(0, 10);
+    return slashCommands.filter((c) => c.name.toLowerCase().startsWith(q));
   }, [query, slashCommands]);
 
   const pickerOpen = filtered.length > 0;
@@ -292,8 +297,9 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
           {filtered.map((cmd, i) => (
             <button
               key={cmd.name}
+              ref={i === activeIndex ? activeItemRef : undefined}
               type="button"
-              className={`w-full text-left px-3 py-1.5 text-[12px] font-mono flex items-baseline gap-2 ${
+              className={`w-full text-left px-3 py-1.5 text-[12px] font-mono flex items-center gap-2 ${
                 i === activeIndex
                   ? "bg-accent/20 text-text-primary"
                   : "text-text-secondary hover:bg-bg-tertiary"
@@ -305,12 +311,12 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
               }}
               onMouseEnter={() => setActiveIndex(i)}
             >
-              <span className="text-accent">/{cmd.name}</span>
+              <span className="text-accent shrink-0 whitespace-nowrap">/{cmd.name}</span>
               {cmd.argumentHint && (
-                <span className="text-text-tertiary">{cmd.argumentHint}</span>
+                <span className="text-text-tertiary shrink-0 whitespace-nowrap">{cmd.argumentHint}</span>
               )}
               {cmd.description && (
-                <span className="ml-auto text-text-tertiary truncate">
+                <span className="ml-auto text-text-tertiary truncate min-w-0">
                   {cmd.description}
                 </span>
               )}

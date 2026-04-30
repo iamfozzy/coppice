@@ -117,6 +117,7 @@ type Block =
   | { type: "blockquote"; lines: string[] }
   | { type: "ul"; items: string[] }
   | { type: "ol"; items: string[] }
+  | { type: "table"; headers: string[]; alignments: ("left" | "center" | "right" | null)[]; rows: string[][] }
   | { type: "paragraph"; content: string };
 
 function parseBlocks(text: string): Block[] {
@@ -187,6 +188,34 @@ function parseBlocks(text: string): Block[] {
         i++;
       }
       blocks.push({ type: "ol", items });
+      continue;
+    }
+
+    // Table — header row, separator row with dashes/colons, then data rows
+    if (
+      i + 1 < lines.length &&
+      line.includes("|") &&
+      /^\|?[\s\-:]+(\|[\s\-:]+)+\|?\s*$/.test(lines[i + 1])
+    ) {
+      const parseCells = (row: string) =>
+        row.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+      const headers = parseCells(line);
+      const sepCells = parseCells(lines[i + 1]);
+      const alignments: ("left" | "center" | "right" | null)[] = sepCells.map((c) => {
+        const l = c.startsWith(":");
+        const r = c.endsWith(":");
+        if (l && r) return "center";
+        if (r) return "right";
+        if (l) return "left";
+        return null;
+      });
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") {
+        rows.push(parseCells(lines[i]));
+        i++;
+      }
+      blocks.push({ type: "table", headers, alignments, rows });
       continue;
     }
 
@@ -374,6 +403,41 @@ export function MarkdownContent({ text }: { text: string }) {
                   </li>
                 ))}
               </ol>
+            );
+          case "table":
+            return (
+              <div key={i} className="overflow-x-auto rounded-lg border border-border-primary">
+                <table className="w-full text-[12px] border-collapse">
+                  <thead>
+                    <tr className="bg-bg-secondary/60">
+                      {block.headers.map((h, j) => (
+                        <th
+                          key={j}
+                          className="px-3 py-1.5 font-semibold text-text-primary border-b border-border-primary text-left"
+                          style={{ textAlign: block.alignments[j] || "left" }}
+                        >
+                          {renderInline(h)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, ri) => (
+                      <tr key={ri} className={ri % 2 === 1 ? "bg-bg-secondary/30" : ""}>
+                        {row.map((cell, ci) => (
+                          <td
+                            key={ci}
+                            className="px-3 py-1.5 text-text-secondary border-b border-border-primary/50"
+                            style={{ textAlign: block.alignments[ci] || "left" }}
+                          >
+                            {renderInline(cell)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             );
           case "paragraph":
             return (

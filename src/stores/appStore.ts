@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment } from "../lib/types";
 import { DEFAULT_SLASH_COMMANDS } from "../lib/slashCommandDefaults";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
@@ -279,7 +279,7 @@ interface AppState {
   setAgentChatMode: (tabId: string, enabled: boolean) => void;
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
   replaceAgentCost: (tabId: string, cost: AgentCost) => void;
-  setAgentLastTurnCost: (tabId: string, cost: AgentCost) => void;
+  setAgentLastTurnCost: (tabId: string, cost: TokenUsage) => void;
   setAgentSdkContextWindow: (tabId: string, contextWindow: number) => void;
   setAgentSdkSessionId: (tabId: string, id: string | null) => void;
   setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
@@ -623,7 +623,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         restoredSessions[cached.tab_id] = {
           messages,
           status,
-          model: cached.model,
+          model: cached.model || get().appSettings?.agent_default_model || "",
           effort: cached.effort as EffortLevel,
           extendedContext: cached.extended_context,
           conciseMode: cached.concise_mode ?? false,

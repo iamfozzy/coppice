@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as commands from "../../lib/commands";
 import { useAppStore } from "../../stores/appStore";
-import type { AgentMessage, AgentSessionState, EffortLevel, ImageAttachment, SlashCommand } from "../../lib/types";
+import type { AgentMessage, EffortLevel, ImageAttachment, SlashCommand } from "../../lib/types";
 import { AgentToolbar } from "./AgentToolbar";
 import { AgentControls } from "./AgentControls";
 import { MessageList } from "./MessageList";
@@ -37,6 +37,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const setPermissionMode = useAppStore((s) => s.setAgentPermissionMode);
   const setConciseMode = useAppStore((s) => s.setAgentConciseMode);
   const setChatMode = useAppStore((s) => s.setAgentChatMode);
+  const setExtendedContext = useAppStore((s) => s.setAgentExtendedContext);
   const setSlashCommands = useAppStore((s) => s.setAgentSlashCommands);
   const pushQueuedMessage = useAppStore((s) => s.pushAgentQueuedMessage);
   const shiftQueuedMessage = useAppStore((s) => s.shiftQueuedMessage);
@@ -75,59 +76,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     if (label) renameThisTab(label);
   };
 
-  /**
-   * Build a compact context summary from the conversation history.
-   * Used when resuming a session that has grown too large — starts a fresh
-   * SDK session with a summary prefix instead of replaying the full history.
-   */
-  const buildSessionSummary = (session: AgentSessionState, newPrompt: string): string => {
-    const parts: string[] = [];
-
-    // Extract user requests and assistant responses (skip tool call/result noise)
-    const userMsgs = session.messages.filter((m) => m.type === "user" && !m.isQueued);
-    const assistantMsgs = session.messages.filter((m) => m.type === "assistant" && m.content);
-
-    // Summarize the conversation as prior context
-    parts.push("<prior_session_context>");
-    parts.push("Continuation of a previous session. Summary:\n");
-
-    // Include only the last 5 user requests (most relevant), truncated
-    const recentUser = userMsgs.slice(-5);
-    for (const msg of recentUser) {
-      const text = msg.content!.length > 200
-        ? msg.content!.slice(0, 200) + "..."
-        : msg.content!;
-      parts.push(`User: ${text}`);
-    }
-
-    // Include only the last 2 assistant responses, more aggressively truncated
-    const recentAssistant = assistantMsgs.slice(-2);
-    if (recentAssistant.length > 0) {
-      parts.push("\nRecent responses:");
-      for (const msg of recentAssistant) {
-        const text = msg.content!.length > 500
-          ? msg.content!.slice(0, 500) + "... [truncated]"
-          : msg.content!;
-        parts.push(text);
-      }
-    }
-
-    // Note any errors that occurred
-    const errors = session.messages.filter((m) => m.type === "error");
-    if (errors.length > 0) {
-      const lastError = errors[errors.length - 1];
-      parts.push(`\nLast error: ${lastError.content}`);
-    }
-
-    parts.push("</prior_session_context>\n");
-    parts.push(`New request: ${newPrompt}`);
-
-    return parts.join("\n");
-  };
-
-  /** Token threshold above which we start a fresh session with summary instead of resuming. */
-  const FRESH_SESSION_TOKEN_THRESHOLD = 40_000;
-
   /** Start or resume an agent session with the given prompt text. */
   const dispatchToAgent = (text: string, images?: ImageAttachment[]) => {
     const store = useAppStore.getState();
@@ -138,67 +86,27 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     setStatus(sessionId, "thinking");
 
     if (currentSession?.sdkSessionId) {
-      // Use the last turn's context window size (fresh + cache read + cache write)
-      // to decide whether to compact. Cumulative cost.inputTokens only tracks
-      // fresh (uncached) input which grows slowly due to caching and would
-      // rarely trigger compaction even at huge context sizes.
-      const lastTurn = currentSession.lastTurnCost;
-      const contextSize = lastTurn
-        ? lastTurn.inputTokens + lastTurn.cacheReadTokens + lastTurn.cacheWriteTokens
-        : 0;
-
-      if (contextSize > FRESH_SESSION_TOKEN_THRESHOLD) {
-        // Session is large — start fresh with a context summary to save tokens.
-        // Clear the SDK session ID so subsequent sends also start fresh.
-        const setSdkId = useAppStore.getState().setAgentSdkSessionId;
-        setSdkId(sessionId, null);
-        appendMessage(sessionId, {
-          id: nextMsgId(),
-          type: "system",
-          content: `Session compacted (${Math.round(contextSize / 1000)}K context tokens) — starting fresh with context summary.`,
-          timestamp: Date.now(),
+      // Always resume — SDK handles its own compaction
+      commands
+        .agentStart(sessionId, cwd, text, {
+          model: currentSession.model || undefined,
+          effort: currentSession.effort || undefined,
+          permissionMode: currentSession.permissionMode || undefined,
+          conciseMode: currentSession.conciseMode || undefined,
+          chatMode: currentSession.chatMode || undefined,
+          extendedContext: currentSession.extendedContext || undefined,
+          resume: currentSession.sdkSessionId,
+          apiKey: appSettings?.agent_api_key || undefined,
+        }, images)
+        .catch((err) => {
+          appendMessage(sessionId, {
+            id: nextMsgId(),
+            type: "error",
+            content: String(err),
+            timestamp: Date.now(),
+          });
+          setStatus(sessionId, "error");
         });
-        const summaryPrompt = buildSessionSummary(currentSession, text);
-        commands
-          .agentStart(sessionId, cwd, summaryPrompt, {
-            model: currentSession.model || undefined,
-            effort: currentSession.effort || undefined,
-            permissionMode: currentSession.permissionMode || undefined,
-            conciseMode: currentSession.conciseMode || undefined,
-            chatMode: currentSession.chatMode || undefined,
-            apiKey: appSettings?.agent_api_key || undefined,
-          }, images)
-          .catch((err) => {
-            appendMessage(sessionId, {
-              id: nextMsgId(),
-              type: "error",
-              content: String(err),
-              timestamp: Date.now(),
-            });
-            setStatus(sessionId, "error");
-          });
-      } else {
-        // Resume the existing session normally
-        commands
-          .agentStart(sessionId, cwd, text, {
-            model: currentSession.model || undefined,
-            effort: currentSession.effort || undefined,
-            permissionMode: currentSession.permissionMode || undefined,
-            conciseMode: currentSession.conciseMode || undefined,
-            chatMode: currentSession.chatMode || undefined,
-            resume: currentSession.sdkSessionId,
-            apiKey: appSettings?.agent_api_key || undefined,
-          }, images)
-          .catch((err) => {
-            appendMessage(sessionId, {
-              id: nextMsgId(),
-              type: "error",
-              content: String(err),
-              timestamp: Date.now(),
-            });
-            setStatus(sessionId, "error");
-          });
-      }
     } else {
       // Fresh start
       commands
@@ -208,6 +116,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           permissionMode: currentSession?.permissionMode || undefined,
           conciseMode: currentSession?.conciseMode || undefined,
           chatMode: currentSession?.chatMode || undefined,
+          extendedContext: currentSession?.extendedContext || undefined,
           apiKey: appSettings?.agent_api_key || undefined,
         }, images)
         .catch((err) => {
@@ -239,6 +148,32 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     };
   }, [sessionId]);
 
+  // Eagerly load project slash commands from .claude/commands/ so they appear
+  // in the command picker before the SDK bridge session has started.
+  useEffect(() => {
+    console.log("[AgentPanel] useEffect fired — loading project commands for cwd:", cwd, "sessionId:", sessionId);
+    commands.getProjectCommands(cwd).then((projectCmds) => {
+      console.log("[AgentPanel] getProjectCommands returned:", projectCmds);
+      if (!projectCmds.length) return;
+      const store = useAppStore.getState();
+      const current = store.agentSessionByTab[sessionId]?.slashCommands ?? [];
+      console.log("[AgentPanel] current slashCommands count:", current.length);
+      const existingNames = new Set(current.map((c) => c.name));
+      const newCmds = projectCmds.filter((c) => !existingNames.has(c.name));
+      if (newCmds.length) {
+        setSlashCommands(sessionId, [
+          ...current,
+          ...newCmds.map((c) => ({
+            name: c.name,
+            description: c.description,
+            argumentHint: c.argumentHint,
+          })),
+        ]);
+        console.log("[AgentPanel] Merged", newCmds.length, "project commands into store");
+      }
+    }).catch((err) => { console.warn("[AgentPanel] Failed to load project commands:", err); });
+  }, [sessionId, cwd]);
+
   // Start the session if we have an initial prompt
   useEffect(() => {
     if (!initialPrompt || startedRef.current) return;
@@ -263,6 +198,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         permissionMode: session?.permissionMode || undefined,
         conciseMode: session?.conciseMode || undefined,
         chatMode: session?.chatMode || undefined,
+        extendedContext: session?.extendedContext || undefined,
         apiKey: appSettings?.agent_api_key || undefined,
       })
       .catch((err) => {
@@ -291,12 +227,22 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         }
         // Seed slash commands from the init payload (names only); the bridge
         // follows up with a richer `commands` event that includes descriptions.
+        // Merge with any existing entries (notably project commands eagerly
+        // loaded from .claude/commands/) so this seed pass doesn't clobber
+        // them — otherwise they only reappear once the SDK gets around to
+        // re-enumerating them, which is racy and user-visible.
         const names = msg.slashCommands as string[] | undefined;
         if (names && names.length) {
-          setSlashCommands(
-            sessionId,
-            names.map((name) => ({ name, description: "", argumentHint: "" }))
-          );
+          const current = useAppStore.getState().agentSessionByTab[sessionId]?.slashCommands ?? [];
+          const sdkNames = new Set(names);
+          const merged = [
+            ...names.map((name) => {
+              const existing = current.find((c) => c.name === name);
+              return existing ?? { name, description: "", argumentHint: "" };
+            }),
+            ...current.filter((c) => !sdkNames.has(c.name)),
+          ];
+          setSlashCommands(sessionId, merged);
         }
         // Only show "Session started" for the first init, not on resume
         if (!msg.isResume) {
@@ -402,10 +348,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         // SDK modelUsage.
         const tc = msg.cost as { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         if (tc) {
-          useAppStore.getState().setAgentLastTurnCost(sessionId, {
-            ...tc,
-            totalCostUsd: 0,
-          });
+          useAppStore.getState().setAgentLastTurnCost(sessionId, tc);
         }
         break;
       }
@@ -434,7 +377,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         clearStreaming(sessionId);
         // Don't emit resultText as a message — it duplicates the last assistant message.
         const cost = msg.cost as { totalCostUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
-        const lastTurn = msg.lastTurnCost as { totalCostUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
+        const lastTurn = msg.lastTurnCost as { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         if (cost) {
           // `cost` from the bridge is the per-query delta (computed from
           // result.usage which resets each query). Accumulate onto the
@@ -454,7 +397,12 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           // call's usage (tracked per-turn in the bridge), NOT the
           // per-query aggregate. This represents what the model actually
           // held in its context window on the final call.
-          useAppStore.getState().setAgentLastTurnCost(sessionId, lastTurn ?? cost);
+          useAppStore.getState().setAgentLastTurnCost(sessionId, lastTurn ?? {
+            inputTokens: cost.inputTokens,
+            outputTokens: cost.outputTokens,
+            cacheReadTokens: cost.cacheReadTokens,
+            cacheWriteTokens: cost.cacheWriteTokens,
+          });
         }
         // Store the SDK-reported context window size if provided.
         const sdkContextWindow = msg.contextWindow as number | undefined;
@@ -546,8 +494,19 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       }
 
       case "commands": {
+        // Merge SDK-provided commands with any existing project commands the
+        // SDK didn't include, so eagerly-loaded entries from .claude/commands/
+        // survive this update. SDK-provided entries take precedence on name
+        // collisions (they have richer descriptions).
         const cmds = msg.commands as SlashCommand[] | undefined;
-        if (cmds) setSlashCommands(sessionId, cmds);
+        if (cmds) {
+          const current = useAppStore.getState().agentSessionByTab[sessionId]?.slashCommands ?? [];
+          const sdkNames = new Set(cmds.map((c) => c.name));
+          setSlashCommands(sessionId, [
+            ...cmds,
+            ...current.filter((c) => !sdkNames.has(c.name)),
+          ]);
+        }
         break;
       }
 
@@ -569,6 +528,19 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           });
         }
         setStatus(sessionId, "done");
+        break;
+      }
+
+      case "compact_boundary": {
+        const preTokens = msg.preTokens as number | undefined;
+        const trigger = msg.trigger as string | undefined;
+        const label = trigger === "manual" ? "Manual compaction" : "Auto-compaction";
+        appendMessage(sessionId, {
+          id: nextMsgId(),
+          type: "system",
+          content: `${label} — context summarized${preTokens ? ` (was ${Math.round(preTokens / 1000)}K tokens)` : ""}.`,
+          timestamp: Date.now(),
+        });
         break;
       }
     }
@@ -682,6 +654,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     setChatMode(sessionId, enabled);
   };
 
+  const handleExtendedContextChange = (enabled: boolean) => {
+    setExtendedContext(sessionId, enabled);
+  };
+
   const handleInterrupt = () => {
     // Stop sends the interrupt signal. The bridge will emit a `result` event
     // which will set status to "done" and auto-dispatch queued messages.
@@ -744,11 +720,13 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         permissionMode={session.permissionMode}
         conciseMode={session.conciseMode}
         chatMode={session.chatMode}
+        extendedContext={session.extendedContext}
         onModelChange={handleModelChange}
         onEffortChange={handleEffortChange}
         onPermissionModeChange={handlePermissionModeChange}
         onConciseModeChange={handleConciseModeChange}
         onChatModeChange={handleChatModeChange}
+        onExtendedContextChange={handleExtendedContextChange}
       />
       <AgentInputBar
         sessionId={sessionId}
