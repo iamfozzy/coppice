@@ -158,6 +158,10 @@ export interface AgentSessionState {
   /** Token usage for the most recent completed turn only (not cumulative).
    *  Used to display current context size (input + cache + output tokens). */
   lastTurnCost: TokenUsage | null;
+  /** Accumulated output tokens for the current in-flight query.
+   *  Each turn_cost adds its outputTokens here so the toolbar can show
+   *  progress while session totals remain frozen until the result event. */
+  queryOutputTokens: number;
   /** Context window size reported by the SDK (e.g. 200000 or 1000000).
    *  More reliable than guessing from the model name string. */
   sdkContextWindow: number | null;

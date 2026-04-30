@@ -345,6 +345,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         const tc = msg.cost as { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         if (tc) {
           useAppStore.getState().setAgentLastTurnCost(sessionId, tc);
+          // Accumulate output tokens for the in-flight query so the toolbar
+          // can show live progress while session totals stay frozen.
+          useAppStore.getState().accumulateQueryOutput(sessionId, tc.outputTokens);
         }
         break;
       }
@@ -391,6 +394,8 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
             cacheWriteTokens: cost.cacheWriteTokens,
           });
         }
+        // Query finished — reset the in-flight output accumulator.
+        useAppStore.getState().resetQueryOutput(sessionId);
         // Store the SDK-reported context window size if provided.
         const sdkContextWindow = msg.contextWindow as number | undefined;
         if (sdkContextWindow && sdkContextWindow > 0) {

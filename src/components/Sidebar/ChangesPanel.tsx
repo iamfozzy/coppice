@@ -86,9 +86,10 @@ export const ChangesPanel = memo(function ChangesPanel() {
     if (!worktree) return;
     let cancelled = false;
 
+    let first = true;
     const refresh = async () => {
       if (!wtPathRef.current) return;
-      setLoadingUncommitted(true);
+      if (first) { setLoadingUncommitted(true); first = false; }
       try {
         const [status, count] = await Promise.all([
           commands.getGitStatus(wtPathRef.current),
@@ -141,9 +142,10 @@ export const ChangesPanel = memo(function ChangesPanel() {
     if (!worktree) return;
     let cancelled = false;
 
+    let first = true;
     const refresh = async () => {
       if (!wtPathRef.current) return;
-      setLoadingPr(true);
+      if (first) { setLoadingPr(true); first = false; }
       try {
         const files = await commands.getPrDiffFiles(wtPathRef.current, baseBranchRef.current);
         if (!cancelled) setPrFiles(files);

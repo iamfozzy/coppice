@@ -280,6 +280,8 @@ interface AppState {
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
   replaceAgentCost: (tabId: string, cost: AgentCost) => void;
   setAgentLastTurnCost: (tabId: string, cost: TokenUsage) => void;
+  accumulateQueryOutput: (tabId: string, outputTokens: number) => void;
+  resetQueryOutput: (tabId: string) => void;
   setAgentSdkContextWindow: (tabId: string, contextWindow: number) => void;
   setAgentSdkSessionId: (tabId: string, id: string | null) => void;
   setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
@@ -632,6 +634,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           permissionMode: cached.permission_mode as AgentPermissionMode,
           cost,
           lastTurnCost: null,
+          queryOutputTokens: 0,
           sdkContextWindow: null,
           sdkSessionId: cached.sdk_session_id,
           pendingPermission: null,
@@ -854,6 +857,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatMode: false,
       cost: null,
       lastTurnCost: null,
+      queryOutputTokens: 0,
       sdkContextWindow: null,
       sdkSessionId: null,
       pendingPermission: null,
@@ -1071,6 +1075,32 @@ export const useAppStore = create<AppState>((set, get) => ({
         agentSessionByTab: {
           ...s.agentSessionByTab,
           [tabId]: { ...session, lastTurnCost: cost },
+        },
+      };
+    });
+  },
+
+  accumulateQueryOutput: (tabId, outputTokens) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, queryOutputTokens: session.queryOutputTokens + outputTokens },
+        },
+      };
+    });
+  },
+
+  resetQueryOutput: (tabId) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, queryOutputTokens: 0 },
         },
       };
     });

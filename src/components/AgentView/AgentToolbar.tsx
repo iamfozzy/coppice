@@ -52,6 +52,7 @@ export function AgentToolbar({
           model={session.model}
           extendedContext={session.extendedContext}
           sdkContextWindow={session.sdkContextWindow}
+          queryOutputTokens={session.queryOutputTokens}
         />
       )}
 
@@ -79,6 +80,7 @@ function CostDisplay({
   model,
   extendedContext,
   sdkContextWindow,
+  queryOutputTokens,
 }: {
   cost: AgentCost;
   lastTurnCost: TokenUsage | null;
@@ -86,17 +88,28 @@ function CostDisplay({
   model: string;
   extendedContext: boolean;
   sdkContextWindow: number | null;
+  queryOutputTokens: number;
 }) {
   const anchorRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
-  // The toolbar "in" number shows the *current* context size (last turn),
-  // not the inflated cumulative total.  Cache reads re-send the entire prior
-  // conversation every turn, so summing across turns produces a misleadingly
-  // large number.  The cumulative breakdown stays in the hover tooltip.
-  const currentIn = lastTurnCost
+
+  // ── Derived metrics ──
+  // Context: current turn's total input (fresh + cache read + cache write).
+  // Per-turn is correct here — cumulative input is inflated by cache replays.
+  const currentCtx = lastTurnCost
     ? lastTurnCost.inputTokens + lastTurnCost.cacheReadTokens + lastTurnCost.cacheWriteTokens
     : cost.inputTokens + cost.cacheReadTokens + cost.cacheWriteTokens;
-  const currentOut = lastTurnCost ? lastTurnCost.outputTokens : cost.outputTokens;
+  const contextWindow = contextWindowFor(model, extendedContext, sdkContextWindow);
+  const contextPct = currentCtx > 0 ? Math.min(100, (currentCtx / contextWindow) * 100) : 0;
+
+  // Session totals for the individual category breakdown.
+  // "out" includes the in-flight query accumulator so it ticks up live.
+  const sessionIn = cost.inputTokens;
+  const sessionOut = cost.outputTokens + queryOutputTokens;
+  const sessionCR = cost.cacheReadTokens;
+  const sessionCW = cost.cacheWriteTokens;
+
+  const sep = <span className="mx-1 opacity-30">|</span>;
 
   return (
     <>
@@ -112,12 +125,20 @@ function CostDisplay({
         {hasApiKey && (
           <>
             ~${cost.totalCostUsd.toFixed(3)}
-            <span className="mx-1 opacity-50">|</span>
+            {sep}
           </>
         )}
-        {formatTokens(currentIn)} in
-        {" / "}
-        {formatTokens(currentOut)} out
+        <span className={contextPct > 85 ? "text-error" : contextPct > 60 ? "text-warning" : ""}>
+          ctx {formatTokens(currentCtx)} ({contextPct.toFixed(0)}%)
+        </span>
+        {sep}
+        {formatTokens(sessionIn)} in
+        {sep}
+        {formatTokens(sessionOut)} out
+        {sep}
+        {formatTokens(sessionCR)} CR
+        {sep}
+        {formatTokens(sessionCW)} CW
       </span>
       {open && anchorRef.current && (
         <CostTooltip
