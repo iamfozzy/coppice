@@ -34,16 +34,13 @@ export function AgentToolbar({
   const hasApiKey = useAppStore((s) => !!s.appSettings?.agent_api_key);
   const isWorking = session.status === "thinking" || session.status === "tool_use";
 
-  // Only show the toolbar when there is cost info to display
-  if (!session.cost) return null;
+  if (!session.cost && !isWorking) return null;
 
   return (
     <div className="flex items-center gap-3 px-4 py-1.5 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Cost display — toolbar shows *current* context size (last turn).
-          Cumulative session totals live in the hover tooltip. */}
       {session.cost && (
         <CostDisplay
           cost={session.cost}

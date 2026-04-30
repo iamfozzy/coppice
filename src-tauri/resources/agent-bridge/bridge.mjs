@@ -862,6 +862,10 @@ function processMessage(message) {
           cacheReadTokens: usage.cache_read_input_tokens || 0,
           cacheWriteTokens: usage.cache_creation_input_tokens || 0,
         };
+        const total = lastTurnUsage.inputTokens + lastTurnUsage.cacheReadTokens + lastTurnUsage.cacheWriteTokens;
+        console.error(
+          `[bridge] turn usage: fresh=${lastTurnUsage.inputTokens} CR=${lastTurnUsage.cacheReadTokens} CW=${lastTurnUsage.cacheWriteTokens} out=${lastTurnUsage.outputTokens} total_in=${total}`,
+        );
       }
       emit({
         type: "turn_cost",

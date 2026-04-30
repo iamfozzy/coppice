@@ -23,7 +23,7 @@ jobs:
             args: "--target x86_64-apple-darwin"
             rust_target: x86_64-apple-darwin
           - platform: ubuntu-22.04
-            args: ""
+            args: "--bundles deb"
             rust_target: ""
           - platform: windows-latest
             args: ""
@@ -108,6 +108,9 @@ jobs:
       - name: Build with Tauri
         shell: bash
         run: npx tauri build --verbose ${{ matrix.args }}
+        env:
+          NO_STRIP: ${{ matrix.platform == 'ubuntu-22.04' && 'true' || '' }}
+          APPIMAGE_EXTRACT_AND_RUN: ${{ matrix.platform == 'ubuntu-22.04' && '1' || '' }}
 
       - name: List bundle output (Unix)
         if: always() && runner.os != 'Windows'

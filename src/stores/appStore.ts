@@ -1240,17 +1240,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const session = s.agentSessionByTab[tabId];
       if (!session || session.queuedMessages.length === 0) return s;
-      // Remove the first queued message from the queue and promote it in messages
       const [, ...rest] = session.queuedMessages;
-      // Find the first queued message in the messages list and promote it
-      let promoted = false;
-      const updatedMessages = session.messages.map((m) => {
-        if (!promoted && m.isQueued) {
-          promoted = true;
-          return { ...m, isQueued: false };
+      let promotedMsg: typeof session.messages[0] | null = null;
+      const remaining = session.messages.filter((m) => {
+        if (!promotedMsg && m.isQueued) {
+          promotedMsg = m;
+          return false;
         }
-        return m;
+        return true;
       });
+      const updatedMessages = promotedMsg
+        ? [...remaining, { ...promotedMsg, isQueued: false, timestamp: Date.now() }]
+        : remaining;
       return {
         agentSessionByTab: {
           ...s.agentSessionByTab,
@@ -1268,15 +1269,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const session = s.agentSessionByTab[tabId];
       if (!session) return s;
+      const nonQueued: typeof session.messages = [];
+      const queued: typeof session.messages = [];
+      for (const m of session.messages) {
+        (m.isQueued ? queued : nonQueued).push(m);
+      }
+      const now = Date.now();
       return {
         agentSessionByTab: {
           ...s.agentSessionByTab,
           [tabId]: {
             ...session,
             queuedMessages: [],
-            messages: session.messages.map((m) =>
-              m.isQueued ? { ...m, isQueued: false } : m
-            ),
+            messages: [
+              ...nonQueued,
+              ...queued.map((m) => ({ ...m, isQueued: false, timestamp: now })),
+            ],
           },
         },
       };
