@@ -22,7 +22,6 @@ function App() {
   const activeTabByWorktree = useAppStore((s) => s.activeTabByWorktree);
   const runnersByWorktree = useAppStore((s) => s.runnersByWorktree);
   const traceModeByTab = useAppStore((s) => s.traceModeByTab);
-  const agentSessionByTab = useAppStore((s) => s.agentSessionByTab);
   const toggleTracePanel = useAppStore((s) => s.toggleTracePanel);
   const toggleTraceMaximized = useAppStore((s) => s.toggleTraceMaximized);
 
@@ -315,7 +314,6 @@ function App() {
             const traceMode = traceModeByTab[t.id] ?? "closed";
             const isTraceOpen = traceMode !== "closed";
             const isMaximized = traceMode === "maximized";
-            const session = agentSessionByTab[t.id];
             return (
               <div
                 key={t.id}
@@ -337,10 +335,9 @@ function App() {
                   <AgentPanel sessionId={t.id} cwd={t.cwd} initialPrompt={t.command} visible={t.visible} />
                 </div>
                 {/* Trace panel — split (fixed width) or maximized (flex-1) */}
-                {isTraceOpen && session && (
+                {isTraceOpen && (
                   <TracePanel
-                    events={session.traceEvents}
-                    sessionCost={session.cost}
+                    tabId={t.id}
                     maximized={isMaximized}
                     onClose={() => toggleTracePanel(t.id)}
                     onToggleMaximize={() => toggleTraceMaximized(t.id)}

@@ -217,6 +217,4 @@ export interface AgentSessionState {
   chatMode: boolean;
   slashCommands: SlashCommand[];
   queuedMessages: string[];
-  /** Flat array of trace events for the observability panel. */
-  traceEvents: TraceEvent[];
 }

@@ -97,7 +97,6 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
       extended_context: session.extendedContext,
       concise_mode: session.conciseMode,
       chat_mode: session.chatMode,
-      trace_json: JSON.stringify(session.traceEvents),
       created_at: new Date().toISOString(),
     };
     commands.saveAgentTabCache(cache).catch(() => {});
@@ -111,11 +110,77 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
   }
 }
 
+// ── Trace persistence (separate from main tab persist) ──
+// Trace events are lazily loaded and persisted independently so that:
+//  1. Startup doesn't pay the cost of loading megabytes of trace JSON
+//  2. Normal tab persists (which run on every keystroke/message) don't
+//     need to serialize the entire trace array
+
+/** Tracks which tabs have had their DB trace data loaded into memory. */
+const _traceLoadedTabs = new Set<string>();
+
+/** Debounce timers for trace-specific persistence. */
+const _traceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Persist trace events for a single tab (debounced, separate from main tab persist). */
+function persistTraceDebounced(tabId: string) {
+  if (_traceTimers.has(tabId)) clearTimeout(_traceTimers.get(tabId)!);
+  _traceTimers.set(tabId, setTimeout(async () => {
+    _traceTimers.delete(tabId);
+    const liveEvents = useAppStore.getState().traceEventsByTab[tabId];
+    if (!liveEvents || liveEvents.length === 0) return;
+
+    if (_traceLoadedTabs.has(tabId)) {
+      // Full data in memory — save directly
+      commands.saveAgentTabTrace(tabId, JSON.stringify(liveEvents)).catch(() => {});
+    } else {
+      // Only live (new) events in memory — merge with historical DB data
+      try {
+        const dbJson = await commands.loadAgentTabTrace(tabId);
+        const dbEvents: TraceEvent[] = dbJson ? JSON.parse(dbJson) : [];
+        const merged = [...dbEvents, ...liveEvents];
+        _traceLoadedTabs.add(tabId);
+        // Update store so future persists use the full set
+        useAppStore.setState((s) => ({
+          traceEventsByTab: { ...s.traceEventsByTab, [tabId]: merged },
+        }));
+        commands.saveAgentTabTrace(tabId, JSON.stringify(merged)).catch(() => {});
+      } catch {
+        // DB read failed — save what we have
+        commands.saveAgentTabTrace(tabId, JSON.stringify(liveEvents)).catch(() => {});
+      }
+    }
+  }, 2000));
+}
+
+/** Load trace events from DB for a tab on demand (e.g. when trace panel opens). */
+async function loadTraceForTab(tabId: string) {
+  if (_traceLoadedTabs.has(tabId)) return;
+  _traceLoadedTabs.add(tabId);
+  try {
+    const json = await commands.loadAgentTabTrace(tabId);
+    const dbEvents: TraceEvent[] = json ? JSON.parse(json) : [];
+    if (dbEvents.length > 0) {
+      // Prepend historical DB events before any live events that accumulated
+      useAppStore.setState((s) => {
+        const live = s.traceEventsByTab[tabId] ?? [];
+        return {
+          traceEventsByTab: { ...s.traceEventsByTab, [tabId]: [...dbEvents, ...live] },
+        };
+      });
+    }
+  } catch (e) {
+    console.error("Failed to load trace events:", e);
+  }
+}
+
 /** Flush all pending agent tab saves immediately. Returns a promise that resolves when all saves complete. */
 export async function flushAllAgentTabCaches(): Promise<void> {
-  // Clear all pending debounce timers
+  // Clear all pending debounce timers (both main and trace)
   for (const [, timer] of _persistTimers) clearTimeout(timer);
   _persistTimers.clear();
+  for (const [, timer] of _traceTimers) clearTimeout(timer);
+  _traceTimers.clear();
 
   const s = useAppStore.getState();
   const saves: Promise<void>[] = [];
@@ -145,10 +210,27 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         extended_context: session.extendedContext,
         concise_mode: session.conciseMode,
         chat_mode: session.chatMode,
-        trace_json: JSON.stringify(session.traceEvents),
         created_at: new Date().toISOString(),
       };
       saves.push(commands.saveAgentTabCache(cache));
+
+      // Flush trace events separately — merge with DB if not yet loaded
+      const liveEvents = s.traceEventsByTab[tab.id];
+      if (liveEvents && liveEvents.length > 0) {
+        if (_traceLoadedTabs.has(tab.id)) {
+          saves.push(commands.saveAgentTabTrace(tab.id, JSON.stringify(liveEvents)));
+        } else {
+          saves.push((async () => {
+            try {
+              const dbJson = await commands.loadAgentTabTrace(tab.id);
+              const dbEvents: TraceEvent[] = dbJson ? JSON.parse(dbJson) : [];
+              await commands.saveAgentTabTrace(tab.id, JSON.stringify([...dbEvents, ...liveEvents]));
+            } catch {
+              await commands.saveAgentTabTrace(tab.id, JSON.stringify(liveEvents));
+            }
+          })());
+        }
+      }
     }
   }
 
@@ -206,6 +288,10 @@ interface AppState {
 
   // Agent session state (keyed by tab ID)
   agentSessionByTab: Record<string, AgentSessionState>;
+
+  // Trace events per agent tab (separate from session to avoid re-rendering
+  // conversation UI on every trace event)
+  traceEventsByTab: Record<string, TraceEvent[]>;
 
   // Trace panel mode per agent tab
   traceModeByTab: Record<string, TraceMode>;
@@ -301,6 +387,7 @@ interface AppState {
 
   // Actions — trace / observability
   appendTraceEvent: (tabId: string, event: TraceEvent) => void;
+  appendTraceEvents: (tabId: string, events: TraceEvent[]) => void;
   toggleTracePanel: (tabId: string) => void;
   toggleTraceMaximized: (tabId: string) => void;
 
@@ -337,6 +424,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   runnersByWorktree: {},
   claudeStatusByTab: {},
   agentSessionByTab: {},
+  traceEventsByTab: {},
   traceModeByTab: {},
   pendingDroppedImages: {},
   prCommentsByProject: {},
@@ -615,7 +703,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       const restoredTabs: TabInfo[] = [];
       const restoredSessions: Record<string, AgentSessionState> = {};
-
       for (const cached of cachedTabs) {
         const tab: TabInfo = {
           id: cached.tab_id,
@@ -628,7 +715,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
         const messages: AgentMessage[] = JSON.parse(cached.messages_json);
         const cost = cached.cost_json ? JSON.parse(cached.cost_json) : null;
-        const traceEvents: TraceEvent[] = cached.trace_json ? JSON.parse(cached.trace_json) : [];
 
         // Coerce transient statuses to "done" — the agent process isn't running after restart
         const status = cached.status === "done" || cached.status === "error"
@@ -654,7 +740,6 @@ export const useAppStore = create<AppState>((set, get) => ({
           streamingText: "",
           slashCommands: DEFAULT_SLASH_COMMANDS,
           queuedMessages: [],
-          traceEvents,
         };
       }
 
@@ -673,6 +758,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         agentSessionByTab: {
           ...s.agentSessionByTab,
           ...restoredSessions,
+        },
+        // Initialize empty trace arrays — historical events are lazy-loaded
+        // from DB when the trace panel is first opened
+        traceEventsByTab: {
+          ...s.traceEventsByTab,
+          ...Object.fromEntries(restoredTabs.map((t) => [t.id, []])),
         },
       }));
     } catch (err) {
@@ -878,7 +969,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       streamingText: "",
       slashCommands: DEFAULT_SLASH_COMMANDS,
       queuedMessages: [],
-      traceEvents: [],
     };
     set((state) => ({
       tabsByWorktree: {
@@ -893,7 +983,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...state.agentSessionByTab,
         [tab.id]: sessionState,
       },
+      traceEventsByTab: {
+        ...state.traceEventsByTab,
+        [tab.id]: [],
+      },
     }));
+    // New tabs have no DB trace data to load
+    _traceLoadedTabs.add(tab.id);
   },
 
   newAgentTab: (worktreeId) => {
@@ -1188,9 +1284,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeAgentSession: (tabId) => {
+    _traceLoadedTabs.delete(tabId);
     set((s) => {
-      const { [tabId]: _, ...rest } = s.agentSessionByTab;
-      return { agentSessionByTab: rest };
+      const { [tabId]: _, ...restSessions } = s.agentSessionByTab;
+      const { [tabId]: __, ...restTrace } = s.traceEventsByTab;
+      return { agentSessionByTab: restSessions, traceEventsByTab: restTrace };
     });
   },
 
@@ -1308,25 +1406,35 @@ export const useAppStore = create<AppState>((set, get) => ({
   // ── Trace / Observability ──
 
   appendTraceEvent: (tabId, event) => {
-    set((s) => {
-      const session = s.agentSessionByTab[tabId];
-      if (!session) return s;
-      return {
-        agentSessionByTab: {
-          ...s.agentSessionByTab,
-          [tabId]: { ...session, traceEvents: [...session.traceEvents, event] },
-        },
-      };
-    });
-    persistAgentTabDebounced(tabId);
+    set((s) => ({
+      traceEventsByTab: {
+        ...s.traceEventsByTab,
+        [tabId]: [...(s.traceEventsByTab[tabId] ?? []), event],
+      },
+    }));
+    persistTraceDebounced(tabId);
+  },
+
+  appendTraceEvents: (tabId, events) => {
+    if (events.length === 0) return;
+    set((s) => ({
+      traceEventsByTab: {
+        ...s.traceEventsByTab,
+        [tabId]: [...(s.traceEventsByTab[tabId] ?? []), ...events],
+      },
+    }));
+    persistTraceDebounced(tabId);
   },
 
   toggleTracePanel: (tabId) => {
+    const wasClosed = (get().traceModeByTab[tabId] ?? "closed") === "closed";
     set((s) => {
       const current = s.traceModeByTab[tabId] ?? "closed";
       const next = current === "closed" ? "split" : "closed";
       return { traceModeByTab: { ...s.traceModeByTab, [tabId]: next } };
     });
+    // Lazy-load historical trace events from DB when opening the panel
+    if (wasClosed) loadTraceForTab(tabId);
   },
 
   toggleTraceMaximized: (tabId) => {
@@ -1335,6 +1443,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const next = current === "maximized" ? "split" : "maximized";
       return { traceModeByTab: { ...s.traceModeByTab, [tabId]: next } };
     });
+    // Ensure trace data is loaded (panel is always open when toggling maximize)
+    loadTraceForTab(tabId);
   },
 
   // ── Dropped images for agent input ──

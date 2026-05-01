@@ -1,20 +1,24 @@
-import { useState, useRef, useCallback } from "react";
-import type { TraceEvent, AgentCost } from "../../lib/types";
+import { useState, useRef, useCallback, useMemo } from "react";
+import type { TraceEvent } from "../../lib/types";
+import { useAppStore } from "../../stores/appStore";
 import { TraceTimeline } from "./TraceTimeline";
 import { TraceTokenChart } from "./TraceTokenChart";
 import { formatDuration, formatCost } from "../../lib/traceUtils";
 
 type SubTab = "timeline" | "tokens";
 
+const EMPTY_EVENTS: TraceEvent[] = [];
+
 interface Props {
-  events: TraceEvent[];
-  sessionCost: AgentCost | null;
+  tabId: string;
   maximized: boolean;
   onClose: () => void;
   onToggleMaximize: () => void;
 }
 
-export function TracePanel({ events, sessionCost, maximized, onClose, onToggleMaximize }: Props) {
+export function TracePanel({ tabId, maximized, onClose, onToggleMaximize }: Props) {
+  const events = useAppStore((s) => s.traceEventsByTab[tabId] ?? EMPTY_EVENTS);
+  const sessionCost = useAppStore((s) => s.agentSessionByTab[tabId]?.cost ?? null);
   const [activeTab, setActiveTab] = useState<SubTab>("timeline");
   const [width, setWidth] = useState(400);
   const dragging = useRef(false);
@@ -49,11 +53,16 @@ export function TracePanel({ events, sessionCost, maximized, onClose, onToggleMa
     document.addEventListener("mouseup", onMouseUp);
   }, [maximized, width]);
 
-  // ── Summary stats ──
-  const turnCount = events.filter((e) => e.type === "turn_cost").length;
-  const queryCount = events.filter((e) => e.type === "query_start").length;
-  const lastQueryEnd = [...events].reverse().find((e) => e.type === "query_end");
-  const totalDuration = lastQueryEnd?.durationMs ?? 0;
+  // ── Summary stats (memoized single-pass) ──
+  const { turnCount, queryCount, totalDuration } = useMemo(() => {
+    let turns = 0, queries = 0, duration = 0;
+    for (const e of events) {
+      if (e.type === "turn_start") turns++;
+      else if (e.type === "query_start") queries++;
+      else if (e.type === "query_end") duration = e.durationMs ?? 0;
+    }
+    return { turnCount: turns, queryCount: queries, totalDuration: duration };
+  }, [events]);
 
   return (
     <div

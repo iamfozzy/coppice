@@ -36,8 +36,8 @@ export function AgentToolbar({
   const hasApiKey = useAppStore((s) => !!s.appSettings?.agent_api_key);
   const traceMode = useAppStore((s) => s.traceModeByTab[sessionId] ?? "closed");
   const toggleTrace = useAppStore((s) => s.toggleTracePanel);
+  const hasTraceEvents = useAppStore((s) => (s.traceEventsByTab[sessionId]?.length ?? 0) > 0);
   const isWorking = session.status === "thinking" || session.status === "tool_use";
-  const hasTraceEvents = session.traceEvents.length > 0;
 
   if (!session.cost && !isWorking && !hasTraceEvents) return null;
 

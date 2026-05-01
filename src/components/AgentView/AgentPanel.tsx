@@ -49,6 +49,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const shiftQueuedMessage = useAppStore((s) => s.shiftQueuedMessage);
   const promoteAllQueuedMessages = useAppStore((s) => s.promoteAllQueuedMessages);
   const appendTrace = useAppStore((s) => s.appendTraceEvent);
+  const appendTraces = useAppStore((s) => s.appendTraceEvents);
   const appSettings = useAppStore((s) => s.appSettings);
 
   const startedRef = useRef(false);
@@ -193,7 +194,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       timestamp: Date.now(),
     });
     // Trace: initial query_start
-    trace({ type: "query_start", content: initialPrompt });
+    appendTrace(sessionId, { type: "query_start", content: initialPrompt, id: nextTraceId(), timestamp: Date.now() });
     setStatus(sessionId, "thinking");
 
     commands
@@ -218,13 +219,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       });
   }, [initialPrompt, sessionId, cwd]);
 
-  /** Shorthand to emit a trace event for this session. */
-  function trace(event: Omit<TraceEvent, "id" | "timestamp">) {
-    appendTrace(sessionId, { ...event, id: nextTraceId(), timestamp: Date.now() });
-  }
-
   function handleBridgeEvent(msg: Record<string, unknown>) {
     const type = msg.type as string;
+    // Batch trace events — collected during the switch and flushed once at the end
+    const pendingTraces: Array<Omit<TraceEvent, "id" | "timestamp">> = [];
+    const bt = (e: Omit<TraceEvent, "id" | "timestamp">) => { pendingTraces.push(e); };
 
     switch (type) {
       case "init": {
@@ -318,7 +317,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
 
         // Trace: turn_start FIRST — includes tool names so the turn always
         // knows what tools were called even if tool_result pairing fails.
-        trace({
+        bt({
           type: "turn_start",
           content: textContent ? textContent.slice(0, 200) : undefined,
           thinkingText: thinkingText || undefined,
@@ -327,7 +326,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
 
         // Trace: individual tool_call events (for pairing with tool_result)
         for (const tb of toolBlocks) {
-          trace({ type: "tool_call", toolName: tb.name, toolInput: tb.input, toolUseId: tb.id });
+          bt({ type: "tool_call", toolName: tb.name, toolInput: tb.input, toolUseId: tb.id });
         }
         break;
       }
@@ -355,7 +354,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           timestamp: Date.now(),
         });
         // Trace: tool_result
-        trace({
+        bt({
           type: "tool_result",
           toolName: tool?.name || "Tool",
           toolOutput: (msg.content as string)?.slice(0, 500),
@@ -386,7 +385,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           // can show live progress while session totals stay frozen.
           useAppStore.getState().accumulateQueryOutput(sessionId, tc.outputTokens);
           // Trace: preserve per-turn cost (this is the data that was previously overwritten)
-          trace({ type: "turn_cost", cost: tc });
+          bt({ type: "turn_cost", cost: tc });
         }
         break;
       }
@@ -447,7 +446,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         // Trace: query_end with full metrics
         const durationMs = msg.durationMs as number | undefined;
         const numTurns = msg.numTurns as number | undefined;
-        trace({
+        bt({
           type: "query_end",
           durationMs,
           numTurns,
@@ -488,7 +487,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         else if (statusVal === "thinking") setStatus(sessionId, "thinking");
         else if (statusVal === "exited") setStatus(sessionId, "done");
         // Trace: status transitions
-        trace({ type: "status_change", status: statusVal });
+        bt({ type: "status_change", status: statusVal });
         break;
       }
 
@@ -502,7 +501,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         });
         setStatus(sessionId, "error");
         // Trace: error
-        trace({ type: "error", content: errorMsg });
+        bt({ type: "error", content: errorMsg });
 
         // Promote all queued messages to regular (unsent) user messages on error —
         // don't auto-dispatch so the user can decide whether to retry.
@@ -590,9 +589,17 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           timestamp: Date.now(),
         });
         // Trace: compaction event
-        trace({ type: "compact", preTokens, trigger: trigger ?? undefined });
+        bt({ type: "compact", preTokens, trigger: trigger ?? undefined });
         break;
       }
+    }
+
+    // Flush all batched trace events in a single state update
+    if (pendingTraces.length > 0) {
+      const now = Date.now();
+      appendTraces(sessionId, pendingTraces.map((e, i) => ({
+        ...e, id: nextTraceId(), timestamp: now + i,
+      })));
     }
   }
 
@@ -616,7 +623,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         timestamp: Date.now(),
       });
       // Trace: query_start
-      trace({ type: "query_start", content: text });
+      appendTrace(sessionId, { type: "query_start", content: text, id: nextTraceId(), timestamp: Date.now() });
       dispatchToAgent(text, images);
     } else if (
       currentSession?.status === "thinking" ||
