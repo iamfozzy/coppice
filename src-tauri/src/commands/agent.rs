@@ -130,6 +130,17 @@ pub fn agent_start(
         options.insert("apiKey".into(), serde_json::Value::String(key.clone()));
     }
 
+    // Pass base URL for LiteLLM proxy support
+    {
+        let s = settings.inner().get();
+        if !s.agent_base_url.is_empty() {
+            options.insert(
+                "baseUrl".into(),
+                serde_json::Value::String(s.agent_base_url.clone()),
+            );
+        }
+    }
+
     // Pass token-saving env overrides from settings
     {
         let s = settings.inner().get();

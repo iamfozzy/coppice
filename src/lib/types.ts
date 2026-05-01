@@ -64,6 +64,7 @@ export interface AppSettings {
   agent_default_effort: EffortLevel;
   agent_default_extended_context: boolean;
   agent_api_key: string;
+  agent_base_url: string;
   agent_small_fast_model: string;
   agent_subagent_model: string;
   agent_bash_max_output: number;
