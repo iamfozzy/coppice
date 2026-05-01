@@ -185,6 +185,57 @@ Build artifacts (`.dmg`, `.app`, `.deb`, `.AppImage`, `.msi`, `.exe`) are upload
 - **Git CLI** — All git operations shell out to `git` / `gh` directly (no libgit2), keeping the dependency surface small and behavior consistent with the user's git config.
 - **Agent bridge subprocess** — Each Claude Agent SDK session runs in its own Node subprocess, isolated from the main app. Communication is line-delimited JSON over stdio, letting the Rust backend drive the SDK without embedding a JS runtime.
 
+## Using Non-Claude Models via LiteLLM
+
+Coppice can route custom model selections (e.g. GPT-4o, Gemini) through a [LiteLLM](https://docs.litellm.ai/) proxy while keeping Claude models on the direct Anthropic API.
+
+### 1. Set up LiteLLM
+
+```sh
+pip install 'litellm[proxy]'
+```
+
+Create a `config.yaml`:
+
+```yaml
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: o4-mini
+    litellm_params:
+      model: openai/o4-mini
+      api_key: os.environ/OPENAI_API_KEY
+```
+
+Start the proxy:
+
+```sh
+export OPENAI_API_KEY="sk-..."
+litellm --config config.yaml
+```
+
+The proxy runs on `http://localhost:4000` by default.
+
+### 2. Configure Coppice
+
+Open **App Settings** and set:
+
+| Setting | Value |
+|---------|-------|
+| **Anthropic API key** | Your Anthropic key (for Claude models) |
+| **Base URL** | `http://localhost:4000` |
+| **Use proxy for custom models only** | Enable this toggle |
+
+With this setup, selecting a Claude model (e.g. Sonnet 4.6) routes directly to Anthropic, while typing a custom model name in the model picker (e.g. `gpt-4o`) routes through LiteLLM.
+
+### 3. Select a custom model
+
+In the agent toolbar model picker, click **Custom model...** and enter the `model_name` from your LiteLLM config (e.g. `gpt-4o`). The proxy handles authentication with the upstream provider.
+
+> **Note:** The agentic flow (tool use, extended thinking) relies on Claude-specific features. Non-Claude models work for chat but some agent capabilities may be limited.
+
 ## License
 
 MIT

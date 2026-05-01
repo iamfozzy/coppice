@@ -93,14 +93,17 @@ function isAttributionDisabled(settings) {
   return false;
 }
 
-/** Returns true if the given model value supports the 1M context beta. */
+/** Returns true if the given model value supports the 1M context beta as an
+ *  opt-in (i.e. needs the `[1m]` model suffix). Opus 4.7 is excluded because
+ *  it has 1M as a native capability — appending `[1m]` is unnecessary. */
 function modelSupports1M(model) {
   if (!model) return false;
   const m = String(model).toLowerCase();
   if (m.includes("haiku")) return false;
+  // Opus 4.7 has native 1M — no `[1m]` suffix or beta header needed.
+  if (m.includes("opus-4-7")) return false;
   return (
     m.includes("opus-4-6") ||
-    m.includes("opus-4-7") ||
     m.includes("sonnet-4-6") ||
     m.includes("opus-4") ||
     m.includes("sonnet-4")

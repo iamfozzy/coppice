@@ -130,14 +130,27 @@ pub fn agent_start(
         options.insert("apiKey".into(), serde_json::Value::String(key.clone()));
     }
 
-    // Pass base URL for LiteLLM proxy support
+    // Pass base URL for LiteLLM proxy support.
+    // When `agent_base_url_custom_only` is true, only route through the proxy
+    // for non-Claude models (custom models like openai/gpt-4o). Claude models
+    // go direct to the Anthropic API.
     {
         let s = settings.inner().get();
         if !s.agent_base_url.is_empty() {
-            options.insert(
-                "baseUrl".into(),
-                serde_json::Value::String(s.agent_base_url.clone()),
-            );
+            let is_claude = model
+                .as_ref()
+                .map_or(true, |m| m.starts_with("claude"));
+            let use_base_url = if s.agent_base_url_custom_only {
+                !is_claude
+            } else {
+                true
+            };
+            if use_base_url {
+                options.insert(
+                    "baseUrl".into(),
+                    serde_json::Value::String(s.agent_base_url.clone()),
+                );
+            }
         }
     }
 

@@ -14,10 +14,14 @@ interface Props {
  *  [1m] model suffix), trust that — the SDK's modelUsage.contextWindow may not
  *  always reflect the extended window. Otherwise prefer the SDK-reported value,
  *  falling back to a heuristic:
- *  - 4.x Opus/Sonnet: 1M when extendedContext is enabled, otherwise 200k
+ *  - Opus 4.7: 1M unconditionally (native capability — no opt-in)
+ *  - Other 4.x Opus/Sonnet: 1M when extendedContext is enabled, otherwise 200k
  *  - Haiku 4.5 and anything else: 200k */
 function contextWindowFor(model: string, extendedContext: boolean, sdkContextWindow?: number | null): number {
   const m = model.toLowerCase();
+  // Opus 4.7 has native 1M — independent of the extendedContext toggle.
+  if (m.includes("opus-4-7")) return 1_000_000;
+
   const supports1M = m.includes("opus-4") || m.includes("sonnet-4");
   if (supports1M && extendedContext) return 1_000_000;
 
