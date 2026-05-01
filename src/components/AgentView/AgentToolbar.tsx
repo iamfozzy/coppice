@@ -5,6 +5,7 @@ import { useAppStore } from "../../stores/appStore";
 
 interface Props {
   session: AgentSessionState;
+  sessionId: string;
   onInterrupt: () => void;
 }
 
@@ -29,12 +30,16 @@ function contextWindowFor(model: string, extendedContext: boolean, sdkContextWin
 
 export function AgentToolbar({
   session,
+  sessionId,
   onInterrupt,
 }: Props) {
   const hasApiKey = useAppStore((s) => !!s.appSettings?.agent_api_key);
+  const traceMode = useAppStore((s) => s.traceModeByTab[sessionId] ?? "closed");
+  const toggleTrace = useAppStore((s) => s.toggleTracePanel);
   const isWorking = session.status === "thinking" || session.status === "tool_use";
+  const hasTraceEvents = session.traceEvents.length > 0;
 
-  if (!session.cost && !isWorking) return null;
+  if (!session.cost && !isWorking && !hasTraceEvents) return null;
 
   return (
     <div className="flex items-center gap-3 px-4 py-1.5 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
@@ -51,6 +56,24 @@ export function AgentToolbar({
           sdkContextWindow={session.sdkContextWindow}
           queryOutputTokens={session.queryOutputTokens}
         />
+      )}
+
+      {/* Trace toggle button */}
+      {hasTraceEvents && (
+        <button
+          className={`flex items-center gap-1 px-2 py-0.5 rounded border transition-colors ${
+            traceMode !== "closed"
+              ? "bg-accent/15 border-accent/40 text-accent"
+              : "bg-bg-tertiary border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary/80"
+          }`}
+          onClick={() => toggleTrace(sessionId)}
+          title={traceMode !== "closed" ? "Close trace panel" : "Open trace panel"}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 12h4l3-9 4 18 3-9h4" />
+          </svg>
+          Trace
+        </button>
       )}
 
       {/* Interrupt button */}

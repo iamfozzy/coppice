@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment, TraceEvent, TraceMode } from "../lib/types";
 import { DEFAULT_SLASH_COMMANDS } from "../lib/slashCommandDefaults";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
@@ -97,6 +97,7 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
       extended_context: session.extendedContext,
       concise_mode: session.conciseMode,
       chat_mode: session.chatMode,
+      trace_json: JSON.stringify(session.traceEvents),
       created_at: new Date().toISOString(),
     };
     commands.saveAgentTabCache(cache).catch(() => {});
@@ -144,6 +145,7 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         extended_context: session.extendedContext,
         concise_mode: session.conciseMode,
         chat_mode: session.chatMode,
+        trace_json: JSON.stringify(session.traceEvents),
         created_at: new Date().toISOString(),
       };
       saves.push(commands.saveAgentTabCache(cache));
@@ -204,6 +206,9 @@ interface AppState {
 
   // Agent session state (keyed by tab ID)
   agentSessionByTab: Record<string, AgentSessionState>;
+
+  // Trace panel mode per agent tab
+  traceModeByTab: Record<string, TraceMode>;
 
   // Pending dropped images for agent tabs (keyed by tab ID)
   pendingDroppedImages: Record<string, ImageAttachment[]>;
@@ -294,6 +299,11 @@ interface AppState {
   shiftQueuedMessage: (tabId: string) => void;
   promoteAllQueuedMessages: (tabId: string) => void;
 
+  // Actions — trace / observability
+  appendTraceEvent: (tabId: string, event: TraceEvent) => void;
+  toggleTracePanel: (tabId: string) => void;
+  toggleTraceMaximized: (tabId: string) => void;
+
   // Actions — dropped images for agent input
   pushDroppedImages: (tabId: string, images: ImageAttachment[]) => void;
   consumeDroppedImages: (tabId: string) => ImageAttachment[];
@@ -327,6 +337,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   runnersByWorktree: {},
   claudeStatusByTab: {},
   agentSessionByTab: {},
+  traceModeByTab: {},
   pendingDroppedImages: {},
   prCommentsByProject: {},
   editingAppSettings: false,
@@ -617,6 +628,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
         const messages: AgentMessage[] = JSON.parse(cached.messages_json);
         const cost = cached.cost_json ? JSON.parse(cached.cost_json) : null;
+        const traceEvents: TraceEvent[] = cached.trace_json ? JSON.parse(cached.trace_json) : [];
 
         // Coerce transient statuses to "done" — the agent process isn't running after restart
         const status = cached.status === "done" || cached.status === "error"
@@ -642,6 +654,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           streamingText: "",
           slashCommands: DEFAULT_SLASH_COMMANDS,
           queuedMessages: [],
+          traceEvents,
         };
       }
 
@@ -865,6 +878,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       streamingText: "",
       slashCommands: DEFAULT_SLASH_COMMANDS,
       queuedMessages: [],
+      traceEvents: [],
     };
     set((state) => ({
       tabsByWorktree: {
@@ -1291,6 +1305,38 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     });
   },
+  // ── Trace / Observability ──
+
+  appendTraceEvent: (tabId, event) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, traceEvents: [...session.traceEvents, event] },
+        },
+      };
+    });
+    persistAgentTabDebounced(tabId);
+  },
+
+  toggleTracePanel: (tabId) => {
+    set((s) => {
+      const current = s.traceModeByTab[tabId] ?? "closed";
+      const next = current === "closed" ? "split" : "closed";
+      return { traceModeByTab: { ...s.traceModeByTab, [tabId]: next } };
+    });
+  },
+
+  toggleTraceMaximized: (tabId) => {
+    set((s) => {
+      const current = s.traceModeByTab[tabId] ?? "closed";
+      const next = current === "maximized" ? "split" : "maximized";
+      return { traceModeByTab: { ...s.traceModeByTab, [tabId]: next } };
+    });
+  },
+
   // ── Dropped images for agent input ──
 
   pushDroppedImages: (tabId, images) => {

@@ -433,6 +433,7 @@ export interface AgentTabCache {
   extended_context: boolean;
   concise_mode: boolean;
   chat_mode: boolean;
+  trace_json: string;
   created_at: string;
 }
 
