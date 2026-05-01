@@ -159,7 +159,8 @@ export function AgentControls({
   );
 }
 
-/** Custom model picker that looks like a button / pill instead of a native <select>. */
+/** Custom model picker that looks like a button / pill instead of a native <select>.
+ *  Supports both preset Claude models and custom model strings (e.g. for LiteLLM proxy). */
 function ModelPicker({
   model,
   onModelChange,
@@ -168,20 +169,31 @@ function ModelPicker({
   onModelChange: (model: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [customInput, setCustomInput] = useState(false);
+  const [customValue, setCustomValue] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const selected = MODELS.find((m) => m.value === model) ?? MODELS[0];
+  const matchedPreset = MODELS.find((m) => m.value === model);
+  const displayLabel = matchedPreset?.label ?? model ?? MODELS[0].label;
 
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
+        setCustomInput(false);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
+
+  useEffect(() => {
+    if (customInput && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [customInput]);
 
   return (
     <div className="relative" ref={ref}>
@@ -193,13 +205,13 @@ function ModelPicker({
         <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M8 1v4M4.5 3L8 5l3.5-2M1 6l7 4 7-4M1 10l7 4 7-4" />
         </svg>
-        {selected.label}
+        {displayLabel}
         <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${open ? "rotate-180" : ""}`}>
           <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
       {open && (
-        <div className="absolute bottom-full mb-1 left-0 min-w-[140px] bg-bg-secondary border border-border-primary rounded-md shadow-lg overflow-hidden z-50">
+        <div className="absolute bottom-full mb-1 left-0 min-w-[180px] bg-bg-secondary border border-border-primary rounded-md shadow-lg overflow-hidden z-50">
           {MODELS.map((m) => (
             <button
               key={m.value}
@@ -211,11 +223,48 @@ function ModelPicker({
               onClick={() => {
                 onModelChange(m.value);
                 setOpen(false);
+                setCustomInput(false);
               }}
             >
               {m.label}
             </button>
           ))}
+          <div className="border-t border-border-primary my-0.5" />
+          {customInput ? (
+            <div className="px-2 py-1.5">
+              <input
+                ref={inputRef}
+                type="text"
+                value={customValue}
+                onChange={(e) => setCustomValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && customValue.trim()) {
+                    onModelChange(customValue.trim());
+                    setOpen(false);
+                    setCustomInput(false);
+                    setCustomValue("");
+                  }
+                  if (e.key === "Escape") {
+                    setCustomInput(false);
+                    setCustomValue("");
+                  }
+                }}
+                placeholder="openai/gpt-4o"
+                className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+              />
+              <p className="mt-1 text-[9px] text-text-tertiary">Enter to confirm</p>
+            </div>
+          ) : (
+            <button
+              className="w-full text-left px-3 py-1.5 text-[11px] text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+              onClick={() => {
+                setCustomInput(true);
+                setCustomValue(matchedPreset ? "" : model);
+              }}
+            >
+              Custom model...
+            </button>
+          )}
         </div>
       )}
     </div>

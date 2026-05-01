@@ -271,6 +271,7 @@ function hasImages(msg) {
 
 let activeQuery = null;
 let activeAbort = null;
+let pendingInterrupt = false;
 let hasInitialized = false;
 let currentPermissionMode = "default";
 let titleGenerated = false;
@@ -350,6 +351,7 @@ async function handleCommand(msg) {
 
     case "interrupt":
       if (activeQuery) {
+        pendingInterrupt = true;
         await activeQuery.interrupt().catch(() => {});
       }
       break;
@@ -520,6 +522,7 @@ async function startSession(msg) {
   }
   const abortController = new AbortController();
   activeAbort = abortController;
+  pendingInterrupt = false;
 
   // Include "project" in settingSources so project-level .claude/settings.json
   // (permissions, allowed tools, etc.) and CLAUDE.md files are loaded by the
@@ -704,12 +707,17 @@ async function startSession(msg) {
     ],
   };
 
-  // Environment — pass API key if provided
-  if (opts.apiKey) {
+  // Environment — pass API key and base URL if provided
+  if (opts.apiKey || opts.baseUrl) {
     queryOptions.env = {
       ...(queryOptions.env || {}),
-      ANTHROPIC_API_KEY: opts.apiKey,
     };
+    if (opts.apiKey) {
+      queryOptions.env.ANTHROPIC_API_KEY = opts.apiKey;
+    }
+    if (opts.baseUrl) {
+      queryOptions.env.ANTHROPIC_BASE_URL = opts.baseUrl;
+    }
   }
 
   // Token-saving env overrides — these control SDK internals.
@@ -728,6 +736,11 @@ async function startSession(msg) {
   //
   // TASK_MAX_OUTPUT_LENGTH: same as above but for Task (subagent) tool output
   // that flows back into the parent context. Default: 30000.
+  // Base URL override — also set on process.env so that internal SDK calls
+  // (e.g. title generation) route through the proxy too.
+  if (opts.baseUrl) {
+    process.env.ANTHROPIC_BASE_URL = opts.baseUrl;
+  }
   if (opts.smallFastModel) {
     process.env.ANTHROPIC_SMALL_FAST_MODEL = opts.smallFastModel;
   }
@@ -780,10 +793,15 @@ async function startSession(msg) {
       processMessage(message);
     }
   } catch (err) {
-    emit({ type: "error", message: err.message || String(err) });
+    if (pendingInterrupt) {
+      emit({ type: "result", subtype: "interrupted" });
+    } else {
+      emit({ type: "error", message: err.message || String(err) });
+    }
   } finally {
     activeQuery = null;
     activeAbort = null;
+    pendingInterrupt = false;
   }
 }
 
