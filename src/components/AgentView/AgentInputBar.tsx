@@ -367,7 +367,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
         {/* Attach image button */}
         <button
           type="button"
-          className="shrink-0 self-stretch flex items-center justify-center w-8 rounded-lg text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          className="shrink-0 self-stretch flex items-center justify-center w-8 rounded-lg border border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled}
           title="Attach images"
@@ -380,7 +380,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
         </button>
         <textarea
           ref={textareaRef}
-          className="flex-1 resize-none bg-bg-tertiary border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/20 transition-all font-mono leading-relaxed"
+          className="flex-1 resize-none overflow-hidden bg-transparent border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-0 transition-colors font-mono leading-relaxed"
           rows={1}
           value={text}
           onChange={(e) => setText(e.target.value)}
