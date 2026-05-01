@@ -98,6 +98,7 @@ impl Database {
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN extended_context INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN concise_mode INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN chat_mode INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN trace_json TEXT NOT NULL DEFAULT '[]'", []);
 
         Ok(())
     }
@@ -293,9 +294,19 @@ impl Database {
 
     pub fn save_agent_tab_cache(&self, tab: &AgentTabCache) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        // INSERT ... ON CONFLICT deliberately excludes trace_json so normal
+        // persists never overwrite trace data.  Trace events are saved
+        // independently via save_agent_tab_trace().
         conn.execute(
-            "INSERT OR REPLACE INTO agent_tab_cache (tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT INTO agent_tab_cache (tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             ON CONFLICT(tab_id) DO UPDATE SET
+               worktree_id=excluded.worktree_id, label=excluded.label, cwd=excluded.cwd,
+               sdk_session_id=excluded.sdk_session_id, model=excluded.model, effort=excluded.effort,
+               permission_mode=excluded.permission_mode, status=excluded.status, cost_json=excluded.cost_json,
+               messages_json=excluded.messages_json, tab_order=excluded.tab_order,
+               extended_context=excluded.extended_context, concise_mode=excluded.concise_mode,
+               chat_mode=excluded.chat_mode, created_at=excluded.created_at",
             params![
                 tab.tab_id,
                 tab.worktree_id,
@@ -320,6 +331,7 @@ impl Database {
 
     pub fn list_agent_tab_cache(&self, worktree_id: &str) -> Result<Vec<AgentTabCache>> {
         let conn = self.conn.lock().unwrap();
+        // Deliberately excludes trace_json — loaded lazily via load_agent_tab_trace()
         let mut stmt = conn.prepare(
             "SELECT tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at
              FROM agent_tab_cache WHERE worktree_id=?1 ORDER BY tab_order ASC"
@@ -347,6 +359,25 @@ impl Database {
         })?;
 
         rows.collect()
+    }
+
+    pub fn load_agent_tab_trace(&self, tab_id: &str) -> Result<String> {
+        let conn = self.conn.lock().unwrap();
+        let trace: String = conn.query_row(
+            "SELECT trace_json FROM agent_tab_cache WHERE tab_id=?1",
+            params![tab_id],
+            |row| row.get(0),
+        )?;
+        Ok(trace)
+    }
+
+    pub fn save_agent_tab_trace(&self, tab_id: &str, trace_json: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE agent_tab_cache SET trace_json=?1 WHERE tab_id=?2",
+            params![trace_json, tab_id],
+        )?;
+        Ok(())
     }
 
     pub fn delete_agent_tab_cache(&self, tab_id: &str) -> Result<()> {

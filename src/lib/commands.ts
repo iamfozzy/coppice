@@ -452,3 +452,11 @@ export async function deleteAgentTabCache(tabId: string): Promise<void> {
 export async function deleteAgentTabCacheForWorktree(worktreeId: string): Promise<void> {
   return invoke("delete_agent_tab_cache_for_worktree", { worktreeId });
 }
+
+export async function loadAgentTabTrace(tabId: string): Promise<string> {
+  return invoke("load_agent_tab_trace", { tabId });
+}
+
+export async function saveAgentTabTrace(tabId: string, traceJson: string): Promise<void> {
+  return invoke("save_agent_tab_trace", { tabId, traceJson });
+}

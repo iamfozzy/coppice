@@ -7,6 +7,7 @@ import { ProjectSettingsModal } from "./components/ProjectSettings/ProjectSettin
 import { AppSettingsModal } from "./components/AppSettings/AppSettingsModal";
 import { TerminalPanel } from "./components/Terminal/TerminalPanel";
 import { AgentPanel } from "./components/AgentView/AgentPanel";
+import { TracePanel } from "./components/TraceView/TracePanel";
 import { useAppStore, flushAllAgentTabCaches } from "./stores/appStore";
 import { setWindowFocused } from "./lib/windowFocus";
 import * as commands from "./lib/commands";
@@ -20,6 +21,9 @@ function App() {
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree);
   const activeTabByWorktree = useAppStore((s) => s.activeTabByWorktree);
   const runnersByWorktree = useAppStore((s) => s.runnersByWorktree);
+  const traceModeByTab = useAppStore((s) => s.traceModeByTab);
+  const toggleTracePanel = useAppStore((s) => s.toggleTracePanel);
+  const toggleTraceMaximized = useAppStore((s) => s.toggleTraceMaximized);
 
   // Memoize terminal tab list — only recompute when tabs/active/selection change
   const terminalTabs = useMemo(() => {
@@ -306,18 +310,42 @@ function App() {
               <TerminalPanel sessionId={t.id} cwd={t.cwd} command={t.command} fontSize={termFontSize} fontFamily={termFontFamily} keepAlive />
             </div>
           ))}
-          {agentTabs.map((t) => (
-            <div
-              key={t.id}
-              className="absolute inset-0"
-              style={{
-                visibility: t.visible ? "visible" : "hidden",
-                pointerEvents: t.visible ? "auto" : "none",
-              }}
-            >
-              <AgentPanel sessionId={t.id} cwd={t.cwd} initialPrompt={t.command} visible={t.visible} />
-            </div>
-          ))}
+          {agentTabs.map((t) => {
+            const traceMode = traceModeByTab[t.id] ?? "closed";
+            const isTraceOpen = traceMode !== "closed";
+            const isMaximized = traceMode === "maximized";
+            return (
+              <div
+                key={t.id}
+                className="absolute inset-0 flex"
+                style={{
+                  visibility: t.visible ? "visible" : "hidden",
+                  pointerEvents: t.visible ? "auto" : "none",
+                }}
+              >
+                {/* Agent conversation — hidden when trace is maximized */}
+                <div
+                  className="min-w-0 relative"
+                  style={{
+                    flex: isMaximized ? "0 0 0px" : "1 1 0%",
+                    overflow: isMaximized ? "hidden" : undefined,
+                    visibility: isMaximized ? "hidden" : "visible",
+                  }}
+                >
+                  <AgentPanel sessionId={t.id} cwd={t.cwd} initialPrompt={t.command} visible={t.visible} />
+                </div>
+                {/* Trace panel — split (fixed width) or maximized (flex-1) */}
+                {isTraceOpen && (
+                  <TracePanel
+                    tabId={t.id}
+                    maximized={isMaximized}
+                    onClose={() => toggleTracePanel(t.id)}
+                    onToggleMaximize={() => toggleTraceMaximized(t.id)}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
       </main>
 

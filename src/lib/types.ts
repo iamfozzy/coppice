@@ -148,6 +148,50 @@ export interface SlashCommand {
   argumentHint: string;
 }
 
+// ── Trace / Observability types ──
+
+export type TraceEventType =
+  | "query_start"      // user sent a prompt
+  | "turn_start"       // assistant message received (= API call returned)
+  | "turn_cost"        // per-turn token usage
+  | "tool_call"        // tool invocation started
+  | "tool_result"      // tool completed
+  | "compact"          // context compaction
+  | "query_end"        // result event (query complete)
+  | "status_change"    // status transition
+  | "error";           // error
+
+/** A single trace event — the atomic unit of the trace timeline. */
+export interface TraceEvent {
+  id: string;
+  timestamp: number;
+  type: TraceEventType;
+  // Tool-related
+  toolName?: string;
+  toolInput?: unknown;
+  toolOutput?: string;
+  toolUseId?: string;
+  isError?: boolean;
+  // Cost / token-related
+  cost?: TokenUsage;
+  cumulativeCost?: AgentCost;
+  durationMs?: number;
+  numTurns?: number;
+  contextWindow?: number;
+  // Content
+  content?: string;
+  thinkingText?: string;
+  status?: string;
+  /** Tool names from this turn's assistant message (set on turn_start). */
+  turnToolNames?: string[];
+  // Compact-specific
+  preTokens?: number;
+  trigger?: string;
+}
+
+/** Trace panel display mode. */
+export type TraceMode = "closed" | "split" | "maximized";
+
 export interface AgentSessionState {
   messages: AgentMessage[];
   status: AgentStatus;
