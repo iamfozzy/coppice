@@ -434,6 +434,8 @@ export interface AgentTabCache {
   concise_mode: boolean;
   chat_mode: boolean;
   created_at: string;
+  last_turn_cost_json: string | null;
+  sdk_context_window: number | null;
 }
 
 // Agent tab cache commands

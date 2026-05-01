@@ -240,9 +240,15 @@ function nextCallId() {
 /**
  * Build an Anthropic content block array from text + optional images.
  * Returns an array of content blocks (image blocks first, then text).
+ *
+ * Each image object may carry a `tempPath` field (written by the Rust side)
+ * pointing to the file on disk. These paths are appended to the text block so
+ * the agent can reference the images by their on-disk location.
  */
 function buildContentBlocks(text, images) {
   const blocks = [];
+  const savedPaths = [];
+
   if (images && Array.isArray(images)) {
     for (const img of images) {
       if (img.data && img.mediaType) {
@@ -255,10 +261,24 @@ function buildContentBlocks(text, images) {
           },
         });
       }
+      // Collect temp file paths injected by the Rust side
+      if (img.tempPath) {
+        savedPaths.push({ path: img.tempPath, fileName: img.fileName || "image" });
+      }
     }
   }
-  if (text) {
-    blocks.push({ type: "text", text });
+
+  // Append temp file paths to the text so the agent knows where to find them
+  let effectiveText = text || "";
+  if (savedPaths.length > 0) {
+    const pathList = savedPaths
+      .map((p) => `  - ${p.fileName}: ${p.path}`)
+      .join("\n");
+    effectiveText += `\n\n[Attached images saved to disk — use these paths to reference the files:]\n${pathList}`;
+  }
+
+  if (effectiveText) {
+    blocks.push({ type: "text", text: effectiveText });
   }
   return blocks;
 }
@@ -338,14 +358,14 @@ async function handleCommand(msg) {
 
     case "input":
       if (activeQuery) {
-        const inputBlocks = hasImages(msg)
+        const inputContent = hasImages(msg)
           ? buildContentBlocks(msg.text, msg.images)
           : msg.text;
         await activeQuery.streamInput(
           (async function* () {
             yield {
               type: "user",
-              message: { role: "user", content: inputBlocks },
+              message: { role: "user", content: inputContent },
             };
           })()
         );
@@ -771,6 +791,10 @@ async function startSession(msg) {
     // form of `prompt` because the SDK's query() only accepts `string` or
     // `AsyncIterable` — not content block arrays.  A plain string prompt is
     // wrapped by the SDK internally; an iterable lets us provide image blocks.
+    //
+    // Each image object may carry a `tempPath` field (written by the Rust side
+    // before the message reaches us) so the agent knows the on-disk location.
+    // No async file I/O happens here — the bridge starts the query immediately.
     let promptArg;
     if (hasImages(msg)) {
       const contentBlocks = buildContentBlocks(effectivePrompt, msg.images);

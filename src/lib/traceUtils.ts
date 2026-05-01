@@ -305,6 +305,29 @@ export function formatCost(usd: number): string {
   return `$${usd.toFixed(4)}`;
 }
 
+/** Resolve the effective context window size for a given model + extended-context flag.
+ *  When the user has explicitly enabled 1M context on a supporting model (via the
+ *  [1m] model suffix), trust that — the SDK's modelUsage.contextWindow may not
+ *  always reflect the extended window. Otherwise prefer the SDK-reported value,
+ *  falling back to a heuristic:
+ *  - Opus 4.7: 1M unconditionally (native capability — no opt-in)
+ *  - Other 4.x Opus/Sonnet: 1M when extendedContext is enabled, otherwise 200k
+ *  - Haiku 4.5 and anything else: 200k */
+export function contextWindowFor(model: string, extendedContext: boolean, sdkContextWindow?: number | null): number {
+  const m = model.toLowerCase();
+  // Opus 4.7 has native 1M — independent of the extendedContext toggle.
+  if (m.includes("opus-4-7")) return 1_000_000;
+
+  const supports1M = m.includes("opus-4") || m.includes("sonnet-4");
+  if (supports1M && extendedContext) return 1_000_000;
+
+  // The SDK reports the actual context window in modelUsage — trust it
+  // when the user hasn't asked for the extended window.
+  if (sdkContextWindow && sdkContextWindow > 0) return sdkContextWindow;
+
+  return 200_000;
+}
+
 /**
  * Extract a short human-readable summary from a tool call's input.
  * e.g. Read({file_path: "/src/foo.ts"}) → "/src/foo.ts"

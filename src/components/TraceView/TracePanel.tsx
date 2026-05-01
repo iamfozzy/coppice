@@ -3,7 +3,7 @@ import type { TraceEvent } from "../../lib/types";
 import { useAppStore } from "../../stores/appStore";
 import { TraceTimeline } from "./TraceTimeline";
 import { TraceTokenChart } from "./TraceTokenChart";
-import { formatDuration, formatCost } from "../../lib/traceUtils";
+import { formatDuration, formatCost, contextWindowFor } from "../../lib/traceUtils";
 
 type SubTab = "timeline" | "tokens";
 
@@ -19,6 +19,14 @@ interface Props {
 export function TracePanel({ tabId, maximized, onClose, onToggleMaximize }: Props) {
   const events = useAppStore((s) => s.traceEventsByTab[tabId] ?? EMPTY_EVENTS);
   const sessionCost = useAppStore((s) => s.agentSessionByTab[tabId]?.cost ?? null);
+  const session = useAppStore((s) => s.agentSessionByTab[tabId]);
+  const appSettings = useAppStore((s) => s.appSettings);
+  const hasApiKey = !!appSettings?.agent_api_key;
+  const contextWindow = contextWindowFor(
+    session?.model || appSettings?.agent_default_model || "",
+    session?.extendedContext ?? false,
+    session?.sdkContextWindow,
+  );
   const [activeTab, setActiveTab] = useState<SubTab>("timeline");
   const [width, setWidth] = useState(400);
   const dragging = useRef(false);
@@ -147,7 +155,7 @@ export function TracePanel({ tabId, maximized, onClose, onToggleMaximize }: Prop
         {activeTab === "timeline" ? (
           <TraceTimeline events={events} maximized={maximized} />
         ) : (
-          <TraceTokenChart events={events} sessionCost={sessionCost} maximized={maximized} />
+          <TraceTokenChart events={events} sessionCost={sessionCost} maximized={maximized} contextWindow={contextWindow} hasApiKey={hasApiKey} />
         )}
       </div>
     </div>
