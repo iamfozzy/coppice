@@ -858,14 +858,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     const agentSession = tabId in s.agentSessionByTab
       ? (() => { const { [tabId]: _, ...rest } = s.agentSessionByTab; return rest; })()
       : s.agentSessionByTab;
+    const traceEvents = tabId in s.traceEventsByTab
+      ? (() => { const { [tabId]: _, ...rest } = s.traceEventsByTab; return rest; })()
+      : s.traceEventsByTab;
+    const traceMode = tabId in s.traceModeByTab
+      ? (() => { const { [tabId]: _, ...rest } = s.traceModeByTab; return rest; })()
+      : s.traceModeByTab;
     set({
       tabsByWorktree: { ...s.tabsByWorktree, [worktreeId]: next },
       activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: newActive },
       claudeStatusByTab: claudeStatus,
       agentSessionByTab: agentSession,
+      traceEventsByTab: traceEvents,
+      traceModeByTab: traceMode,
     });
     // Close the agent bridge process and remove cached state if this was an agent tab
     if (closedTab?.type === "agent") {
+      _traceLoadedTabs.delete(tabId);
       commands.agentClose(tabId).catch(() => {});
       commands.deleteAgentTabCache(tabId).catch(() => {});
     }

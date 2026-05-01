@@ -329,7 +329,7 @@ function App() {
                   style={{
                     flex: isMaximized ? "0 0 0px" : "1 1 0%",
                     overflow: isMaximized ? "hidden" : undefined,
-                    visibility: isMaximized ? "hidden" : "visible",
+                    visibility: isMaximized ? "hidden" : undefined,
                   }}
                 >
                   <AgentPanel sessionId={t.id} cwd={t.cwd} initialPrompt={t.command} visible={t.visible} />
