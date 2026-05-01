@@ -8,6 +8,7 @@ import { AppSettingsModal } from "./components/AppSettings/AppSettingsModal";
 import { TerminalPanel } from "./components/Terminal/TerminalPanel";
 import { AgentPanel } from "./components/AgentView/AgentPanel";
 import { TracePanel } from "./components/TraceView/TracePanel";
+import { TileView } from "./components/TileView/TileView";
 import { useAppStore, flushAllAgentTabCaches } from "./stores/appStore";
 import { setWindowFocused } from "./lib/windowFocus";
 import * as commands from "./lib/commands";
@@ -24,6 +25,7 @@ function App() {
   const traceModeByTab = useAppStore((s) => s.traceModeByTab);
   const toggleTracePanel = useAppStore((s) => s.toggleTracePanel);
   const toggleTraceMaximized = useAppStore((s) => s.toggleTraceMaximized);
+  const showTileView = useAppStore((s) => s.showTileView);
 
   // Memoize terminal tab list — only recompute when tabs/active/selection change
   const terminalTabs = useMemo(() => {
@@ -83,6 +85,29 @@ function App() {
     if (appSettings !== null) {
       getCurrentWindow().setDecorations(appSettings.window_decorations).catch(() => {});
     }
+  }, [appSettings?.window_decorations]);
+
+  // On macOS with overlay titlebar, push content below the traffic lights.
+  // In fullscreen or when decorations are off, the inset is 0.
+  useEffect(() => {
+    const isMac = navigator.userAgent.includes("Macintosh");
+    if (!isMac) return;
+
+    const decorations = appSettings?.window_decorations !== false;
+
+    const update = () => {
+      getCurrentWindow().isFullscreen().then((fs) => {
+        document.documentElement.style.setProperty(
+          "--titlebar-inset",
+          !fs && decorations ? "28px" : "0px",
+        );
+      }).catch(() => {});
+    };
+
+    update();
+    // Delay the fullscreen check so the window state has settled after resize.
+    const unlisten = getCurrentWindow().onResized(() => { setTimeout(update, 150); });
+    return () => { unlisten.then((fn) => fn()); };
   }, [appSettings?.window_decorations]);
 
   const termFontFamily = appSettings?.terminal_font_family || undefined;
@@ -225,6 +250,16 @@ function App() {
   // Ctrl+W / Ctrl+T don't get a chance to consume them first.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Escape closes tile view
+      if (e.key === "Escape") {
+        const state = useAppStore.getState();
+        if (state.showTileView) {
+          e.preventDefault();
+          state.toggleTileView();
+          return;
+        }
+      }
+
       const mod = (e.ctrlKey || e.metaKey) && !e.altKey;
       if (!mod) return;
       const state = useAppStore.getState();
@@ -297,7 +332,7 @@ function App() {
       <main className="flex-1 flex flex-col min-w-0 bg-bg-primary relative">
         <WorktreeView />
         {/* Terminal + Agent layer — always mounted */}
-        <div id="terminal-layer" className="absolute inset-0" style={{ top: "calc(3rem + 2.5rem)", pointerEvents: "none" }}>
+        <div id="terminal-layer" className="absolute inset-0" style={{ top: "calc(3rem + 2.5rem + var(--titlebar-inset, 0px))", pointerEvents: "none" }}>
           {terminalTabs.map((t) => (
             <div
               key={t.id}
@@ -347,6 +382,7 @@ function App() {
             );
           })}
         </div>
+        {showTileView && <TileView />}
       </main>
 
       {/* Runner terminal pool */}

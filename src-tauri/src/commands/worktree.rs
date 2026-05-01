@@ -121,14 +121,22 @@ pub fn rename_worktree(db: State<'_, Database>, id: String, name: String) -> Res
 }
 
 #[tauri::command]
-pub async fn delete_worktree(db: State<'_, Database>, id: String) -> Result<(), String> {
+pub async fn delete_worktree(db: State<'_, Database>, id: String, keep_branch: bool) -> Result<(), String> {
     // Collect info needed for cleanup before deleting the DB record
-    let mut cleanup_info: Option<(String, String)> = None;
+    // (project_path, wt_path, branch, protected_branches)
+    let mut cleanup_info: Option<(String, String, String, Vec<String>)> = None;
     let projects = db.list_projects().map_err(|e| e.to_string())?;
     for project in &projects {
         let worktrees = db.list_worktrees(&project.id).map_err(|e| e.to_string())?;
         if let Some(wt) = worktrees.iter().find(|w| w.id == id) {
-            cleanup_info = Some((project.local_path.clone(), wt.path.clone()));
+            let mut protected = vec![project.base_branch.clone(), project.target_branch.clone()];
+            protected.retain(|b| !b.is_empty());
+            cleanup_info = Some((
+                project.local_path.clone(),
+                wt.path.clone(),
+                wt.branch.clone(),
+                protected,
+            ));
             break;
         }
     }
@@ -137,7 +145,7 @@ pub async fn delete_worktree(db: State<'_, Database>, id: String) -> Result<(), 
     db.delete_worktree(&id).map_err(|e| e.to_string())?;
 
     // Run the heavy git/filesystem cleanup in the background
-    if let Some((project_path, wt_path)) = cleanup_info {
+    if let Some((project_path, wt_path, branch, protected)) = cleanup_info {
         std::thread::spawn(move || {
             let _ = user_command("git")
                 .args(["worktree", "prune"])
@@ -158,6 +166,14 @@ pub async fn delete_worktree(db: State<'_, Database>, id: String) -> Result<(), 
                 .args(["worktree", "prune"])
                 .current_dir(&project_path)
                 .output();
+
+            // Delete the local branch unless the user chose to keep it
+            if !keep_branch && !protected.contains(&branch) {
+                let _ = user_command("git")
+                    .args(["branch", "-D", &branch])
+                    .current_dir(&project_path)
+                    .output();
+            }
         });
     }
 

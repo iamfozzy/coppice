@@ -3,7 +3,7 @@ import type { Worktree } from "../../lib/types";
 
 interface Props {
   worktree: Worktree;
-  onConfirm: () => void;
+  onConfirm: (keepBranch: boolean) => void;
   onClose: () => void;
 }
 
@@ -46,7 +46,7 @@ export function DeleteWorktreeModal({ worktree, onConfirm, onClose }: Props) {
             <span className="font-semibold text-text-primary">{worktree.name}</span>?
           </p>
           <p className="text-xs text-text-tertiary">
-            This will remove the worktree directory from disk. This action cannot be undone.
+            This will remove the worktree directory and the local <span className="font-mono">{worktree.branch}</span> branch. This action cannot be undone.
           </p>
         </div>
 
@@ -59,7 +59,13 @@ export function DeleteWorktreeModal({ worktree, onConfirm, onClose }: Props) {
             Cancel
           </button>
           <button
-            onClick={onConfirm}
+            onClick={() => onConfirm(true)}
+            className="px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary border border-border-primary hover:border-border-secondary rounded transition-colors"
+          >
+            Delete, Keep Branch
+          </button>
+          <button
+            onClick={() => onConfirm(false)}
             autoFocus
             className="px-4 py-1.5 text-xs font-medium bg-error hover:bg-error/80 text-white rounded transition-colors"
           >
