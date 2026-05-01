@@ -1,4 +1,4 @@
-import { useState, startTransition } from "react";
+import { useState, useRef, useEffect, startTransition } from "react";
 import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
 import { CreateWorktreeModal } from "./CreateWorktreeModal";
 import { DeleteWorktreeModal } from "./DeleteWorktreeModal";
@@ -138,13 +138,20 @@ function ProjectNode({
   const expanded = !collapsed;
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
 
   return (
     <div>
       {/* Project header */}
-      <button
-        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors group"
-        onClick={onToggleCollapse}
+      <div
+        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors group cursor-pointer"
+        onClick={() => !searchOpen && onToggleCollapse()}
         onContextMenu={(e) => {
           e.preventDefault();
           onEditProject();
@@ -158,8 +165,47 @@ function ProjectNode({
         >
           <path d="M3 1l4 4-4 4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" />
         </svg>
-        <span className="truncate flex-1">{project.name}</span>
+        {searchOpen ? (
+          <input
+            ref={searchInputRef}
+            className="flex-1 min-w-0 bg-transparent border-b border-accent text-[11px] font-normal normal-case tracking-normal text-text-primary placeholder:text-text-tertiary focus:outline-none font-mono py-0.5"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setSearchQuery("");
+                setSearchOpen(false);
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            placeholder="Filter branches…"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        ) : (
+          <span className="truncate flex-1 text-left">{project.name}</span>
+        )}
         <span className="flex items-center gap-0.5">
+          <span
+            className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
+              searchOpen
+                ? "text-accent hover:text-accent-hover hover:bg-bg-active"
+                : "text-text-tertiary hover:text-text-primary hover:bg-bg-active"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSearchOpen((v) => {
+                if (v) setSearchQuery("");
+                return !v;
+              });
+            }}
+            title="Filter branches"
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+              <circle cx="5" cy="5" r="3.5" stroke="currentColor" strokeWidth="1.3" />
+              <path d="M7.5 7.5L10.5 10.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+          </span>
           <span
             className="w-5 h-5 flex items-center justify-center rounded text-text-tertiary hover:text-text-primary hover:bg-bg-active transition-colors"
             onClick={(e) => {
@@ -187,17 +233,22 @@ function ProjectNode({
             </svg>
           </span>
         </span>
-      </button>
+      </div>
 
       {/* Worktree list */}
-      {expanded && (
+      {expanded && (() => {
+        const query = searchQuery.toLowerCase();
+        const filtered = query
+          ? worktrees.filter((wt) => wt.branch.toLowerCase().includes(query))
+          : worktrees;
+        return (
         <div>
-          {worktrees.length === 0 ? (
+          {filtered.length === 0 ? (
             <div className="pl-8 pr-3 py-1 text-[11px] text-text-tertiary">
-              No worktrees
+              {searchQuery ? "No matching branches" : "No worktrees"}
             </div>
           ) : (
-            worktrees.map((wt) => {
+            filtered.map((wt) => {
               const isDeleting = deletingIds.has(wt.id);
               const hasRunningRunner = runnersByWorktree[wt.id]?.["run"]?.status === "running";
               const claudeStatus = claudeStatusByWorktree[wt.id] ?? null;
@@ -205,7 +256,7 @@ function ProjectNode({
               return (
               <div
                 key={wt.id}
-                className={`flex items-center gap-2 pl-7 pr-3 py-1.5 text-xs transition-colors group/wt ${
+                className={`flex items-center gap-2 pl-3 pr-3 py-1.5 text-[11px] transition-colors group/wt ${
                   isDeleting
                     ? "opacity-40 pointer-events-none"
                     : isSelected
@@ -220,7 +271,7 @@ function ProjectNode({
                   setRenameValue(wt.name);
                 }}
               >
-                <div className="flex flex-col flex-1 min-w-0 gap-0.5">
+                <div className="flex-1 min-w-0">
                   {isDeleting ? (
                     <span className="truncate italic text-text-tertiary">Deleting...</span>
                   ) : renamingId === wt.id ? (
@@ -248,15 +299,12 @@ function ProjectNode({
                       autoComplete="off"
                     />
                   ) : (
-                    <>
-                      <span className="truncate">{wt.name}</span>
-                      <span className={`truncate text-[10px] font-mono ${isSelected ? "text-accent-hover/60" : "text-text-tertiary"}`}>
-                        {wt.branch}
-                        {wt.pr_number != null && (
-                          <span className={isSelected ? "text-accent-hover/80" : "text-text-secondary"}> #{wt.pr_number}</span>
-                        )}
-                      </span>
-                    </>
+                    <span className="truncate font-mono">
+                      {wt.branch}
+                      {wt.pr_number != null && (
+                        <span className={isSelected ? "text-accent-hover/80" : "text-text-secondary"}> #{wt.pr_number}</span>
+                      )}
+                    </span>
                   )}
                 </div>
                 {claudeStatus && !isDeleting && <ClaudeIndicator status={claudeStatus} />}
@@ -278,7 +326,8 @@ function ProjectNode({
             })
           )}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
