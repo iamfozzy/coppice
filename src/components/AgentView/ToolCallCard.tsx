@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { MarkdownContent } from "./MessageBubble";
 
 interface Props {
   toolName: string;
@@ -6,6 +7,12 @@ interface Props {
   toolOutput?: string;
   isError?: boolean;
   isActive?: boolean;
+}
+
+interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  activeForm?: string;
 }
 
 /** Icon for common tool types. Falls back to a generic wrench. */
@@ -39,6 +46,13 @@ function ToolIcon({ name }: { name: string }) {
           <path d="M8 8l2.5 2.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
         </svg>
       );
+    case "TodoWrite":
+      return (
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" className="shrink-0">
+          <rect x="1" y="1" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.1" />
+          <path d="M3.5 6l1.5 1.5 3.5-3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
     default:
       return (
         <svg width="11" height="11" viewBox="0 0 12 12" fill="none" className="shrink-0">
@@ -49,7 +63,8 @@ function ToolIcon({ name }: { name: string }) {
 }
 
 export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActive }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const richContent = getRichContent(toolName, toolInput);
+  const [expanded, setExpanded] = useState(richContent !== null);
   const summary = toolInput != null ? summarizeInput(toolName, toolInput) : "";
   const hasDetail = toolInput != null || !!toolOutput;
 
@@ -75,7 +90,9 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
         )}
 
         <span className={accent}><ToolIcon name={toolName} /></span>
-        <span className="font-mono text-text-secondary font-medium">{toolName}</span>
+        <span className="font-mono text-text-secondary font-medium">
+          {richContent?.label ?? toolName}
+        </span>
 
         {summary && (
           <span className="text-text-tertiary truncate font-mono min-w-0">{summary}</span>
@@ -93,13 +110,19 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
 
       {expanded && hasDetail && (
         <div className="pl-5 pr-1 pt-1 pb-1.5 space-y-1.5">
-          {toolInput != null && (
-            <div>
-              <span className="text-text-tertiary text-[10px] uppercase tracking-wider font-medium">Input</span>
-              <pre className="mt-0.5 text-text-secondary font-mono text-[11px] whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-bg-tertiary/60 rounded px-2 py-1.5 leading-relaxed">
-                {typeof toolInput === "string" ? toolInput : JSON.stringify(toolInput, null, 2)}
-              </pre>
-            </div>
+          {richContent ? (
+            <RichToolContent content={richContent} />
+          ) : (
+            <>
+              {toolInput != null && (
+                <div>
+                  <span className="text-text-tertiary text-[10px] uppercase tracking-wider font-medium">Input</span>
+                  <pre className="mt-0.5 text-text-secondary font-mono text-[11px] whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-bg-tertiary/60 rounded px-2 py-1.5 leading-relaxed">
+                    {typeof toolInput === "string" ? toolInput : JSON.stringify(toolInput, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </>
           )}
 
           {toolOutput && (
@@ -118,6 +141,101 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
       )}
     </div>
   );
+}
+
+// ── Rich content detection ──
+
+type RichContent =
+  | { kind: "todos"; label: string; todos: TodoItem[] }
+  | { kind: "plan_md"; label: string; filePath: string; markdown: string };
+
+function getRichContent(toolName: string, toolInput: unknown): RichContent | null {
+  if (!toolInput || typeof toolInput !== "object") return null;
+  const obj = toolInput as Record<string, unknown>;
+
+  if (toolName === "TodoWrite" && Array.isArray(obj.todos)) {
+    return { kind: "todos", label: "Plan", todos: obj.todos as TodoItem[] };
+  }
+
+  if (toolName === "Write" && typeof obj.file_path === "string" && typeof obj.content === "string") {
+    const fp = obj.file_path as string;
+    if (isPlanFile(fp)) {
+      return { kind: "plan_md", label: "Write Plan", filePath: fp, markdown: obj.content as string };
+    }
+  }
+
+  return null;
+}
+
+function isPlanFile(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  if (normalized.includes("/plans/") || normalized.includes("/plan")) {
+    return normalized.endsWith(".md");
+  }
+  return false;
+}
+
+// ── Rich content renderer ──
+
+function RichToolContent({ content }: { content: RichContent }) {
+  if (content.kind === "todos") {
+    return (
+      <div className="rounded-md border border-border-primary bg-bg-secondary/60 overflow-hidden">
+        <div className="px-2.5 py-1.5 border-b border-border-primary flex items-center justify-between">
+          <span className="text-[10px] uppercase tracking-wider text-text-tertiary font-medium">Tasks</span>
+          <span className="text-[10px] text-text-tertiary font-mono">
+            {content.todos.filter((t) => t.status === "completed").length}/{content.todos.length} done
+          </span>
+        </div>
+        <div className="px-1 py-1 space-y-px max-h-72 overflow-y-auto">
+          {content.todos.map((todo, i) => (
+            <div key={i} className="flex items-start gap-2 px-1.5 py-1 rounded hover:bg-bg-hover/30">
+              <span className="mt-0.5 shrink-0">
+                {todo.status === "completed" ? (
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-success">
+                    <rect x="1" y="1" width="12" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.2" />
+                    <path d="M4 7l2 2 4-4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : todo.status === "in_progress" ? (
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-accent">
+                    <rect x="1" y="1" width="12" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.2" />
+                    <circle cx="7" cy="7" r="2" fill="currentColor" className="animate-pulse" />
+                  </svg>
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-text-tertiary">
+                    <rect x="1" y="1" width="12" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.2" />
+                  </svg>
+                )}
+              </span>
+              <span className={`text-[11px] leading-relaxed ${
+                todo.status === "completed" ? "text-text-tertiary line-through" :
+                todo.status === "in_progress" ? "text-text-primary" :
+                "text-text-secondary"
+              }`}>
+                {todo.content}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (content.kind === "plan_md") {
+    return (
+      <div className="rounded-md border border-border-primary bg-bg-secondary/60 overflow-hidden">
+        <div className="px-2.5 py-1.5 border-b border-border-primary flex items-center justify-between">
+          <span className="text-[10px] uppercase tracking-wider text-text-tertiary font-medium">Plan</span>
+          <span className="text-[10px] text-text-tertiary font-mono">{shortPath(content.filePath)}</span>
+        </div>
+        <div className="px-2.5 py-2 max-h-80 overflow-y-auto text-[12px]">
+          <MarkdownContent text={content.markdown} />
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function summarizeInput(toolName: string, input: unknown): string {
@@ -141,6 +259,13 @@ function summarizeInput(toolName: string, input: unknown): string {
       return truncate(String(obj.url || ""), 60);
     case "Agent":
       return truncate(String(obj.description || ""), 60);
+    case "TodoWrite": {
+      const todos = Array.isArray(obj.todos) ? obj.todos as TodoItem[] : [];
+      const done = todos.filter((t) => t.status === "completed").length;
+      const active = todos.find((t) => t.status === "in_progress");
+      if (active) return truncate(active.activeForm || active.content, 50);
+      return `${done}/${todos.length} tasks`;
+    }
     default:
       return "";
   }
