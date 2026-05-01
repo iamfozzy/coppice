@@ -8,6 +8,7 @@ interface Props {
   messages: AgentMessage[];
   streamingText: string;
   status: AgentStatus;
+  onCancelQueued?: (messageId: string) => void;
 }
 
 interface ToolGroupItem {
@@ -29,13 +30,20 @@ type RenderItem = ToolGroupItem | PlainItem;
  * attached by toolUseId) becomes one ToolGroup; any non-tool message breaks
  * the run. tool_results don't break the run — they just get attached to their
  * matching call inside whichever group is still open or already closed.
+ *
+ * Queued messages are excluded — they're rendered separately at the bottom.
  */
-function mergeMessages(messages: AgentMessage[]): RenderItem[] {
+function mergeMessages(messages: AgentMessage[]): { items: RenderItem[]; queued: AgentMessage[] } {
   const items: RenderItem[] = [];
+  const queued: AgentMessage[] = [];
   const toolLoc = new Map<string, { groupIdx: number; toolIdx: number }>();
   let currentGroup: ToolGroupItem | null = null;
 
   for (const msg of messages) {
+    if (msg.isQueued) {
+      queued.push(msg);
+      continue;
+    }
     if (msg.type === "tool_call" && msg.toolUseId) {
       if (!currentGroup) {
         currentGroup = { kind: "tool_group", tools: [], key: msg.id };
@@ -56,10 +64,10 @@ function mergeMessages(messages: AgentMessage[]): RenderItem[] {
     }
   }
 
-  return items;
+  return { items, queued };
 }
 
-export function MessageList({ messages, streamingText, status }: Props) {
+export function MessageList({ messages, streamingText, status, onCancelQueued }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
 
@@ -76,7 +84,7 @@ export function MessageList({ messages, streamingText, status }: Props) {
     }
   }, [messages.length, streamingText]);
 
-  const items = useMemo(() => mergeMessages(messages), [messages]);
+  const { items, queued } = useMemo(() => mergeMessages(messages), [messages]);
 
   return (
     <div
@@ -118,10 +126,15 @@ export function MessageList({ messages, streamingText, status }: Props) {
         </div>
       )}
 
-      {/* Thinking/working indicator — shown when agent is active but no streaming text yet */}
-      {!streamingText && (status === "thinking" || status === "tool_use") && (
+      {/* Status indicator — shown when agent is active but no streaming text yet */}
+      {!streamingText && (status === "thinking" || status === "tool_use" || status === "waiting_permission" || status === "waiting_input") && (
         <StatusIndicator status={status} />
       )}
+
+      {/* Queued messages — always at bottom until sent */}
+      {queued.map((msg) => (
+        <MessageBubble key={msg.id} message={msg} onCancel={onCancelQueued} />
+      ))}
     </div>
   );
 }
@@ -129,8 +142,26 @@ export function MessageList({ messages, streamingText, status }: Props) {
 // ---------------------------------------------------------------------------
 // Inline status indicator with animated icons and rotating phrases
 // ---------------------------------------------------------------------------
-function StatusIndicator({ status }: { status: "thinking" | "tool_use" }) {
+function StatusIndicator({ status }: { status: "thinking" | "tool_use" | "waiting_permission" | "waiting_input" }) {
   const thinkingPhrase = useRotatingThinkingPhrase();
+
+  if (status === "waiting_permission") {
+    return (
+      <div className="flex items-center gap-2 py-1">
+        <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
+        <span className="text-[11px] text-warning">Waiting for approval...</span>
+      </div>
+    );
+  }
+
+  if (status === "waiting_input") {
+    return (
+      <div className="flex items-center gap-2 py-1">
+        <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+        <span className="text-[11px] text-text-tertiary">Waiting for your response...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-2 py-1">

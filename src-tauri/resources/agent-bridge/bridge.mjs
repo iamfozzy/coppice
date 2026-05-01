@@ -93,35 +93,20 @@ function isAttributionDisabled(settings) {
   return false;
 }
 
-/**
- * Load CLAUDE.md content from the user-global and project locations.
- *
- * We read these ourselves (instead of letting the SDK inject them via
- * settingSources: "project") so the content is appended to the system prompt
- * as plain labeled text rather than wrapped in a <system-reminder> with a
- * "MUST OVERRIDE" preamble. That wrapper phrasing collides linguistically
- * with the malware-refusal reminder and causes the agent to spuriously
- * refuse edits. Plain appended text has the same effect on behavior without
- * the refusal trigger.
- */
-async function loadClaudeMdContext(cwd) {
-  const sections = [];
-  const candidates = [
-    { path: join(homedir(), ".claude", "CLAUDE.md"), label: "User conventions (~/.claude/CLAUDE.md)" },
-    { path: join(cwd, "CLAUDE.md"), label: "Project conventions (CLAUDE.md)" },
-  ];
-  for (const { path, label } of candidates) {
-    try {
-      const content = await readFile(path, "utf8");
-      if (content.trim()) {
-        sections.push(`${label}:\n\n${content.trim()}`);
-      }
-    } catch {
-      // File missing or unreadable — skip silently.
-    }
-  }
-  return sections.length ? sections.join("\n\n---\n\n") : "";
+/** Returns true if the given model value supports the 1M context beta. */
+function modelSupports1M(model) {
+  if (!model) return false;
+  const m = String(model).toLowerCase();
+  if (m.includes("haiku")) return false;
+  return (
+    m.includes("opus-4-6") ||
+    m.includes("opus-4-7") ||
+    m.includes("sonnet-4-6") ||
+    m.includes("opus-4") ||
+    m.includes("sonnet-4")
+  );
 }
+
 
 /**
  * Load project-level slash commands from .claude/commands/ directories.
@@ -136,33 +121,70 @@ async function loadClaudeMdContext(cwd) {
  */
 async function loadProjectCommands(cwd) {
   const commands = [];
-  const dirs = [
-    join(homedir(), ".claude", "commands"),
+  const seen = new Set();
+
+  // Scan .claude/commands/ for flat *.md files
+  const commandDirs = [
     join(cwd, ".claude", "commands"),
+    join(homedir(), ".claude", "commands"),
   ];
-  for (const dir of dirs) {
+  for (const dir of commandDirs) {
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {
-      continue; // Directory missing or unreadable
+      continue;
     }
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
       const name = entry.name.slice(0, -3); // strip .md
+      if (seen.has(name)) continue;
       try {
         const content = await readFile(join(dir, entry.name), "utf8");
         const firstLine = content.split("\n").find((l) => l.trim()) || "";
+        seen.add(name);
         commands.push({
           name,
           description: firstLine.trim(),
-          argumentHint: "$ARGUMENTS" ,
+          argumentHint: "$ARGUMENTS",
         });
       } catch {
         // Unreadable file — skip silently
       }
     }
   }
+
+  // Scan .claude/skills/ for <name>/SKILL.md
+  const skillDirs = [
+    join(cwd, ".claude", "skills"),
+    join(homedir(), ".claude", "skills"),
+  ];
+  for (const dir of skillDirs) {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const name = entry.name;
+      if (seen.has(name)) continue;
+      try {
+        const content = await readFile(join(dir, name, "SKILL.md"), "utf8");
+        const firstLine = content.split("\n").find((l) => l.trim()) || "";
+        seen.add(name);
+        commands.push({
+          name,
+          description: firstLine.trim(),
+          argumentHint: "$ARGUMENTS",
+        });
+      } catch {
+        // SKILL.md missing or unreadable — skip
+      }
+    }
+  }
+
   return commands;
 }
 
@@ -181,6 +203,8 @@ async function expandProjectCommand(prompt, cwd) {
   const candidates = [
     join(cwd, ".claude", "commands", `${name}.md`),
     join(homedir(), ".claude", "commands", `${name}.md`),
+    join(cwd, ".claude", "skills", name, "SKILL.md"),
+    join(homedir(), ".claude", "skills", name, "SKILL.md"),
   ];
   for (const filePath of candidates) {
     try {
@@ -261,6 +285,21 @@ let lastTurnUsage = null;
 // per-query deltas. The SDK accumulates total_cost_usd in global state
 // (especially on resume), so we must delta to avoid double-counting.
 let prevTotalCostUsd = 0;
+
+// Cumulative session totals across every query handled by this bridge
+// process. Since one bridge = one session, this is the per-session total.
+// Seeded from `start.options.priorCost` on the first start() call so that
+// resumed tabs include cost from previous app sessions. The frontend
+// receives these absolute totals on every `result` event and just replaces
+// its session.cost with them — no client-side accumulation.
+let sessionTotals = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  totalCostUsd: 0,
+};
+let sessionTotalsSeeded = false;
 
 // ── Stdin reader ──
 
@@ -457,6 +496,23 @@ async function startSession(msg) {
 
   const opts = msg.options || {};
 
+  // Seed cumulative session totals from the frontend's persisted cost on the
+  // first start of this bridge process. Resumed tabs carry forward their
+  // tokens/USD from before the app restart so the toolbar stays accurate.
+  if (!sessionTotalsSeeded) {
+    sessionTotalsSeeded = true;
+    const prior = opts.priorCost;
+    if (prior && typeof prior === "object") {
+      sessionTotals = {
+        inputTokens: Number(prior.inputTokens) || 0,
+        outputTokens: Number(prior.outputTokens) || 0,
+        cacheReadTokens: Number(prior.cacheReadTokens) || 0,
+        cacheWriteTokens: Number(prior.cacheWriteTokens) || 0,
+        totalCostUsd: Number(prior.totalCostUsd) || 0,
+      };
+    }
+  }
+
   // Generate a short tab title from the first prompt (fire-and-forget)
   if (!titleGenerated && msg.prompt) {
     titleGenerated = true;
@@ -466,13 +522,8 @@ async function startSession(msg) {
   activeAbort = abortController;
 
   // Include "project" in settingSources so project-level .claude/settings.json
-  // (permissions, allowed tools, etc.) is loaded. We still load CLAUDE.md
-  // ourselves and append it as plain text to the system prompt (see
-  // loadClaudeMdContext) to avoid the SDK's <system-reminder> wrapping which
-  // triggers spurious refusals. The SDK may also inject CLAUDE.md content
-  // from "project" settingSources, but since we provide our own systemPrompt
-  // (preset + append), the duplication is minimal and much better than
-  // missing project permissions/skills.
+  // (permissions, allowed tools, etc.) and CLAUDE.md files are loaded by the
+  // SDK automatically.
   const queryOptions = {
     cwd: msg.cwd,
     abortController,
@@ -480,7 +531,17 @@ async function startSession(msg) {
     settingSources: opts.settingSources || ["user", "project", "local"],
   };
 
-  if (opts.model) queryOptions.model = opts.model;
+  // When extended context is enabled and the model supports it, append
+  // the [1m] suffix to the model ID. The SDK detects this suffix and
+  // automatically enables 1M context + the required beta headers.
+  // See: https://github.com/lukilabs/craft-agents-oss/issues/443
+  if (opts.model) {
+    let effectiveModel = opts.model;
+    if (opts.extendedContext && modelSupports1M(opts.model) && !/\[1m\]/i.test(opts.model)) {
+      effectiveModel = opts.model + "[1m]";
+    }
+    queryOptions.model = effectiveModel;
+  }
   if (opts.effort) queryOptions.effort = opts.effort;
   if (opts.permissionMode) {
     queryOptions.permissionMode = opts.permissionMode;
@@ -490,12 +551,14 @@ async function startSession(msg) {
   if (opts.maxTurns) queryOptions.maxTurns = opts.maxTurns;
   if (opts.maxBudgetUsd) queryOptions.maxBudgetUsd = opts.maxBudgetUsd;
   if (opts.resume) queryOptions.resume = opts.resume;
+  console.error(
+    `[bridge] query start model=${queryOptions.model || "default"} extendedContext=${!!opts.extendedContext}`,
+  );
 
   // Use Claude Code's full system prompt by default so the agent behaves like
   // Claude Code (aggressive tool use, codebase-first answers, etc.).
   // The caller can override with a custom string or their own preset config.
-  // We append CLAUDE.md content here (loaded ourselves) so it's present from
-  // turn one without being wrapped in a <system-reminder>. On `resume`, the
+  // CLAUDE.md content is injected by the SDK via settingSources.
   // Chat mode — disable tools regardless of whether we're starting fresh or
   // resuming. This must be set before the systemPrompt branching below so that
   // resumed chat-mode sessions don't silently pick up the default tool set
@@ -519,18 +582,14 @@ async function startSession(msg) {
   } else if (opts.chatMode) {
     // Chat mode — minimal system prompt, no tools. Much smaller token footprint
     // than the claude_code preset since we skip tool definitions entirely.
-    const claudeMd = await loadClaudeMdContext(msg.cwd);
     const parts = [
       "You are a helpful coding assistant. Answer questions clearly and concisely.",
     ];
-    if (claudeMd) parts.push(claudeMd);
     if (opts.conciseMode) parts.push(CONCISE_MODE_INSTRUCTION);
     if (noAttribution) parts.push(NO_ATTRIBUTION_INSTRUCTION);
     queryOptions.systemPrompt = parts.join("\n\n---\n\n");
   } else {
-    const claudeMd = await loadClaudeMdContext(msg.cwd);
     const appendParts = [];
-    if (claudeMd) appendParts.push(claudeMd);
     appendParts.push(TOOL_FRUGALITY_INSTRUCTION);
     if (opts.conciseMode) appendParts.push(CONCISE_MODE_INSTRUCTION);
     if (noAttribution) appendParts.push(NO_ATTRIBUTION_INSTRUCTION);
@@ -757,6 +816,13 @@ function processMessage(message) {
         if (message.status) {
           emit({ type: "status", status: message.status });
         }
+      } else if (message.subtype === "compact_boundary") {
+        // SDK compacted the conversation — surface in the UI
+        emit({
+          type: "compact_boundary",
+          preTokens: message.compact_metadata?.pre_tokens,
+          trigger: message.compact_metadata?.trigger,
+        });
       }
       break;
 
@@ -796,6 +862,10 @@ function processMessage(message) {
           cacheReadTokens: usage.cache_read_input_tokens || 0,
           cacheWriteTokens: usage.cache_creation_input_tokens || 0,
         };
+        const total = lastTurnUsage.inputTokens + lastTurnUsage.cacheReadTokens + lastTurnUsage.cacheWriteTokens;
+        console.error(
+          `[bridge] turn usage: fresh=${lastTurnUsage.inputTokens} CR=${lastTurnUsage.cacheReadTokens} CW=${lastTurnUsage.cacheWriteTokens} out=${lastTurnUsage.outputTokens} total_in=${total}`,
+        );
       }
       emit({
         type: "turn_cost",
@@ -882,6 +952,15 @@ function processMessage(message) {
       const queryCostUsd = Math.max(0, currentTotalCostUsd - prevTotalCostUsd);
       prevTotalCostUsd = currentTotalCostUsd;
 
+      // Accumulate per-query usage into the bridge-side session totals.
+      // The frontend treats `cost` on a result event as the absolute
+      // session total, so it just replaces session.cost with this value.
+      sessionTotals.inputTokens += queryCost.inputTokens;
+      sessionTotals.outputTokens += queryCost.outputTokens;
+      sessionTotals.cacheReadTokens += queryCost.cacheReadTokens;
+      sessionTotals.cacheWriteTokens += queryCost.cacheWriteTokens;
+      sessionTotals.totalCostUsd += queryCostUsd;
+
       // ── Context window from SDK modelUsage ──
       // modelUsage entries include a contextWindow field that reflects
       // the model's actual context window (200K, 1M, etc.). Forward it
@@ -896,10 +975,7 @@ function processMessage(message) {
         type: "result",
         subtype: message.subtype,
         sessionId: message.session_id,
-        cost: {
-          totalCostUsd: queryCostUsd,
-          ...queryCost,
-        },
+        cost: { ...sessionTotals },
         // Use the last per-turn usage we tracked (from the final assistant
         // message). This represents what the model held in its context
         // window for the last API call — the correct value for the context

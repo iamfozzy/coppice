@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAppStore } from "../../stores/appStore";
 import type { AppSettings, McpServerEntry } from "../../lib/types";
+import { SUPPORTED_MODELS } from "../../lib/supportedModels";
 import { GitHubAuthSection } from "./GitHubAuthSection";
 
 const defaultSettings: AppSettings = {
@@ -175,12 +176,15 @@ export function AppSettingsModal() {
                 placeholder="sk-ant-..."
                 hint="Your Anthropic API key for the Agent SDK"
               />
-              <Field
+              <Select
                 label="Default model"
                 value={form.agent_default_model}
                 onChange={(agent_default_model) => setForm({ ...form, agent_default_model })}
-                placeholder="e.g. claude-sonnet-4-6"
-                hint="Model to use for agent sessions. Uses the SDK default if empty."
+                options={[
+                  { value: "", label: "(SDK default)" },
+                  ...SUPPORTED_MODELS,
+                ]}
+                hint="Model to use for agent sessions. Uses the SDK default if not set."
               />
               <div>
                 <label className="block text-xs text-text-secondary mb-1">Default effort</label>
@@ -283,6 +287,101 @@ function Field({
         placeholder={placeholder}
         className="w-full px-3 py-1.5 text-sm bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors font-mono"
       />
+      {hint && <p className="mt-0.5 text-[10px] text-text-tertiary">{hint}</p>}
+    </div>
+  );
+}
+
+function Select({
+  label,
+  value,
+  onChange,
+  options,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  hint?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const selected = options.find((o) => o.value === value) ?? options[0];
+
+  return (
+    <div>
+      <label className="block text-xs text-text-secondary mb-1">{label}</label>
+      <div className="relative" ref={wrapperRef}>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className={`w-full flex items-center justify-between px-3 py-1.5 text-sm bg-bg-tertiary border rounded text-text-primary focus:outline-none transition-colors font-mono ${
+            open ? "border-accent" : "border-border-primary hover:border-border-secondary"
+          }`}
+        >
+          <span className={selected?.value ? "" : "text-text-tertiary"}>
+            {selected?.label ?? ""}
+          </span>
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            fill="none"
+            className={`text-text-tertiary transition-transform ${open ? "rotate-180" : ""}`}
+          >
+            <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {open && (
+          <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-bg-secondary border border-border-primary rounded shadow-lg max-h-60 overflow-y-auto py-1">
+            {options.map((opt) => {
+              const isSelected = opt.value === value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => {
+                    onChange(opt.value);
+                    setOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm font-mono text-left transition-colors ${
+                    isSelected
+                      ? "bg-accent/15 text-text-primary"
+                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  }`}
+                >
+                  <span className={opt.value ? "" : "text-text-tertiary"}>{opt.label}</span>
+                  {isSelected && (
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-accent shrink-0">
+                      <path d="M2 5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
       {hint && <p className="mt-0.5 text-[10px] text-text-tertiary">{hint}</p>}
     </div>
   );

@@ -283,11 +283,15 @@ export interface AgentStartOptions {
   permissionMode?: string;
   conciseMode?: boolean;
   chatMode?: boolean;
+  extendedContext?: boolean;
   allowedTools?: string[];
   maxTurns?: number;
   maxBudgetUsd?: number;
   resume?: string;
   apiKey?: string;
+  /** Cumulative session cost from a previous app run — seeds the bridge's
+   *  in-process session totals so resumed tabs keep their running totals. */
+  priorCost?: import("./types").AgentCost;
 }
 
 export async function agentStart(
@@ -306,11 +310,13 @@ export async function agentStart(
     permissionMode: options?.permissionMode,
     conciseMode: options?.conciseMode,
     chatMode: options?.chatMode,
+    extendedContext: options?.extendedContext,
     allowedTools: options?.allowedTools,
     maxTurns: options?.maxTurns,
     maxBudgetUsd: options?.maxBudgetUsd,
     resume: options?.resume,
     apiKey: options?.apiKey,
+    priorCost: options?.priorCost,
     images: images?.length ? images : undefined,
   });
 }
@@ -398,6 +404,16 @@ export interface ImageFileData {
 
 export async function readImageBase64(path: string): Promise<ImageFileData> {
   return invoke("read_image_base64", { path });
+}
+
+export interface ProjectSlashCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
+export async function getProjectCommands(cwd: string): Promise<ProjectSlashCommand[]> {
+  return invoke("get_project_commands", { cwd });
 }
 
 // Agent tab cache types

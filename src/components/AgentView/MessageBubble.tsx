@@ -3,9 +3,10 @@ import type { AgentMessage } from "../../lib/types";
 
 interface Props {
   message: AgentMessage;
+  onCancel?: (messageId: string) => void;
 }
 
-export function MessageBubble({ message }: Props) {
+export function MessageBubble({ message, onCancel }: Props) {
   switch (message.type) {
     case "user":
       return (
@@ -21,7 +22,18 @@ export function MessageBubble({ message }: Props) {
                   <circle cx="5" cy="5" r="4" stroke="currentColor" strokeWidth="1" />
                   <path d="M5 2.5v3l1.5 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
                 </svg>
-                Queued — will send when Claude finishes
+                <span className="flex-1">Queued — will send when Claude finishes</span>
+                {onCancel && (
+                  <button
+                    onClick={() => onCancel(message.id)}
+                    className="ml-1 p-0.5 rounded hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 transition-colors"
+                    title="Cancel queued message"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                      <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
               </div>
             )}
             {message.content}
@@ -41,7 +53,12 @@ export function MessageBubble({ message }: Props) {
       return (
         <div className="flex items-center gap-2 py-0.5">
           <div className="flex-1 h-px bg-border-primary" />
-          <span className="text-[10px] text-text-tertiary shrink-0">{message.content}</span>
+          <span className="text-[10px] text-text-tertiary shrink-0 flex items-center gap-1.5">
+            {message.content}
+            {message.mcpServers && message.mcpServers.length > 0 && (
+              <McpTooltip servers={message.mcpServers} />
+            )}
+          </span>
           <div className="flex-1 h-px bg-border-primary" />
         </div>
       );
@@ -74,6 +91,67 @@ export function MessageBubble({ message }: Props) {
     default:
       return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// MCP servers tooltip
+// ---------------------------------------------------------------------------
+function McpTooltip({ servers }: { servers: Array<{ name: string; status: string }> }) {
+  const connected = servers.filter((s) => s.status === "connected");
+  const other = servers.filter((s) => s.status !== "connected");
+
+  return (
+    <div className="flex items-center gap-1">
+      {connected.length > 0 && (
+        <McpDropdown servers={connected} variant="connected" />
+      )}
+      {other.length > 0 && (
+        <McpDropdown servers={other} variant="other" />
+      )}
+    </div>
+  );
+}
+
+function McpDropdown({
+  servers,
+  variant,
+}: {
+  servers: Array<{ name: string; status: string }>;
+  variant: "connected" | "other";
+}) {
+  const [open, setOpen] = useState(false);
+  const isConnected = variant === "connected";
+
+  return (
+    <div className="relative inline-block">
+      <button
+        onClick={() => setOpen(!open)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors ${
+          isConnected
+            ? "bg-green-500/10 text-green-400 hover:bg-green-500/20"
+            : "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+        }`}
+        title={isConnected ? "Connected MCP servers" : "Pending MCP servers"}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-green-400" : "bg-amber-400"}`} />
+        {servers.length}
+      </button>
+      {open && (
+        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 z-50 min-w-[140px] bg-bg-secondary border border-border-primary rounded-lg shadow-lg py-1.5 px-2">
+          <div className="text-[9px] text-text-tertiary uppercase tracking-wider mb-1">
+            {isConnected ? "Connected" : "Pending"}
+          </div>
+          {servers.map((s, i) => (
+            <div key={i} className="flex items-center gap-1.5 py-0.5 text-[10px]">
+              <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-green-400" : "bg-amber-400"}`} />
+              <span className="text-text-secondary truncate">{s.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +195,7 @@ type Block =
   | { type: "blockquote"; lines: string[] }
   | { type: "ul"; items: string[] }
   | { type: "ol"; items: string[] }
+  | { type: "table"; headers: string[]; alignments: ("left" | "center" | "right" | null)[]; rows: string[][] }
   | { type: "paragraph"; content: string };
 
 function parseBlocks(text: string): Block[] {
@@ -187,6 +266,34 @@ function parseBlocks(text: string): Block[] {
         i++;
       }
       blocks.push({ type: "ol", items });
+      continue;
+    }
+
+    // Table — header row, separator row with dashes/colons, then data rows
+    if (
+      i + 1 < lines.length &&
+      line.includes("|") &&
+      /^\|?[\s\-:]+(\|[\s\-:]+)+\|?\s*$/.test(lines[i + 1])
+    ) {
+      const parseCells = (row: string) =>
+        row.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+      const headers = parseCells(line);
+      const sepCells = parseCells(lines[i + 1]);
+      const alignments: ("left" | "center" | "right" | null)[] = sepCells.map((c) => {
+        const l = c.startsWith(":");
+        const r = c.endsWith(":");
+        if (l && r) return "center";
+        if (r) return "right";
+        if (l) return "left";
+        return null;
+      });
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") {
+        rows.push(parseCells(lines[i]));
+        i++;
+      }
+      blocks.push({ type: "table", headers, alignments, rows });
       continue;
     }
 
@@ -374,6 +481,41 @@ export function MarkdownContent({ text }: { text: string }) {
                   </li>
                 ))}
               </ol>
+            );
+          case "table":
+            return (
+              <div key={i} className="overflow-x-auto rounded-lg border border-border-primary">
+                <table className="w-full text-[12px] border-collapse">
+                  <thead>
+                    <tr className="bg-bg-secondary/60">
+                      {block.headers.map((h, j) => (
+                        <th
+                          key={j}
+                          className="px-3 py-1.5 font-semibold text-text-primary border-b border-border-primary text-left"
+                          style={{ textAlign: block.alignments[j] || "left" }}
+                        >
+                          {renderInline(h)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, ri) => (
+                      <tr key={ri} className={ri % 2 === 1 ? "bg-bg-secondary/30" : ""}>
+                        {row.map((cell, ci) => (
+                          <td
+                            key={ci}
+                            className="px-3 py-1.5 text-text-secondary border-b border-border-primary/50"
+                            style={{ textAlign: block.alignments[ci] || "left" }}
+                          >
+                            {renderInline(cell)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             );
           case "paragraph":
             return (

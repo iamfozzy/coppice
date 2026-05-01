@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 // Prune agent-bridge/node_modules to keep only the binaries for a single
-// target triple. Run this before `tauri build` in CI to strip ~40 MB of
-// unused ripgrep platform binaries (claude-agent-sdk ships all 5) and any
-// stray cross-platform @img/sharp variants.
+// target triple. Run this before `tauri build` in CI to strip unused
+// platform-specific packages.
+//
+// SDK v0.1 bundled ripgrep binaries under vendor/ripgrep/<platform>.
+// SDK v0.2+ ships platform-specific native binary packages as
+// optionalDependencies (@anthropic-ai/claude-agent-sdk-<platform>).
+// npm usually only installs the host platform's package, but CI
+// cross-compilation or caching can leave extras. This script removes
+// any that don't match the build target.
 //
 // Usage: node scripts/prune-agent-bridge.mjs [target-triple]
 // If no target is passed, the host platform is auto-detected.
@@ -12,11 +18,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const TARGET_MAP = {
-  "aarch64-apple-darwin": { rg: "arm64-darwin", sharp: "darwin-arm64" },
-  "x86_64-apple-darwin": { rg: "x64-darwin", sharp: "darwin-x64" },
-  "x86_64-unknown-linux-gnu": { rg: "x64-linux", sharp: "linux-x64" },
-  "aarch64-unknown-linux-gnu": { rg: "arm64-linux", sharp: "linux-arm64" },
-  "x86_64-pc-windows-msvc": { rg: "x64-win32", sharp: "win32-x64" },
+  "aarch64-apple-darwin": { rg: "arm64-darwin", sharp: "darwin-arm64", sdk: "darwin-arm64" },
+  "x86_64-apple-darwin": { rg: "x64-darwin", sharp: "darwin-x64", sdk: "darwin-x64" },
+  "x86_64-unknown-linux-gnu": { rg: "x64-linux", sharp: "linux-x64", sdk: "linux-x64" },
+  "aarch64-unknown-linux-gnu": { rg: "arm64-linux", sharp: "linux-arm64", sdk: "linux-arm64" },
+  "x86_64-pc-windows-msvc": { rg: "x64-win32", sharp: "win32-x64", sdk: "win32-x64" },
 };
 
 function hostTarget() {
@@ -80,7 +86,20 @@ function prune(dir, keepPredicate, label) {
   }
 }
 
-// Prune ripgrep platform binaries
+// SDK v0.2+: Prune platform-specific native binary packages.
+// These are @anthropic-ai/claude-agent-sdk-<platform> directories
+// (e.g. claude-agent-sdk-darwin-arm64, claude-agent-sdk-linux-x64).
+// npm should only install the host platform's package, but CI caching
+// or cross-installs can leave extras (~206 MB each).
+const anthropicDir = join(nodeModules, "@anthropic-ai");
+const keepSdkPkg = `claude-agent-sdk-${map.sdk}`;
+prune(
+  anthropicDir,
+  (name) => !name.startsWith("claude-agent-sdk-") || name === keepSdkPkg,
+  "@anthropic-ai"
+);
+
+// SDK v0.1 (legacy): Prune ripgrep platform binaries under vendor/ripgrep/.
 const rgDir = join(
   nodeModules,
   "@anthropic-ai",

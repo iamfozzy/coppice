@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment } from "../lib/types";
 import { DEFAULT_SLASH_COMMANDS } from "../lib/slashCommandDefaults";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
@@ -279,7 +279,9 @@ interface AppState {
   setAgentChatMode: (tabId: string, enabled: boolean) => void;
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
   replaceAgentCost: (tabId: string, cost: AgentCost) => void;
-  setAgentLastTurnCost: (tabId: string, cost: AgentCost) => void;
+  setAgentLastTurnCost: (tabId: string, cost: TokenUsage) => void;
+  accumulateQueryOutput: (tabId: string, outputTokens: number) => void;
+  resetQueryOutput: (tabId: string) => void;
   setAgentSdkContextWindow: (tabId: string, contextWindow: number) => void;
   setAgentSdkSessionId: (tabId: string, id: string | null) => void;
   setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
@@ -288,6 +290,7 @@ interface AppState {
   removeAgentSession: (tabId: string) => void;
   pushAgentQueuedMessage: (tabId: string, text: string) => void;
   removeQueuedAgentMessages: (tabId: string) => void;
+  cancelQueuedAgentMessage: (tabId: string, messageId: string) => void;
   shiftQueuedMessage: (tabId: string) => void;
   promoteAllQueuedMessages: (tabId: string) => void;
 
@@ -623,7 +626,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         restoredSessions[cached.tab_id] = {
           messages,
           status,
-          model: cached.model,
+          model: cached.model || get().appSettings?.agent_default_model || "",
           effort: cached.effort as EffortLevel,
           extendedContext: cached.extended_context,
           conciseMode: cached.concise_mode ?? false,
@@ -631,6 +634,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           permissionMode: cached.permission_mode as AgentPermissionMode,
           cost,
           lastTurnCost: null,
+          queryOutputTokens: 0,
           sdkContextWindow: null,
           sdkSessionId: cached.sdk_session_id,
           pendingPermission: null,
@@ -853,6 +857,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatMode: false,
       cost: null,
       lastTurnCost: null,
+      queryOutputTokens: 0,
       sdkContextWindow: null,
       sdkSessionId: null,
       pendingPermission: null,
@@ -1075,6 +1080,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  accumulateQueryOutput: (tabId, outputTokens) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, queryOutputTokens: session.queryOutputTokens + outputTokens },
+        },
+      };
+    });
+  },
+
+  resetQueryOutput: (tabId) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, queryOutputTokens: 0 },
+        },
+      };
+    });
+  },
+
   setAgentSdkContextWindow: (tabId, contextWindow) => {
     set((s) => {
       const session = s.agentSessionByTab[tabId];
@@ -1180,21 +1211,48 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  cancelQueuedAgentMessage: (tabId, messageId) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      // Find the message to cancel
+      const msgIndex = session.messages.findIndex((m) => m.id === messageId && m.isQueued);
+      if (msgIndex === -1) return s;
+      // Count how many queued messages appear before this one to determine queue index
+      let queueIndex = 0;
+      for (let i = 0; i < msgIndex; i++) {
+        if (session.messages[i].isQueued) queueIndex++;
+      }
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: {
+            ...session,
+            queuedMessages: session.queuedMessages.filter((_, i) => i !== queueIndex),
+            messages: session.messages.filter((m) => m.id !== messageId),
+          },
+        },
+      };
+    });
+  },
+
   shiftQueuedMessage: (tabId) => {
     set((s) => {
       const session = s.agentSessionByTab[tabId];
       if (!session || session.queuedMessages.length === 0) return s;
-      // Remove the first queued message from the queue and promote it in messages
       const [, ...rest] = session.queuedMessages;
-      // Find the first queued message in the messages list and promote it
-      let promoted = false;
-      const updatedMessages = session.messages.map((m) => {
-        if (!promoted && m.isQueued) {
-          promoted = true;
-          return { ...m, isQueued: false };
+      let promotedMsg: AgentMessage | null = null;
+      const remaining = session.messages.filter((m) => {
+        if (!promotedMsg && m.isQueued) {
+          promotedMsg = m;
+          return false;
         }
-        return m;
+        return true;
       });
+      let updatedMessages = remaining;
+      if (promotedMsg) {
+        updatedMessages = [...remaining, { ...(promotedMsg as AgentMessage), isQueued: false, timestamp: Date.now() }];
+      }
       return {
         agentSessionByTab: {
           ...s.agentSessionByTab,
@@ -1212,15 +1270,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const session = s.agentSessionByTab[tabId];
       if (!session) return s;
+      const nonQueued: typeof session.messages = [];
+      const queued: typeof session.messages = [];
+      for (const m of session.messages) {
+        (m.isQueued ? queued : nonQueued).push(m);
+      }
+      const now = Date.now();
       return {
         agentSessionByTab: {
           ...s.agentSessionByTab,
           [tabId]: {
             ...session,
             queuedMessages: [],
-            messages: session.messages.map((m) =>
-              m.isQueued ? { ...m, isQueued: false } : m
-            ),
+            messages: [
+              ...nonQueued,
+              ...queued.map((m) => ({ ...m, isQueued: false, timestamp: now })),
+            ],
           },
         },
       };

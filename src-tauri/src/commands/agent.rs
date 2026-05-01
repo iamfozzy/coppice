@@ -57,11 +57,13 @@ pub fn agent_start(
     permission_mode: Option<String>,
     concise_mode: Option<bool>,
     chat_mode: Option<bool>,
+    extended_context: Option<bool>,
     allowed_tools: Option<Vec<String>>,
     max_turns: Option<u32>,
     max_budget_usd: Option<f64>,
     resume: Option<String>,
     api_key: Option<String>,
+    prior_cost: Option<serde_json::Value>,
     images: Option<Vec<serde_json::Value>>,
     agent_manager: State<'_, AgentManager>,
     settings: State<'_, crate::settings::SettingsState>,
@@ -89,6 +91,9 @@ pub fn agent_start(
     if let Some(chat) = chat_mode {
         options.insert("chatMode".into(), serde_json::Value::Bool(chat));
     }
+    if let Some(ec) = extended_context {
+        options.insert("extendedContext".into(), serde_json::Value::Bool(ec));
+    }
     if let Some(tools) = &allowed_tools {
         let arr: Vec<serde_json::Value> = tools
             .iter()
@@ -109,6 +114,9 @@ pub fn agent_start(
     }
     if let Some(r) = &resume {
         options.insert("resume".into(), serde_json::Value::String(r.clone()));
+    }
+    if let Some(pc) = prior_cost {
+        options.insert("priorCost".into(), pc);
     }
 
     // Pass API key from settings if not provided directly
@@ -437,4 +445,116 @@ pub struct ImageFileData {
     pub data: String,
     pub media_type: String,
     pub file_name: String,
+}
+
+/// A slash command discovered from `.claude/commands/*.md` directories.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSlashCommand {
+    pub name: String,
+    pub description: String,
+    pub argument_hint: String,
+}
+
+/// Scan `~/.claude/commands/` and `<cwd>/.claude/commands/` for `.md` files and
+/// return them as slash commands. This allows the frontend to show project
+/// commands before the SDK bridge session has started.
+#[tauri::command]
+pub fn get_project_commands(cwd: String) -> Result<Vec<ProjectSlashCommand>, String> {
+    use std::path::{Path, PathBuf};
+
+    let mut commands = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let home = dirs::home_dir().unwrap_or_default();
+    let project_claude = Path::new(&cwd).join(".claude");
+    let user_claude = home.join(".claude");
+
+    // Scan .claude/commands/ directories for flat *.md files (project-local first)
+    let command_dirs: Vec<PathBuf> = vec![
+        project_claude.join("commands"),
+        user_claude.join("commands"),
+    ];
+
+    for dir in &command_dirs {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let name = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let first_line = content
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            commands.push(ProjectSlashCommand {
+                name,
+                description: first_line,
+                argument_hint: "$ARGUMENTS".to_string(),
+            });
+        }
+    }
+
+    // Scan .claude/skills/ directories for <name>/SKILL.md (project-local first)
+    let skill_dirs: Vec<PathBuf> = vec![
+        project_claude.join("skills"),
+        user_claude.join("skills"),
+    ];
+
+    for dir in &skill_dirs {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = match path.file_name().and_then(|s| s.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let skill_file = path.join("SKILL.md");
+            let content = match std::fs::read_to_string(&skill_file) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let first_line = content
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            commands.push(ProjectSlashCommand {
+                name,
+                description: first_line,
+                argument_hint: "$ARGUMENTS".to_string(),
+            });
+        }
+    }
+
+    Ok(commands)
 }
