@@ -474,9 +474,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         setStatus(sessionId, "done");
 
         if (hasQueue) {
-          const nextText = latestSession.queuedMessages[0];
+          const nextQueued = latestSession.queuedMessages[0];
           shiftQueuedMessage(sessionId);
-          dispatchToAgent(nextText);
+          dispatchToAgent(nextQueued.text, nextQueued.images);
         }
         break;
       }
@@ -629,13 +629,12 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       currentSession?.status === "thinking" ||
       currentSession?.status === "tool_use"
     ) {
-      // Queue the message — agent is actively processing.
-      // Note: images cannot be queued — they are dropped for queued messages.
-      pushQueuedMessage(sessionId, text);
+      // Queue the message (including any images) — dispatched when agent finishes.
+      pushQueuedMessage(sessionId, text, images);
       appendMessage(sessionId, {
         id: nextMsgId(),
         type: "user",
-        content: text,
+        content: text + imageNote,
         isQueued: true,
         timestamp: Date.now(),
       });

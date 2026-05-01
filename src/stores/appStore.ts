@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment, TraceEvent, TraceMode } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment, QueuedMessage, TraceEvent, TraceMode } from "../lib/types";
 import { DEFAULT_SLASH_COMMANDS } from "../lib/slashCommandDefaults";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
@@ -98,6 +98,8 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
       concise_mode: session.conciseMode,
       chat_mode: session.chatMode,
       created_at: new Date().toISOString(),
+      last_turn_cost_json: session.lastTurnCost ? JSON.stringify(session.lastTurnCost) : null,
+      sdk_context_window: session.sdkContextWindow,
     };
     commands.saveAgentTabCache(cache).catch(() => {});
   };
@@ -211,6 +213,8 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         concise_mode: session.conciseMode,
         chat_mode: session.chatMode,
         created_at: new Date().toISOString(),
+        last_turn_cost_json: session.lastTurnCost ? JSON.stringify(session.lastTurnCost) : null,
+        sdk_context_window: session.sdkContextWindow,
       };
       saves.push(commands.saveAgentTabCache(cache));
 
@@ -379,7 +383,7 @@ interface AppState {
   setAgentPendingQuestion: (tabId: string, pending: AgentPendingQuestion | null) => void;
   setAgentSlashCommands: (tabId: string, commands: SlashCommand[]) => void;
   removeAgentSession: (tabId: string) => void;
-  pushAgentQueuedMessage: (tabId: string, text: string) => void;
+  pushAgentQueuedMessage: (tabId: string, text: string, images?: ImageAttachment[]) => void;
   removeQueuedAgentMessages: (tabId: string) => void;
   cancelQueuedAgentMessage: (tabId: string, messageId: string) => void;
   shiftQueuedMessage: (tabId: string) => void;
@@ -731,9 +735,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           chatMode: cached.chat_mode ?? false,
           permissionMode: cached.permission_mode as AgentPermissionMode,
           cost,
-          lastTurnCost: null,
+          lastTurnCost: cached.last_turn_cost_json ? JSON.parse(cached.last_turn_cost_json) : null,
           queryOutputTokens: 0,
-          sdkContextWindow: null,
+          sdkContextWindow: cached.sdk_context_window ?? null,
           sdkSessionId: cached.sdk_session_id,
           pendingPermission: null,
           pendingQuestion: null,
@@ -1302,14 +1306,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
 
-  pushAgentQueuedMessage: (tabId, text) => {
+  pushAgentQueuedMessage: (tabId, text, images) => {
     set((s) => {
       const session = s.agentSessionByTab[tabId];
       if (!session) return s;
+      const entry: QueuedMessage = { text, ...(images?.length ? { images } : {}) };
       return {
         agentSessionByTab: {
           ...s.agentSessionByTab,
-          [tabId]: { ...session, queuedMessages: [...session.queuedMessages, text] },
+          [tabId]: { ...session, queuedMessages: [...session.queuedMessages, entry] },
         },
       };
     });

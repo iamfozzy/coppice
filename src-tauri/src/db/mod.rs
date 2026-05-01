@@ -99,6 +99,8 @@ impl Database {
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN concise_mode INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN chat_mode INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN trace_json TEXT NOT NULL DEFAULT '[]'", []);
+        let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN last_turn_cost_json TEXT", []);
+        let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN sdk_context_window INTEGER", []);
 
         Ok(())
     }
@@ -298,15 +300,16 @@ impl Database {
         // persists never overwrite trace data.  Trace events are saved
         // independently via save_agent_tab_trace().
         conn.execute(
-            "INSERT INTO agent_tab_cache (tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            "INSERT INTO agent_tab_cache (tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at, last_turn_cost_json, sdk_context_window)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
              ON CONFLICT(tab_id) DO UPDATE SET
                worktree_id=excluded.worktree_id, label=excluded.label, cwd=excluded.cwd,
                sdk_session_id=excluded.sdk_session_id, model=excluded.model, effort=excluded.effort,
                permission_mode=excluded.permission_mode, status=excluded.status, cost_json=excluded.cost_json,
                messages_json=excluded.messages_json, tab_order=excluded.tab_order,
                extended_context=excluded.extended_context, concise_mode=excluded.concise_mode,
-               chat_mode=excluded.chat_mode, created_at=excluded.created_at",
+               chat_mode=excluded.chat_mode, created_at=excluded.created_at,
+               last_turn_cost_json=excluded.last_turn_cost_json, sdk_context_window=excluded.sdk_context_window",
             params![
                 tab.tab_id,
                 tab.worktree_id,
@@ -324,6 +327,8 @@ impl Database {
                 tab.concise_mode,
                 tab.chat_mode,
                 tab.created_at,
+                tab.last_turn_cost_json,
+                tab.sdk_context_window,
             ],
         )?;
         Ok(())
@@ -333,7 +338,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         // Deliberately excludes trace_json — loaded lazily via load_agent_tab_trace()
         let mut stmt = conn.prepare(
-            "SELECT tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at
+            "SELECT tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at, last_turn_cost_json, sdk_context_window
              FROM agent_tab_cache WHERE worktree_id=?1 ORDER BY tab_order ASC"
         )?;
 
@@ -355,6 +360,8 @@ impl Database {
                 concise_mode: row.get(13)?,
                 chat_mode: row.get(14)?,
                 created_at: row.get(15)?,
+                last_turn_cost_json: row.get(16)?,
+                sdk_context_window: row.get(17)?,
             })
         })?;
 

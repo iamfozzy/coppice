@@ -225,6 +225,17 @@ pub fn agent_start(
         }
     }
 
+    // Save images to temp files so the agent can reference them by path.
+    // This happens on the Rust side (synchronous) to avoid blocking the
+    // bridge's async query start. Each image object gets a `tempPath` field.
+    let images = {
+        let mut imgs = images.unwrap_or_default();
+        if !imgs.is_empty() {
+            save_images_to_temp_files(&mut imgs);
+        }
+        if imgs.is_empty() { None } else { Some(imgs) }
+    };
+
     let start_msg = serde_json::json!({
         "type": "start",
         "sessionId": session_id,
@@ -251,6 +262,13 @@ pub fn agent_send_input(
     images: Option<Vec<serde_json::Value>>,
     agent_manager: State<'_, AgentManager>,
 ) -> Result<(), String> {
+    let images = {
+        let mut imgs = images.unwrap_or_default();
+        if !imgs.is_empty() {
+            save_images_to_temp_files(&mut imgs);
+        }
+        if imgs.is_empty() { None } else { Some(imgs) }
+    };
     let msg = serde_json::json!({
         "type": "input",
         "text": text,
@@ -416,6 +434,79 @@ pub fn agent_check_available(app: AppHandle) -> Result<AgentAvailability, String
 pub struct AgentAvailability {
     pub available: bool,
     pub reason: Option<String>,
+}
+
+/// Save attached images to temp files so the agent can reference them by path.
+/// Mutates each image JSON object in-place, adding a `tempPath` field.
+/// Returns the list of temp paths created (for logging).
+fn save_images_to_temp_files(images: &mut Vec<serde_json::Value>) {
+    use base64::Engine;
+    use std::collections::HashMap;
+
+    let media_type_to_ext: HashMap<&str, &str> = [
+        ("image/jpeg", ".jpg"),
+        ("image/png", ".png"),
+        ("image/gif", ".gif"),
+        ("image/webp", ".webp"),
+    ]
+    .into_iter()
+    .collect();
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "coppice-agent-images-{}",
+        uuid::Uuid::new_v4()
+    ));
+    if std::fs::create_dir_all(&temp_dir).is_err() {
+        return;
+    }
+
+    for img in images.iter_mut() {
+        let obj = match img.as_object_mut() {
+            Some(o) => o,
+            None => continue,
+        };
+        let data_str = match obj.get("data").and_then(|v| v.as_str()) {
+            Some(d) => d,
+            None => continue,
+        };
+        let media_type = match obj.get("mediaType").and_then(|v| v.as_str()) {
+            Some(m) => m,
+            None => continue,
+        };
+        let ext = media_type_to_ext.get(media_type).copied().unwrap_or(".png");
+
+        // Sanitize the original filename: only keep alphanumeric, hyphens, underscores
+        let raw_name = obj
+            .get("fileName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("image");
+        // Strip extension from the raw name, sanitize, then re-add canonical ext
+        let stem = raw_name.rsplit_once('.').map_or(raw_name, |(s, _)| s);
+        let safe_stem: String = stem
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        let safe_stem = safe_stem.trim_matches('_');
+        let safe_stem = if safe_stem.is_empty() { "image" } else { safe_stem };
+
+        let file_name = format!(
+            "{}-{}{}",
+            &uuid::Uuid::new_v4().to_string()[..8],
+            safe_stem,
+            ext
+        );
+        let file_path = temp_dir.join(&file_name);
+
+        // Decode base64 and write to disk
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data_str) {
+            if std::fs::write(&file_path, &bytes).is_ok() {
+                obj.insert(
+                    "tempPath".into(),
+                    serde_json::Value::String(file_path.to_string_lossy().into_owned()),
+                );
+            }
+        }
+    }
 }
 
 /// Read an image file from disk and return it as a base64-encoded string with

@@ -2,34 +2,12 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentCost, TokenUsage, AgentSessionState } from "../../lib/types";
 import { useAppStore } from "../../stores/appStore";
+import { contextWindowFor } from "../../lib/traceUtils";
 
 interface Props {
   session: AgentSessionState;
   sessionId: string;
   onInterrupt: () => void;
-}
-
-/** Resolve the effective context window size for a given model + extended-context flag.
- *  When the user has explicitly enabled 1M context on a supporting model (via the
- *  [1m] model suffix), trust that — the SDK's modelUsage.contextWindow may not
- *  always reflect the extended window. Otherwise prefer the SDK-reported value,
- *  falling back to a heuristic:
- *  - Opus 4.7: 1M unconditionally (native capability — no opt-in)
- *  - Other 4.x Opus/Sonnet: 1M when extendedContext is enabled, otherwise 200k
- *  - Haiku 4.5 and anything else: 200k */
-function contextWindowFor(model: string, extendedContext: boolean, sdkContextWindow?: number | null): number {
-  const m = model.toLowerCase();
-  // Opus 4.7 has native 1M — independent of the extendedContext toggle.
-  if (m.includes("opus-4-7")) return 1_000_000;
-
-  const supports1M = m.includes("opus-4") || m.includes("sonnet-4");
-  if (supports1M && extendedContext) return 1_000_000;
-
-  // The SDK reports the actual context window in modelUsage — trust it
-  // when the user hasn't asked for the extended window.
-  if (sdkContextWindow && sdkContextWindow > 0) return sdkContextWindow;
-
-  return 200_000;
 }
 
 export function AgentToolbar({
@@ -119,10 +97,11 @@ function CostDisplay({
 
   // ── Derived metrics ──
   // Context: current turn's total input (fresh + cache read + cache write).
-  // Per-turn is correct here — cumulative input is inflated by cache replays.
+  // Only valid when we have per-turn data — cumulative session cost is NOT a
+  // meaningful context-usage metric (it double-counts across turns).
   const currentCtx = lastTurnCost
     ? lastTurnCost.inputTokens + lastTurnCost.cacheReadTokens + lastTurnCost.cacheWriteTokens
-    : cost.inputTokens + cost.cacheReadTokens + cost.cacheWriteTokens;
+    : 0;
   const contextWindow = contextWindowFor(model, extendedContext, sdkContextWindow);
   const contextPct = currentCtx > 0 ? Math.min(100, (currentCtx / contextWindow) * 100) : 0;
 
@@ -153,7 +132,7 @@ function CostDisplay({
           </>
         )}
         <span className={contextPct > 85 ? "text-error" : contextPct > 60 ? "text-warning" : ""}>
-          ctx {formatTokens(currentCtx)} ({contextPct.toFixed(0)}%)
+          ctx {lastTurnCost ? <>{formatTokens(currentCtx)} ({contextPct.toFixed(0)}%)</> : "–"}
         </span>
         {sep}
         {formatTokens(sessionIn)} in

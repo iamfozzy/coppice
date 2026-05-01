@@ -6,9 +6,11 @@ interface Props {
   events: TraceEvent[];
   sessionCost: AgentCost | null;
   maximized: boolean;
+  contextWindow: number;
+  hasApiKey: boolean;
 }
 
-export function TraceTokenChart({ events, sessionCost, maximized }: Props) {
+export function TraceTokenChart({ events, sessionCost, maximized, contextWindow, hasApiKey }: Props) {
   const tokenData = useMemo(() => computeTokenTimeline(events), [events]);
 
   if (tokenData.length === 0) {
@@ -24,7 +26,7 @@ export function TraceTokenChart({ events, sessionCost, maximized }: Props) {
   return (
     <div className="flex-1 overflow-y-auto px-3 py-2 space-y-4">
       {/* Session cost summary */}
-      {sessionCost && <CostSummary cost={sessionCost} turnCount={tokenData.length} />}
+      {sessionCost && <CostSummary cost={sessionCost} turnCount={tokenData.length} hasApiKey={hasApiKey} />}
 
       {/* Per-turn stacked bar chart */}
       <div>
@@ -90,22 +92,21 @@ export function TraceTokenChart({ events, sessionCost, maximized }: Props) {
       </div>
 
       {/* Context window usage over time (simple bar chart) */}
-      <ContextWindowChart tokenData={tokenData} maximized={maximized} />
+      <ContextWindowChart tokenData={tokenData} maximized={maximized} contextWindow={contextWindow} />
     </div>
   );
 }
 
 // ── Context Window Usage Chart ──
 
-/** Standard Claude model context window in tokens. */
-const MODEL_CONTEXT_WINDOW = 200_000;
-
 function ContextWindowChart({
   tokenData,
   maximized: _maximized,
+  contextWindow,
 }: {
   tokenData: ReturnType<typeof computeTokenTimeline>;
   maximized: boolean;
+  contextWindow: number;
 }) {
   // Context = input + cache_read + cache_write for each turn
   // This approximates how much of the model's context window was used per API call.
@@ -115,15 +116,15 @@ function ContextWindowChart({
   const maxObserved = Math.max(...contextSizes, 0);
 
   // Scale bars against the model's actual context window so thresholds are meaningful.
-  // If usage somehow exceeds the constant (e.g. different model), fall back to max observed.
-  const scaleMax = Math.max(MODEL_CONTEXT_WINDOW, maxObserved);
+  // If usage somehow exceeds the window (e.g. different model), fall back to max observed.
+  const scaleMax = Math.max(contextWindow, maxObserved);
 
   return (
     <div>
       <div className="flex items-baseline gap-2 mb-2">
         <span className="text-text-secondary text-xs font-medium">Context usage per turn</span>
         <span className="text-[9px] text-text-tertiary font-mono">
-          / {formatTokenCount(MODEL_CONTEXT_WINDOW)} window
+          / {formatTokenCount(contextWindow)} window
         </span>
       </div>
       <div className="relative">
@@ -147,7 +148,7 @@ function ContextWindowChart({
         <div className="flex items-end gap-0.5" style={{ height: 80 }}>
           {contextSizes.map((ctx, i) => {
             const pct = (ctx / scaleMax) * 100;
-            const windowPct = (ctx / MODEL_CONTEXT_WINDOW) * 100;
+            const windowPct = (ctx / contextWindow) * 100;
             const color =
               windowPct > 85
                 ? "bg-error/60"
@@ -175,15 +176,19 @@ function ContextWindowChart({
 
 // ── Cost Summary ──
 
-function CostSummary({ cost, turnCount }: { cost: AgentCost; turnCount: number }) {
+function CostSummary({ cost, turnCount, hasApiKey }: { cost: AgentCost; turnCount: number; hasApiKey: boolean }) {
   const totalInput = cost.inputTokens + cost.cacheReadTokens + cost.cacheWriteTokens;
 
   return (
     <div className="border border-border-primary rounded-md p-3 bg-bg-secondary">
       <div className="text-text-secondary text-xs font-medium mb-2">Session summary</div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] font-mono">
-        <span className="text-text-tertiary">Total cost</span>
-        <span className="text-text-primary text-right">{formatCost(cost.totalCostUsd)}</span>
+        {hasApiKey && (
+          <>
+            <span className="text-text-tertiary">Total cost</span>
+            <span className="text-text-primary text-right">{formatCost(cost.totalCostUsd)}</span>
+          </>
+        )}
 
         <span className="text-text-tertiary">Turns</span>
         <span className="text-text-primary text-right">{turnCount}</span>

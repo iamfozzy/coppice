@@ -218,5 +218,10 @@ export interface AgentSessionState {
   conciseMode: boolean;
   chatMode: boolean;
   slashCommands: SlashCommand[];
-  queuedMessages: string[];
+  queuedMessages: QueuedMessage[];
+}
+
+export interface QueuedMessage {
+  text: string;
+  images?: ImageAttachment[];
 }

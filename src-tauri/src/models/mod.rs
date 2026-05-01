@@ -67,4 +67,6 @@ pub struct AgentTabCache {
     pub concise_mode: bool,
     pub chat_mode: bool,
     pub created_at: String,
+    pub last_turn_cost_json: Option<String>,
+    pub sdk_context_window: Option<i64>,
 }
