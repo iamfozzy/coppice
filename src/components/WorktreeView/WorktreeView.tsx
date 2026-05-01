@@ -22,6 +22,7 @@ export function WorktreeView() {
   const consumeClaudeCommand = useAppStore((s) => s.consumeClaudeCommand);
   const pendingAgentPrompt = useAppStore((s) => s.pendingAgentPrompt);
   const consumeAgentPrompt = useAppStore((s) => s.consumeAgentPrompt);
+  const toggleTabPin = useAppStore((s) => s.toggleTabPin);
 
   const prCommentsByProject = useAppStore((s) => s.prCommentsByProject);
   const project = projects.find((p) => p.id === selectedProjectId);
@@ -141,9 +142,11 @@ export function WorktreeView() {
               label={tab.label}
               type={tab.type}
               active={tab.id === activeTabId}
+              pinned={tab.pinned ?? false}
               claudeStatus={tab.type === "claude" || tab.type === "agent" ? claudeStatusByTab[tab.id] ?? null : null}
               onClick={() => setActiveTab(wtId, tab.id)}
               onClose={() => closeTab(wtId, tab.id)}
+              onTogglePin={tab.type === "agent" ? () => toggleTabPin(wtId, tab.id) : undefined}
             />
           ))}
         </div>
@@ -230,54 +233,72 @@ function Tab({
   label,
   type,
   active,
+  pinned,
   claudeStatus,
   onClick,
   onClose,
+  onTogglePin,
 }: {
   label: string;
   type: "terminal" | "claude" | "agent" | "diff";
   active: boolean;
+  pinned: boolean;
   claudeStatus: ClaudeStatus | null;
   onClick: () => void;
   onClose: () => void;
+  onTogglePin?: () => void;
 }) {
-  // Agent tabs render a status-aware dot so the user can tell at a glance
-  // which tab fired a notification. Other tabs keep the original behavior:
-  // colored when active, dim when not.
+  const [dotHovered, setDotHovered] = useState(false);
+
   const isAgentType = type === "agent";
   const agentActive = isAgentType && claudeStatus === "active";
   const agentIdle = isAgentType && claudeStatus === "idle";
+  const canPin = !!onTogglePin;
 
-  let dotNode: React.ReactNode;
-  if (agentActive) {
-    // Agent is actively working. Use a larger pulsing dot so it's clearly
-    // distinguishable from the plain "this tab is selected" dot below.
-    dotNode = (
+  // Show pin icon when hovering the dot area on pinnable tabs
+  const showPin = canPin && dotHovered;
+
+  // Build the status dot (rendered inside a fixed-size container)
+  let dotInner: React.ReactNode;
+  if (pinned && !showPin) {
+    // Pinned: accent-colored dot matching the bottom bar
+    dotInner = <span className="w-2 h-2 rounded-full bg-accent shrink-0" />;
+  } else if (agentActive) {
+    dotInner = (
       <span className="relative flex h-2 w-2 shrink-0">
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
         <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
       </span>
     );
   } else if (agentIdle) {
-    // Agent has completed (done or errored). Bigger warning dot so it's
-    // obvious the tab needs attention.
-    dotNode = <span className="w-2 h-2 rounded-full shrink-0 bg-warning" />;
+    dotInner = <span className="w-2 h-2 rounded-full shrink-0 bg-warning" />;
   } else {
     const activeColor =
       type === "agent" || type === "claude" ? "bg-accent" : type === "diff" ? "bg-warning" : "bg-text-tertiary";
-    dotNode = (
+    dotInner = (
       <span
         className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? activeColor : "bg-text-tertiary/40"}`}
       />
     );
   }
 
+  const pinIcon = (
+    <svg width="10" height="10" viewBox="0 0 16 16" fill={pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 1L5 5l-3 1 4 4 1-3 4-4z" />
+      <path d="M5 11L1 15" />
+    </svg>
+  );
+
   return (
     <div
       className={`flex items-center gap-2 px-3 text-xs cursor-pointer group relative select-none outline-none ${
-        active
-          ? "text-text-primary bg-bg-primary"
-          : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover/50"
+        pinned
+          ? active
+            ? "text-text-primary bg-accent/15"
+            : "text-text-secondary bg-accent/10 hover:bg-accent/15"
+          : active
+            ? "text-text-primary bg-bg-primary"
+            : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover/50"
       }`}
       onClick={onClick}
       tabIndex={-1}
@@ -285,7 +306,16 @@ function Tab({
       {active && (
         <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-accent" />
       )}
-      {dotNode}
+      {/* Fixed-width dot / pin container — 16×16 so the label never shifts */}
+      <span
+        className={`w-4 h-4 flex items-center justify-center shrink-0 rounded-sm transition-colors ${canPin ? "cursor-pointer" : ""} ${showPin ? "text-accent hover:bg-accent/10" : ""}`}
+        onMouseEnter={canPin ? () => setDotHovered(true) : undefined}
+        onMouseLeave={canPin ? () => setDotHovered(false) : undefined}
+        onClick={canPin ? (e) => { e.stopPropagation(); onTogglePin!(); } : undefined}
+        title={canPin ? (pinned ? "Unpin from tiles" : "Pin to tiles") : undefined}
+      >
+        {showPin ? pinIcon : dotInner}
+      </span>
       <span className="truncate max-w-[140px]">{label}</span>
       <span
         className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded hover:bg-text-tertiary/20 transition-all shrink-0 -mr-1"

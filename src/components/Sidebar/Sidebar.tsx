@@ -9,6 +9,8 @@ export function Sidebar() {
   const setSidebarWidth = useAppStore((s) => s.setSidebarWidth);
   const openProjectSettings = useAppStore((s) => s.openProjectSettings);
   const openAppSettings = useAppStore((s) => s.openAppSettings);
+  const toggleTileView = useAppStore((s) => s.toggleTileView);
+  const showTileView = useAppStore((s) => s.showTileView);
   const loadProjects = useAppStore((s) => s.loadProjects);
 
   const isResizing = useRef(false);
@@ -78,7 +80,7 @@ export function Sidebar() {
       style={{ width: sidebarWidth }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 h-12 border-b border-border-primary shrink-0">
+            <div className="flex items-center justify-between px-3 h-12 border-b border-border-primary shrink-0">
         <div className="flex items-center gap-2">
           <img src="/icon.png" alt="" className="w-5 h-5" />
           <span className="text-sm font-semibold text-text-primary tracking-tight">
@@ -86,6 +88,18 @@ export function Sidebar() {
           </span>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={toggleTileView}
+            className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${showTileView ? "text-accent bg-accent/10" : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"}`}
+            title="Tile view"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+              <rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+              <rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+              <rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          </button>
           <button
             onClick={openAppSettings}
             className="w-6 h-6 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"

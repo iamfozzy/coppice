@@ -93,8 +93,8 @@ export async function renameWorktree(id: string, name: string): Promise<void> {
   return invoke("rename_worktree", { id, name });
 }
 
-export async function deleteWorktree(id: string): Promise<void> {
-  return invoke("delete_worktree", { id });
+export async function deleteWorktree(id: string, keepBranch: boolean = false): Promise<void> {
+  return invoke("delete_worktree", { id, keepBranch });
 }
 
 export async function getUnpushedCount(path: string): Promise<number> {

@@ -6,6 +6,7 @@ import * as commands from "../../lib/commands";
 interface Props {
   projectId: string;
   onClose: () => void;
+  onCreated?: (worktreeId: string) => void;
 }
 
 type Mode = "existing" | "new";
@@ -25,7 +26,7 @@ function sanitizeWorktreeName(input: string): string {
     .replace(/[. ]+$/, "");
 }
 
-export function CreateWorktreeModal({ projectId, onClose }: Props) {
+export function CreateWorktreeModal({ projectId, onClose, onCreated }: Props) {
   const [branches, setBranches] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -98,27 +99,6 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
     }
   };
 
-  const selectNewWorktreeAndSetup = () => {
-    setTimeout(() => {
-      const store = useAppStore.getState();
-      // Find the new worktree by name
-      const wts = store.worktreesByProject[projectId] ?? [];
-      const newWt = wts.find((w) => w.name === worktreeName);
-      if (newWt) {
-        store.selectProject(projectId);
-        store.selectWorktree(newWt.id);
-
-        // Trigger setup after selecting
-        setTimeout(() => {
-          const proj = store.projects.find((p) => p.id === projectId);
-          if (proj && proj.setup_scripts.length > 0) {
-            store.requestRunner("setup");
-          }
-        }, 300);
-      }
-    }, 200);
-  };
-
   const handleCreate = async () => {
     if (mode === "existing") {
       if (!selectedBranch || !worktreeName) return;
@@ -148,7 +128,22 @@ export function CreateWorktreeModal({ projectId, onClose }: Props) {
         );
         await useAppStore.getState().loadWorktrees(projectId);
       }
-      selectNewWorktreeAndSetup();
+
+      // Worktrees are already loaded — find and select the new one directly
+      const store = useAppStore.getState();
+      const wts = store.worktreesByProject[projectId] ?? [];
+      const newWt = wts.find((w) => w.name === worktreeName);
+      if (newWt) {
+        store.selectProject(projectId);
+        store.selectWorktree(newWt.id);
+        onCreated?.(newWt.id);
+
+        // Trigger setup runner if project has setup scripts
+        const proj = store.projects.find((p) => p.id === projectId);
+        if (proj && proj.setup_scripts.length > 0) {
+          store.requestRunner("setup");
+        }
+      }
       onClose();
     } catch (e) {
       setError(String(e));

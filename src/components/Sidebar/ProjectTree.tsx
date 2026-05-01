@@ -40,6 +40,16 @@ export function ProjectTree() {
       return result;
     })
   );
+  // Derive which worktrees have at least one pinned tab.
+  const hasPinnedByWorktree = useAppStore(
+    useShallow((s) => {
+      const result: Record<string, boolean> = {};
+      for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
+        result[wtId] = tabs.some((t) => t.pinned);
+      }
+      return result;
+    })
+  );
   const [creatingWorktreeForProject, setCreatingWorktreeForProject] =
     useState<string | null>(null);
   const [worktreeToDelete, setWorktreeToDelete] = useState<{
@@ -76,6 +86,7 @@ export function ProjectTree() {
           deletingIds={deletingWorktreeIds}
           runnersByWorktree={runnersByWorktree}
           claudeStatusByWorktree={claudeStatusByWorktree}
+          hasPinnedByWorktree={hasPinnedByWorktree}
           onDeleteWorktree={(wt) => {
             setWorktreeToDelete({ worktree: wt, projectId: project.id });
           }}
@@ -95,8 +106,8 @@ export function ProjectTree() {
       {worktreeToDelete && (
         <DeleteWorktreeModal
           worktree={worktreeToDelete.worktree}
-          onConfirm={() => {
-            deleteWorktree(worktreeToDelete.worktree.id, worktreeToDelete.projectId);
+          onConfirm={(keepBranch) => {
+            deleteWorktree(worktreeToDelete.worktree.id, worktreeToDelete.projectId, keepBranch);
             setWorktreeToDelete(null);
           }}
           onClose={() => setWorktreeToDelete(null)}
@@ -115,6 +126,7 @@ function ProjectNode({
   deletingIds,
   runnersByWorktree,
   claudeStatusByWorktree,
+  hasPinnedByWorktree,
   onSelectWorktree,
   onDeleteWorktree,
   onRenameWorktree,
@@ -129,6 +141,7 @@ function ProjectNode({
   deletingIds: Set<string>;
   runnersByWorktree: Record<string, Record<string, import("../../stores/appStore").RunnerInfo>>;
   claudeStatusByWorktree: Record<string, ClaudeStatus | null>;
+  hasPinnedByWorktree: Record<string, boolean>;
   onSelectWorktree: (wt: Worktree) => void;
   onDeleteWorktree: (wt: Worktree) => void;
   onRenameWorktree: (wt: Worktree, name: string) => void;
@@ -307,6 +320,7 @@ function ProjectNode({
                     </span>
                   )}
                 </div>
+                {hasPinnedByWorktree[wt.id] && !isDeleting && <PinnedIndicator />}
                 {claudeStatus && !isDeleting && <ClaudeIndicator status={claudeStatus} />}
                 {hasRunningRunner && !isDeleting && <RunningIndicator />}
                 {!isDeleting && <span
@@ -329,6 +343,17 @@ function ProjectNode({
         );
       })()}
     </div>
+  );
+}
+
+function PinnedIndicator() {
+  return (
+    <span className="shrink-0 text-accent" title="Has pinned tiles">
+      <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 1L5 5l-3 1 4 4 1-3 4-4z" />
+        <path d="M5 11L1 15" />
+      </svg>
+    </span>
   );
 }
 

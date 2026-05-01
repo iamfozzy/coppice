@@ -249,6 +249,8 @@ export interface TabInfo {
   label: string;
   command?: string;
   cwd: string;
+  pinned?: boolean;
+  pinnedAt?: number;
   // For diff tabs
   diffFile?: string;
   diffMode?: "uncommitted" | "pr";
@@ -300,6 +302,9 @@ interface AppState {
   // Trace panel mode per agent tab
   traceModeByTab: Record<string, TraceMode>;
 
+  // Tile view
+  showTileView: boolean;
+
   // Pending dropped images for agent tabs (keyed by tab ID)
   pendingDroppedImages: Record<string, ImageAttachment[]>;
 
@@ -333,7 +338,7 @@ interface AppState {
   createWorktree: (projectId: string, branch: string, name: string) => Promise<void>;
   renameWorktree: (id: string, projectId: string, name: string) => Promise<void>;
   setWorktreeTargetBranch: (id: string, projectId: string, targetBranch: string | null) => Promise<void>;
-  deleteWorktree: (id: string, projectId: string) => Promise<void>;
+  deleteWorktree: (id: string, projectId: string, keepBranch?: boolean) => Promise<void>;
   updateWorktreeBranch: (worktreeId: string, branch: string) => void;
 
   // Actions — app settings modal
@@ -348,6 +353,10 @@ interface AppState {
   setClaudeStatus: (tabId: string, status: ClaudeStatus) => void;
   removeClaudeStatus: (tabId: string) => void;
 
+  // Actions — tile view
+  toggleTileView: () => void;
+  toggleTabPin: (worktreeId: string, tabId: string) => void;
+
   // Actions — tabs
   restoreAgentTabs: (worktreeId: string) => Promise<void>;
   addTab: (worktreeId: string, type: "terminal" | "claude", cwd: string, command?: string) => void;
@@ -359,6 +368,7 @@ interface AppState {
   newTerminalTab: (worktreeId: string) => void;
   newClaudeTab: (worktreeId: string) => void;
   addAgentTab: (worktreeId: string, cwd: string, prompt?: string, model?: string) => void;
+  addPinnedAgentTab: (worktreeId: string, cwd: string) => void;
   newAgentTab: (worktreeId: string) => void;
   renameTab: (worktreeId: string, tabId: string, newLabel: string) => void;
 
@@ -430,6 +440,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   agentSessionByTab: {},
   traceEventsByTab: {},
   traceModeByTab: {},
+  showTileView: false,
   pendingDroppedImages: {},
   prCommentsByProject: {},
   editingAppSettings: false,
@@ -552,7 +563,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().loadWorktrees(projectId);
   },
 
-  deleteWorktree: async (id, projectId) => {
+  deleteWorktree: async (id, projectId, keepBranch) => {
     // Mark as deleting immediately for UI feedback
     set((s) => ({
       deletingWorktreeIds: new Set([...s.deletingWorktreeIds, id]),
@@ -561,7 +572,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ selectedWorktreeId: null });
     }
     // Async cleanup
-    await commands.deleteWorktree(id);
+    await commands.deleteWorktree(id, keepBranch ?? false);
     await get().loadWorktrees(projectId);
     // Remove from deleting set
     set((s) => {
@@ -594,6 +605,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       prCommentsByProject: { ...s.prCommentsByProject, [projectId]: comments },
     }));
   },
+
+  // ── Tile view ──
+
+  toggleTileView: () => set((s) => ({ showTileView: !s.showTileView })),
+
+  toggleTabPin: (worktreeId, tabId) => {
+    set((s) => {
+      const tabs = s.tabsByWorktree[worktreeId];
+      if (!tabs) return s;
+      return {
+        tabsByWorktree: {
+          ...s.tabsByWorktree,
+          [worktreeId]: tabs.map((t) =>
+            t.id === tabId
+              ? {
+                  ...t,
+                  pinned: !t.pinned,
+                  pinnedAt: t.pinned ? undefined : Date.now(),
+                }
+              : t
+          ),
+        },
+      };
+    });
+  },
+
 
   // ── Claude status ──
 
@@ -703,7 +740,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       // Race guard: skip if tabs were already created while we were loading
-      if (get().tabsByWorktree[worktreeId]?.length) return;
+      if (get().tabsByWorktree[worktreeId]?.length) {
+        return;
+      }
 
       const restoredTabs: TabInfo[] = [];
       const restoredSessions: Record<string, AgentSessionState> = {};
@@ -748,7 +787,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       // Only set if the worktree still has no tabs (race guard)
-      if (get().tabsByWorktree[worktreeId]?.length) return;
+      if (get().tabsByWorktree[worktreeId]?.length) {
+        return;
+      }
 
       set((s) => ({
         tabsByWorktree: {
@@ -1003,6 +1044,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
     // New tabs have no DB trace data to load
     _traceLoadedTabs.add(tab.id);
+  },
+
+  addPinnedAgentTab: (worktreeId, cwd) => {
+    get().addAgentTab(worktreeId, cwd);
+    // Pin the tab that was just created (it's the last one in the list)
+    const tabs = get().tabsByWorktree[worktreeId] ?? [];
+    const lastTab = tabs[tabs.length - 1];
+    if (lastTab) {
+      get().toggleTabPin(worktreeId, lastTab.id);
+    }
   },
 
   newAgentTab: (worktreeId) => {
