@@ -20,6 +20,7 @@ const defaultSettings: AppSettings = {
   agent_default_extended_context: false,
   agent_api_key: "",
   agent_base_url: "",
+  agent_base_url_custom_only: false,
   agent_small_fast_model: "",
   agent_subagent_model: "",
   agent_bash_max_output: 0,
@@ -184,6 +185,16 @@ export function AppSettingsModal() {
                 placeholder="https://api.anthropic.com"
                 hint="API endpoint. Set to your LiteLLM proxy (e.g. http://localhost:4000) to use other models like GPT-4o or Gemini via the same agentic flow."
               />
+              {form.agent_base_url && (
+                <Toggle
+                  label="Use proxy for custom models only"
+                  checked={form.agent_base_url_custom_only}
+                  onChange={(agent_base_url_custom_only) =>
+                    setForm({ ...form, agent_base_url_custom_only })
+                  }
+                  hint="When enabled, Claude models go direct to Anthropic while custom models (e.g. openai/gpt-4o) route through the proxy."
+                />
+              )}
               <ModelCombobox
                 label="Default model"
                 value={form.agent_default_model}
