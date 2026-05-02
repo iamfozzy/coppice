@@ -134,9 +134,7 @@ function App() {
       if (!wtId) return;
       const activeId = s.activeTabByWorktree[wtId];
       if (!activeId) return;
-      if (s.claudeStatusByTab[activeId] !== "idle") return;
-      const { [activeId]: _, ...rest } = s.claudeStatusByTab;
-      useAppStore.setState({ claudeStatusByTab: rest });
+      s.clearClaudeIdleStatus(activeId);
     });
     return () => { unlisten.then((fn) => fn()); };
   }, []);

@@ -48,6 +48,15 @@ function findWorktreeForTab(tabsByWorktree: Record<string, TabInfo[]>, tabId: st
   return null;
 }
 
+function clearIdleClaudeStatus(
+  claudeStatusByTab: Record<string, ClaudeStatus>,
+  tabId: string,
+): Record<string, ClaudeStatus> | null {
+  if (claudeStatusByTab[tabId] !== "idle") return null;
+  const { [tabId]: _, ...rest } = claudeStatusByTab;
+  return rest;
+}
+
 // ── Agent tab cache persistence ──
 
 const _persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -351,6 +360,7 @@ interface AppState {
 
   // Actions — Claude status
   setClaudeStatus: (tabId: string, status: ClaudeStatus) => void;
+  clearClaudeIdleStatus: (tabId: string) => void;
   removeClaudeStatus: (tabId: string) => void;
 
   // Actions — tile view
@@ -505,9 +515,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (id) {
       const s = get();
       const activeId = s.activeTabByWorktree[id];
-      if (activeId && s.claudeStatusByTab[activeId] === "idle") {
-        const { [activeId]: _, ...rest } = s.claudeStatusByTab;
-        set({ claudeStatusByTab: rest });
+      const nextClaudeStatus = activeId
+        ? clearIdleClaudeStatus(s.claudeStatusByTab, activeId)
+        : null;
+      if (nextClaudeStatus) {
+        set({ claudeStatusByTab: nextClaudeStatus });
       }
       // Restore cached agent tabs or auto-create a new one when switching
       // to a worktree with no tabs.
@@ -723,6 +735,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ claudeStatusByTab: rest });
   },
 
+  clearClaudeIdleStatus: (tabId) => {
+    const s = get();
+    const nextClaudeStatus = clearIdleClaudeStatus(s.claudeStatusByTab, tabId);
+    if (!nextClaudeStatus) return;
+    set({ claudeStatusByTab: nextClaudeStatus });
+  },
+
   // ── Tabs ──
 
   restoreAgentTabs: async (worktreeId) => {
@@ -927,13 +946,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setActiveTab: (worktreeId, tabId) => {
     set((s) => {
+      const nextClaudeStatus = clearIdleClaudeStatus(s.claudeStatusByTab, tabId);
       const update: Partial<AppState> = {
         activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: tabId },
       };
       // Clear "idle" indicator when the user switches to that tab
-      if (s.claudeStatusByTab[tabId] === "idle") {
-        const { [tabId]: _, ...rest } = s.claudeStatusByTab;
-        update.claudeStatusByTab = rest;
+      if (nextClaudeStatus) {
+        update.claudeStatusByTab = nextClaudeStatus;
       }
       return update;
     });
@@ -947,13 +966,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const idx = tabs.findIndex((t) => t.id === activeId);
     const next = ((idx === -1 ? 0 : idx) + direction + tabs.length) % tabs.length;
     const nextId = tabs[next].id;
+    const nextClaudeStatus = clearIdleClaudeStatus(s.claudeStatusByTab, nextId);
     // Clear "idle" indicator when cycling to an idle claude tab
-    if (s.claudeStatusByTab[nextId] === "idle") {
-      const updated = { ...s.claudeStatusByTab };
-      delete updated[nextId];
+    if (nextClaudeStatus) {
       set({
         activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: nextId },
-        claudeStatusByTab: updated,
+        claudeStatusByTab: nextClaudeStatus,
       });
     } else {
       set({
