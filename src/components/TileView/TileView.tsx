@@ -222,17 +222,26 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
 function Tile({ pinned }: { pinned: PinnedTab }) {
   const { tab, worktreeName, projectName } = pinned;
   const session = useAppStore((s) => s.agentSessionByTab[tab.id]);
-  const [isHovered, setIsHovered] = useState(false);
+  const claudeStatus = useAppStore((s) => s.claudeStatusByTab[tab.id] ?? null);
   const [isFocused, setIsFocused] = useState(false);
   const [dotHovered, setDotHovered] = useState(false);
-
-  const showInput = isHovered || isFocused;
 
   const selectProject = useAppStore((s) => s.selectProject);
   const selectWorktree = useAppStore((s) => s.selectWorktree);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const clearClaudeIdleStatus = useAppStore((s) => s.clearClaudeIdleStatus);
   const toggleTileView = useAppStore((s) => s.toggleTileView);
   const toggleTabPin = useAppStore((s) => s.toggleTabPin);
+
+  const clearTileNotification = useCallback(() => {
+    clearClaudeIdleStatus(tab.id);
+  }, [clearClaudeIdleStatus, tab.id]);
+
+  useEffect(() => {
+    if (isFocused && claudeStatus === "idle") {
+      clearClaudeIdleStatus(tab.id);
+    }
+  }, [isFocused, claudeStatus, clearClaudeIdleStatus, tab.id]);
 
   const handleNavigate = useCallback(() => {
     const store = useAppStore.getState();
@@ -251,17 +260,17 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
 
   // Status dot — same fixed-width hover-to-pin pattern as the tab bar
   let dotInner: React.ReactNode;
-  if (session.status === "thinking" || session.status === "tool_use") {
+  if (claudeStatus === "active") {
     dotInner = (
       <span className="relative flex h-2 w-2 shrink-0">
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
         <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
       </span>
     );
-  } else if (session.status === "done" || session.status === "error") {
-    dotInner = <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" />;
+  } else if (claudeStatus === "idle") {
+    dotInner = <span className="w-2 h-2 rounded-full bg-warning shrink-0" />;
   } else {
-    dotInner = <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />;
+    dotInner = <span className="w-2 h-2 rounded-full bg-accent shrink-0" />;
   }
 
   const pinIcon = (
@@ -274,8 +283,6 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   return (
     <div
       className="bg-bg-primary flex flex-col min-h-0 relative"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
     >
       {/* Tile header */}
       <div className="flex items-center gap-2 px-3 h-8 shrink-0 border-b border-border-primary bg-bg-secondary">
@@ -307,7 +314,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div className="flex flex-col flex-1 min-h-0 overflow-hidden" onPointerDown={clearTileNotification}>
         <MessageList
           messages={session.messages}
           streamingText={session.streamingText}
@@ -315,13 +322,12 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
         />
       </div>
 
-      {/* Simplified input — visible on hover or focus */}
-      <div
-        className={`transition-all duration-150 ${showInput ? "max-h-24 opacity-100" : "max-h-0 opacity-0"} overflow-hidden`}
-      >
+      {/* Simplified input */}
+      <div className="shrink-0">
         <TileInputBar
           sessionId={tab.id}
           cwd={tab.cwd}
+          onInteract={clearTileNotification}
           onFocusChange={setIsFocused}
         />
       </div>
@@ -479,10 +485,12 @@ function AddTileCell({ onAddExisting, onCreateNew }: TilePickerProps) {
 function TileInputBar({
   sessionId,
   cwd,
+  onInteract,
   onFocusChange,
 }: {
   sessionId: string;
   cwd: string;
+  onInteract: () => void;
   onFocusChange: (focused: boolean) => void;
 }) {
   const [text, setText] = useState("");
@@ -579,13 +587,17 @@ function TileInputBar({
         rows={1}
         value={text}
         onChange={(e) => setText(e.target.value)}
+        onPointerDown={onInteract}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleSend();
           }
         }}
-        onFocus={() => onFocusChange(true)}
+        onFocus={() => {
+          onInteract();
+          onFocusChange(true);
+        }}
         onBlur={() => onFocusChange(false)}
         placeholder={isBusy ? "Queue a message..." : "Send a message..."}
         disabled={isDisabled}
