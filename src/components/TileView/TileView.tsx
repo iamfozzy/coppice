@@ -223,11 +223,8 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const { tab, worktreeName, projectName } = pinned;
   const session = useAppStore((s) => s.agentSessionByTab[tab.id]);
   const claudeStatus = useAppStore((s) => s.claudeStatusByTab[tab.id] ?? null);
-  const [isHovered, setIsHovered] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [dotHovered, setDotHovered] = useState(false);
-
-  const showInput = isHovered || isFocused;
 
   const selectProject = useAppStore((s) => s.selectProject);
   const selectWorktree = useAppStore((s) => s.selectWorktree);
@@ -286,8 +283,6 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   return (
     <div
       className="bg-bg-primary flex flex-col min-h-0 relative"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
     >
       {/* Tile header */}
       <div className="flex items-center gap-2 px-3 h-8 shrink-0 border-b border-border-primary bg-bg-secondary">
@@ -327,10 +322,8 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
         />
       </div>
 
-      {/* Simplified input — visible on hover or focus */}
-      <div
-        className={`transition-all duration-150 ${showInput ? "max-h-24 opacity-100" : "max-h-0 opacity-0"} overflow-hidden`}
-      >
+      {/* Simplified input */}
+      <div className="shrink-0">
         <TileInputBar
           sessionId={tab.id}
           cwd={tab.cwd}
