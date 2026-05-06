@@ -1,7 +1,8 @@
 import { useRef, useEffect, useMemo } from "react";
-import type { AgentMessage, AgentStatus } from "../../lib/types";
+import type { AgentMessage, AgentStatus, AgentPendingPermission } from "../../lib/types";
 import { MessageBubble, MarkdownContent } from "./MessageBubble";
 import { ToolGroup, type GroupedTool } from "./ToolGroup";
+import { PlanApprovalDialog } from "./PlanApprovalDialog";
 import { AnimatedRobotIcon, AnimatedToolIcon, useRotatingThinkingPhrase } from "./AgentStatusIcons";
 
 interface Props {
@@ -11,6 +12,11 @@ interface Props {
   status: AgentStatus;
   stalled?: boolean;
   onCancelQueued?: (messageId: string) => void;
+  /** When set, the plan approval UI renders inline at the bottom of the chat. */
+  pendingPlan?: AgentPendingPermission | null;
+  onPlanApprove?: (updatedInput: unknown) => void;
+  onPlanRequestChanges?: (feedback: string) => void;
+  onPlanDeny?: () => void;
 }
 
 interface ToolGroupItem {
@@ -69,7 +75,10 @@ function mergeMessages(messages: AgentMessage[]): { items: RenderItem[]; queued:
   return { items, queued };
 }
 
-export function MessageList({ messages, streamingText, streamingThinkingText, status, stalled, onCancelQueued }: Props) {
+export function MessageList({
+  messages, streamingText, streamingThinkingText, status, stalled, onCancelQueued,
+  pendingPlan, onPlanApprove, onPlanRequestChanges, onPlanDeny,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
 
@@ -84,9 +93,11 @@ export function MessageList({ messages, streamingText, streamingThinkingText, st
     if (isAtBottomRef.current && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [messages.length, streamingText, streamingThinkingText]);
+  }, [messages.length, streamingText, streamingThinkingText, pendingPlan]);
 
   const { items, queued } = useMemo(() => mergeMessages(messages), [messages]);
+
+  const showPlanInline = pendingPlan && onPlanApprove && onPlanRequestChanges && onPlanDeny;
 
   return (
     <div
@@ -144,8 +155,19 @@ export function MessageList({ messages, streamingText, streamingThinkingText, st
         </div>
       )}
 
-      {/* Status indicator — shown when agent is active but no streaming text yet */}
-      {!streamingText && !streamingThinkingText && (status === "thinking" || status === "tool_use" || status === "waiting_permission" || status === "waiting_input") && (
+      {/* Inline plan approval — renders as part of the chat flow */}
+      {showPlanInline && (
+        <PlanApprovalDialog
+          pending={pendingPlan}
+          onApprove={onPlanApprove}
+          onRequestChanges={onPlanRequestChanges}
+          onDeny={onPlanDeny}
+        />
+      )}
+
+      {/* Status indicator — shown when agent is active but no streaming text yet.
+          Suppressed when a plan is shown inline (the plan UI is self-explanatory). */}
+      {!streamingText && !streamingThinkingText && !showPlanInline && (status === "thinking" || status === "tool_use" || status === "waiting_permission" || status === "waiting_input") && (
         <StatusIndicator status={status} stalled={stalled} />
       )}
 

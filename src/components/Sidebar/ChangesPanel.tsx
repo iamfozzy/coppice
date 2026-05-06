@@ -162,7 +162,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
     return () => { cancelled = true; clearTimeout(timer); clearInterval(interval); };
   }, [worktree?.id]);
 
-  if (!worktree || !project) return null;
+  if (!worktree || !project || selectedWorktreeId === "__scratchpad__") return null;
 
   const baseBranch = baseBranchRef.current;
   const claudeCmd = project.claude_command || appSettings?.claude_command || "claude";

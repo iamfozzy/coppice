@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment, QueuedMessage, TraceEvent, TraceMode } from "../lib/types";
+import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID } from "../lib/types";
 import { DEFAULT_SLASH_COMMANDS } from "../lib/slashCommandDefaults";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
@@ -285,6 +286,8 @@ interface AppState {
   projects: Project[];
   worktreesByProject: Record<string, Worktree[]>;
   appSettings: AppSettings | null;
+  scratchpadProject: Project | null;
+  scratchpadWorktree: Worktree | null;
 
   // UI state
   selectedProjectId: string | null;
@@ -336,6 +339,7 @@ interface AppState {
   loadWorktrees: (projectId: string) => Promise<void>;
   selectProject: (id: string | null) => void;
   selectWorktree: (id: string | null) => void;
+  selectScratchpad: () => void;
   openProjectSettings: (mode: "new" | string) => void;
   closeProjectSettings: () => void;
   setSidebarWidth: (width: number) => void;
@@ -443,6 +447,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   worktreesByProject: {},
   appSettings: null,
+  scratchpadProject: null,
+  scratchpadWorktree: null,
   selectedProjectId: null,
   selectedWorktreeId: null,
   editingProject: null,
@@ -502,10 +508,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   loadProjects: async () => {
-    const projects = await commands.listProjects();
-    set({ projects });
+    const allProjects = await commands.listProjects();
+    const scratchpadProject = allProjects.find((p) => p.id === SCRATCHPAD_PROJECT_ID) ?? null;
+    const projects = allProjects.filter((p) => p.id !== SCRATCHPAD_PROJECT_ID);
+    set({ projects, scratchpadProject });
     for (const project of projects) {
       get().loadWorktrees(project.id);
+    }
+    if (scratchpadProject) {
+      const worktrees = await commands.listWorktrees(scratchpadProject.id);
+      const scratchpadWorktree = worktrees.find((w) => w.id === SCRATCHPAD_WORKTREE_ID) ?? null;
+      set((s) => ({
+        scratchpadWorktree,
+        worktreesByProject: { ...s.worktreesByProject, [SCRATCHPAD_PROJECT_ID]: worktrees },
+      }));
     }
     // Eagerly load cached tab counts so the sidebar shows them before
     // the user clicks into each worktree.
@@ -545,6 +561,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       const tabs = s.tabsByWorktree[id];
       if (!tabs || tabs.length === 0) {
         get().restoreAgentTabs(id);
+      }
+    }
+  },
+  selectScratchpad: () => {
+    const s = get();
+    if (s.scratchpadWorktree) {
+      set({
+        selectedProjectId: SCRATCHPAD_PROJECT_ID,
+        selectedWorktreeId: SCRATCHPAD_WORKTREE_ID,
+      });
+      const tabs = s.tabsByWorktree[SCRATCHPAD_WORKTREE_ID];
+      if (!tabs || tabs.length === 0) {
+        get().restoreAgentTabs(SCRATCHPAD_WORKTREE_ID);
       }
     }
   },
@@ -1187,8 +1216,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     // Map agent status to claude status for unified notifications.
     // "active" = agent is working; "idle" = agent stopped and may need attention.
-    // Permission/input waiting are NOT mapped to idle — they're visible in the
-    // agent UI and shouldn't burn the cooldown that protects the "done" notification.
+    // Permission/input waiting are NOT mapped to idle — they shouldn't burn the
+    // cooldown that protects the "done" notification.
     const store = get();
     if (status === "thinking" || status === "tool_use" || status === "waiting_permission" || status === "waiting_input") {
       store.setClaudeStatus(tabId, "active");
@@ -1199,6 +1228,55 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     // Note: "idle" (initial state before first prompt) is intentionally excluded
     // so opening an agent tab doesn't trigger a spurious notification.
+
+    // Fire a separate notification when an agent needs permission approval,
+    // so the user notices even if the window is in the background.
+    if (status === "waiting_permission") {
+      const s = store;
+      const owningWt = findWorktreeForTab(s.tabsByWorktree, tabId);
+      const isVisible = owningWt !== null
+        && s.selectedWorktreeId === owningWt
+        && s.activeTabByWorktree[owningWt] === tabId;
+      const userIsWatching = isVisible && isWindowFocused();
+
+      if (!userIsWatching) {
+        if (s.appSettings?.notification_sound) {
+          playNotificationSound();
+        }
+        if (s.appSettings?.notification_popup) {
+          const tabLocation = findTabLocation(s, tabId);
+          const tabLabel = tabLocation?.tab.label ?? "";
+          const worktreeName = tabLocation ? (tabLocation.worktree.name || tabLocation.worktree.branch) : "";
+          (async () => {
+            try {
+              let granted = await isPermissionGranted();
+              if (!granted) {
+                const perm = await requestPermission();
+                granted = perm === "granted";
+              }
+              if (granted) {
+                sendNotification({
+                  id: (_notifIdCounter = (_notifIdCounter + 1) % 0x7FFF_FFFF),
+                  title: "Approval needed",
+                  body: worktreeName
+                    ? `${tabLabel} in ${worktreeName}`
+                    : tabLabel || "A Claude tab needs permission",
+                  ...(tabLocation ? {
+                    extra: {
+                      projectId: tabLocation.projectId,
+                      worktreeId: tabLocation.worktreeId,
+                      tabId,
+                    },
+                  } : {}),
+                });
+              }
+            } catch {
+              // Notification API unavailable — fail silently.
+            }
+          })();
+        }
+      }
+    }
   },
 
   setAgentModel: (tabId, model) => {

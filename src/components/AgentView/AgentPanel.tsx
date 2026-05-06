@@ -9,7 +9,7 @@ import { MessageList } from "./MessageList";
 import { AgentInputBar } from "./AgentInputBar";
 import { PermissionDialog } from "./PermissionDialog";
 import { AskUserDialog } from "./AskUserDialog";
-import { PlanApprovalDialog, isPlanPermission } from "./PlanApprovalDialog";
+import { isPlanPermission } from "./PlanApprovalDialog";
 
 interface Props {
   sessionId: string;
@@ -767,28 +767,23 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         status={session.status}
         stalled={stalled}
         onCancelQueued={(msgId) => cancelQueuedMessage(sessionId, msgId)}
+        pendingPlan={session.pendingPermission && isPlanPermission(session.pendingPermission) ? session.pendingPermission : null}
+        onPlanApprove={(updatedInput) => handleToolResponse("allow", { updatedInput })}
+        onPlanRequestChanges={(feedback) =>
+          handleToolResponse("deny", {
+            message: `Please revise the plan: ${feedback}`,
+          })
+        }
+        onPlanDeny={() => handleToolResponse("deny")}
       />
 
-      {/* Permission dialog */}
-      {session.pendingPermission && (
-        isPlanPermission(session.pendingPermission) ? (
-          <PlanApprovalDialog
-            pending={session.pendingPermission}
-            onApprove={(updatedInput) => handleToolResponse("allow", { updatedInput })}
-            onRequestChanges={(feedback) =>
-              handleToolResponse("deny", {
-                message: `Please revise the plan: ${feedback}`,
-              })
-            }
-            onDeny={() => handleToolResponse("deny")}
-          />
-        ) : (
-          <PermissionDialog
-            pending={session.pendingPermission}
-            onAllow={() => handleToolResponse("allow")}
-            onDeny={() => handleToolResponse("deny")}
-          />
-        )
+      {/* Permission dialog — non-plan permissions only (plans render inline in chat) */}
+      {session.pendingPermission && !isPlanPermission(session.pendingPermission) && (
+        <PermissionDialog
+          pending={session.pendingPermission}
+          onAllow={() => handleToolResponse("allow")}
+          onDeny={() => handleToolResponse("deny")}
+        />
       )}
 
       {/* Ask user dialog */}

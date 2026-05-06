@@ -119,11 +119,25 @@ pub fn agent_start(
         options.insert("priorCost".into(), pc);
     }
 
-    // Pass API key from settings if not provided directly
+    // Pass API key from settings if not provided directly.
+    // When `agent_api_key_custom_only` is true, only use the configured key
+    // for non-Claude models (custom models like openai/gpt-4o). Claude models
+    // fall back to the default SDK key.
     let resolved_api_key = api_key.or_else(|| {
         let s = settings.inner().get();
         let k = s.agent_api_key.clone();
-        if k.is_empty() { None } else { Some(k) }
+        if k.is_empty() {
+            return None;
+        }
+        if s.agent_api_key_custom_only {
+            let is_claude = model
+                .as_ref()
+                .map_or(true, |m| m.starts_with("claude"));
+            if is_claude {
+                return None;
+            }
+        }
+        Some(k)
     });
 
     if let Some(ref key) = resolved_api_key {

@@ -3,6 +3,7 @@ import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
 import { DiffViewer } from "../DiffViewer/DiffViewer";
 import { Tooltip } from "../ui/Tooltip";
 import * as commands from "../../lib/commands";
+import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
 
 export function WorktreeView() {
   const selectedWorktreeId = useAppStore((s) => s.selectedWorktreeId);
@@ -27,11 +28,14 @@ export function WorktreeView() {
   const renameTab = useAppStore((s) => s.renameTab);
 
   const prCommentsByProject = useAppStore((s) => s.prCommentsByProject);
-  const project = projects.find((p) => p.id === selectedProjectId);
+  const scratchpadProject = useAppStore((s) => s.scratchpadProject);
+  const project = projects.find((p) => p.id === selectedProjectId)
+    ?? (selectedProjectId === SCRATCHPAD_PROJECT_ID ? scratchpadProject : null);
   const worktrees = selectedProjectId
     ? worktreesByProject[selectedProjectId] ?? []
     : [];
   const worktree = worktrees.find((w) => w.id === selectedWorktreeId);
+  const isScratchpad = selectedWorktreeId === SCRATCHPAD_WORKTREE_ID;
 
   const wtId = worktree?.id ?? "";
   const tabs = tabsByWorktree[wtId] ?? [];
@@ -51,9 +55,9 @@ export function WorktreeView() {
 
   const updateWorktreeBranch = useAppStore((s) => s.updateWorktreeBranch);
 
-  // Poll the actual git branch every 3 seconds
+  // Poll the actual git branch every 3 seconds (skip for scratchpad)
   useEffect(() => {
-    if (!worktree) return;
+    if (!worktree || isScratchpad) return;
     let cancelled = false;
     const check = () => {
       commands.getCurrentBranch(worktree.path).then((branch) => {
@@ -112,21 +116,27 @@ export function WorktreeView() {
     <div className="flex-1 flex flex-col min-h-0">
       {/* Worktree header — h-12 = 3rem */}
       <header className="flex items-center gap-3 px-4 h-12 border-b border-border-primary shrink-0">
-        <h2 className="text-sm font-medium text-text-primary truncate">
-          {project.name}
-          <span className="text-text-tertiary mx-1.5">/</span>
-          {worktree.name}
-        </h2>
-        <span className="text-xs text-text-tertiary font-mono">{liveBranch ?? worktree.branch}</span>
-        <TargetBranchPicker
-          projectId={project.id}
-          currentTarget={worktree.target_branch || project.target_branch || project.base_branch}
-          onChange={(branch) => {
-            const defaultTarget = project.target_branch || project.base_branch;
-            const value = branch === defaultTarget ? null : branch;
-            setWorktreeTargetBranch(worktree.id, project.id, value);
-          }}
-        />
+        {isScratchpad ? (
+          <h2 className="text-sm font-medium text-text-primary truncate">Scratchpad</h2>
+        ) : (
+          <>
+            <h2 className="text-sm font-medium text-text-primary truncate">
+              {project.name}
+              <span className="text-text-tertiary mx-1.5">/</span>
+              {worktree.name}
+            </h2>
+            <span className="text-xs text-text-tertiary font-mono">{liveBranch ?? worktree.branch}</span>
+            <TargetBranchPicker
+              projectId={project.id}
+              currentTarget={worktree.target_branch || project.target_branch || project.base_branch}
+              onChange={(branch) => {
+                const defaultTarget = project.target_branch || project.base_branch;
+                const value = branch === defaultTarget ? null : branch;
+                setWorktreeTargetBranch(worktree.id, project.id, value);
+              }}
+            />
+          </>
+        )}
 
         <div className="ml-auto flex items-center gap-1.5">
           <ActionButton title="Open in editor" icon="vscode" onClick={() => {

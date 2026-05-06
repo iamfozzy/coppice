@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import type { AgentPendingPermission } from "../../lib/types";
 import { MarkdownContent } from "./MessageBubble";
 
@@ -10,13 +10,20 @@ interface Props {
 }
 
 /**
- * Detects plan-like permission payloads and gives users an editable + readable
- * review experience before approving the tool action.
+ * Inline plan approval rendered inside the chat message list.
+ * No nested scroll containers — the plan content flows naturally
+ * and the parent MessageList handles all scrolling.
  */
 export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDeny }: Props) {
   const plan = useMemo(() => extractPlanDraft(pending), [pending]);
   const draftPlan = plan.planText;
   const [feedback, setFeedback] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll this element into view when it first mounts
+  useEffect(() => {
+    rootRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, []);
 
   const handleApprove = () => {
     onApprove(plan.writeBack(draftPlan));
@@ -29,72 +36,69 @@ export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDen
   };
 
   return (
-    <div className="mx-4 mb-2 border border-warning/25 bg-warning/4 rounded-lg overflow-hidden flex flex-col max-h-[70vh] min-h-0">
-      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-warning/10 border-b border-warning/20 shrink-0">
-        <div className="flex items-center gap-2">
-          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-warning">
-            <path d="M7 1l6 12H1L7 1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-            <line x1="7" y1="5.5" x2="7" y2="8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-            <circle cx="7" cy="10.5" r="0.6" fill="currentColor" />
-          </svg>
-          <span className="text-[11px] font-semibold text-warning">Plan Approval Required</span>
-        </div>
-        <span className="text-[10px] font-mono text-text-tertiary">{pending.toolName}</span>
-      </div>
-
-      <div className="px-3 py-3 space-y-3 overflow-y-auto min-h-0">
-        <div className="rounded-md border border-border-primary bg-bg-secondary/60">
-          <div className="px-2.5 py-1.5 border-b border-border-primary text-[10px] uppercase tracking-wider text-text-tertiary">
-            Preview
+    <div ref={rootRef} className="pr-8">
+      <div className="rounded-lg border border-warning/25 bg-warning/4 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-warning/10 border-b border-warning/20">
+          <div className="flex items-center gap-2">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-warning">
+              <path d="M7 1l6 12H1L7 1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+              <line x1="7" y1="5.5" x2="7" y2="8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              <circle cx="7" cy="10.5" r="0.6" fill="currentColor" />
+            </svg>
+            <span className="text-[11px] font-semibold text-warning">Plan Approval Required</span>
           </div>
-          <div className="px-2.5 py-2 max-h-52 overflow-y-auto">
-            {draftPlan.trim() ? (
-              <MarkdownContent text={draftPlan} />
-            ) : (
-              <p className="text-[12px] text-text-tertiary">No plan text found in payload. Use JSON fallback below.</p>
-            )}
-          </div>
+          <span className="text-[10px] font-mono text-text-tertiary">{pending.toolName}</span>
         </div>
 
-        <details className="rounded-md border border-border-primary bg-bg-tertiary/40">
-          <summary className="px-2.5 py-1.5 text-[10px] text-text-tertiary cursor-pointer select-none uppercase tracking-wider">
+        {/* Plan content — renders fully, no inner scroll */}
+        <div className="px-3 py-3">
+          {draftPlan.trim() ? (
+            <MarkdownContent text={draftPlan} />
+          ) : (
+            <p className="text-[12px] text-text-tertiary">No plan text found in payload. See raw payload below.</p>
+          )}
+        </div>
+
+        {/* Collapsible raw payload */}
+        <details className="border-t border-warning/15">
+          <summary className="px-3 py-1.5 text-[10px] text-text-tertiary cursor-pointer select-none uppercase tracking-wider hover:text-text-secondary transition-colors">
             Raw payload
           </summary>
-          <pre className="px-2.5 py-2 border-t border-border-primary text-[11px] text-text-secondary max-h-40 overflow-auto whitespace-pre-wrap break-all leading-relaxed">
+          <pre className="px-3 py-2 border-t border-border-primary text-[11px] text-text-secondary whitespace-pre-wrap break-all leading-relaxed">
             {JSON.stringify(pending.toolInput, null, 2)}
           </pre>
         </details>
 
-        <div>
-          <label className="block text-[11px] text-text-secondary mb-1">Request changes (optional)</label>
+        {/* Actions */}
+        <div className="px-3 py-3 border-t border-warning/15 space-y-2.5">
           <textarea
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
-            placeholder="Tell the agent what to change in the plan..."
-            className="w-full min-h-[76px] resize-y rounded-md border border-border-primary bg-bg-tertiary px-2.5 py-2 text-[12px] text-text-primary leading-relaxed"
+            placeholder="Request changes (optional)..."
+            className="w-full min-h-[60px] resize-y rounded-md border border-border-primary bg-bg-tertiary px-2.5 py-2 text-[12px] text-text-primary leading-relaxed placeholder:text-text-tertiary"
           />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            className="px-3 py-1.5 text-[11px] font-medium rounded-md bg-accent hover:bg-accent-hover text-white transition-colors"
-            onClick={handleApprove}
-          >
-            Approve Plan
-          </button>
-          <button
-            className="px-3 py-1.5 text-[11px] font-medium rounded-md bg-bg-tertiary border border-border-primary text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-            onClick={handleRequestChanges}
-            disabled={!feedback.trim()}
-          >
-            Request Changes
-          </button>
-          <button
-            className="px-3 py-1.5 text-[11px] font-medium rounded-md bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
-            onClick={onDeny}
-          >
-            Deny
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              className="px-3 py-1.5 text-[11px] font-medium rounded-md bg-accent hover:bg-accent-hover text-white transition-colors"
+              onClick={handleApprove}
+            >
+              Approve Plan
+            </button>
+            <button
+              className="px-3 py-1.5 text-[11px] font-medium rounded-md bg-bg-tertiary border border-border-primary text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              onClick={handleRequestChanges}
+              disabled={!feedback.trim()}
+            >
+              Request Changes
+            </button>
+            <button
+              className="px-3 py-1.5 text-[11px] font-medium rounded-md bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
+              onClick={onDeny}
+            >
+              Deny
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -179,5 +183,15 @@ export function isPlanPermission(pending: AgentPendingPermission): boolean {
 
   const payload = pending.toolInput as Record<string, unknown>;
   const keys = Object.keys(payload).map((k) => k.toLowerCase());
-  return keys.some((k) => k.includes("plan") || k.includes("proposal"));
+  if (keys.some((k) => k.includes("plan") || k.includes("proposal"))) return true;
+
+  // Write tool targeting a plan file (e.g. /plans/implementation.md)
+  if (pending.toolName === "Write" && typeof payload.file_path === "string") {
+    const normalized = (payload.file_path as string).replace(/\\/g, "/").toLowerCase();
+    if ((normalized.includes("/plans/") || normalized.includes("/plan")) && normalized.endsWith(".md")) {
+      return true;
+    }
+  }
+
+  return false;
 }
