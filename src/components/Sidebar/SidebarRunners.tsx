@@ -1,6 +1,7 @@
 import { useEffect, useRef, memo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore, type RunnerStatus } from "../../stores/appStore";
+import { Tooltip } from "../ui/Tooltip";
 import * as commands from "../../lib/commands";
 
 export const SidebarRunners = memo(function SidebarRunners() {
@@ -92,23 +93,27 @@ export const SidebarRunners = memo(function SidebarRunners() {
               </button>
               <div className="flex items-center gap-1">
                 {status !== "running" && (
-                  <button
-                    onClick={() => openOrRestartRunner(wtId, key, command, worktree!.path)}
-                    className="px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors"
-                  >
-                    {label}
-                  </button>
+                  <Tooltip text={`Run ${label.toLowerCase()}`} side="top" align="right">
+                    <button
+                      onClick={() => openOrRestartRunner(wtId, key, command, worktree!.path)}
+                      className="px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors"
+                    >
+                      {label}
+                    </button>
+                  </Tooltip>
                 )}
                 {runner && status === "running" && (
-                  <button
-                    onClick={async () => {
-                      await commands.terminalKill(runner.id).catch(() => {});
-                      setRunnerStatus(wtId, key, "stopped");
-                    }}
-                    className="px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-error/70 hover:text-error hover:bg-bg-active transition-colors"
-                  >
-                    Stop
-                  </button>
+                  <Tooltip text={`Stop ${label.toLowerCase()}`} side="top" align="right">
+                    <button
+                      onClick={async () => {
+                        await commands.terminalKill(runner.id).catch(() => {});
+                        setRunnerStatus(wtId, key, "stopped");
+                      }}
+                      className="px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-error/70 hover:text-error hover:bg-bg-active transition-colors"
+                    >
+                      Stop
+                    </button>
+                  </Tooltip>
                 )}
               </div>
             </div>

@@ -3,6 +3,7 @@ import { useAppStore } from "../../stores/appStore";
 import { ProjectTree } from "./ProjectTree";
 import { ChangesPanel } from "./ChangesPanel";
 import { SidebarRunners } from "./SidebarRunners";
+import { Tooltip } from "../ui/Tooltip";
 
 export function Sidebar() {
   const sidebarWidth = useAppStore((s) => s.sidebarWidth);
@@ -88,47 +89,50 @@ export function Sidebar() {
           </span>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            onClick={toggleTileView}
-            className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${showTileView ? "text-accent bg-accent/10" : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"}`}
-            title="Tile view"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-              <rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-              <rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-              <rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-            </svg>
-          </button>
-          <button
-            onClick={openAppSettings}
-            className="w-6 h-6 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-            title="App settings"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M5.7 1h2.6l.4 1.5a4.5 4.5 0 011.1.6l1.5-.5 1.3 2.3-1.1 1a4.5 4.5 0 010 1.2l1.1 1-1.3 2.3-1.5-.5a4.5 4.5 0 01-1.1.6L8.3 13H5.7l-.4-1.5a4.5 4.5 0 01-1.1-.6l-1.5.5-1.3-2.3 1.1-1a4.5 4.5 0 010-1.2l-1.1-1L2.7 3.6l1.5.5a4.5 4.5 0 011.1-.6L5.7 1z"
-                stroke="currentColor"
-                strokeWidth="1.2"
-                strokeLinejoin="round"
-              />
-              <circle cx="7" cy="7" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-            </svg>
-          </button>
-          <button
-            onClick={() => openProjectSettings("new")}
-            className="w-6 h-6 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-            title="Add project"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M7 1v12M1 7h12"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
+          <Tooltip text="Tile view">
+            <button
+              onClick={toggleTileView}
+              className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${showTileView ? "text-accent bg-accent/10" : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"}`}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+                <rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+                <rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+                <rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            </button>
+          </Tooltip>
+          <Tooltip text="Settings">
+            <button
+              onClick={openAppSettings}
+              className="w-6 h-6 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M5.7 1h2.6l.4 1.5a4.5 4.5 0 011.1.6l1.5-.5 1.3 2.3-1.1 1a4.5 4.5 0 010 1.2l1.1 1-1.3 2.3-1.5-.5a4.5 4.5 0 01-1.1.6L8.3 13H5.7l-.4-1.5a4.5 4.5 0 01-1.1-.6l-1.5.5-1.3-2.3 1.1-1a4.5 4.5 0 010-1.2l-1.1-1L2.7 3.6l1.5.5a4.5 4.5 0 011.1-.6L5.7 1z"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  strokeLinejoin="round"
+                />
+                <circle cx="7" cy="7" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            </button>
+          </Tooltip>
+          <Tooltip text="Add project" align="right">
+            <button
+              onClick={() => openProjectSettings("new")}
+              className="w-6 h-6 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M7 1v12M1 7h12"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          </Tooltip>
         </div>
       </div>
 

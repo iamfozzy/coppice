@@ -1,5 +1,6 @@
 import { useMemo, useState, useCallback } from "react";
 import type { AgentMessage } from "../../lib/types";
+import { Tooltip } from "../ui/Tooltip";
 
 interface Props {
   message: AgentMessage;
@@ -24,15 +25,16 @@ export function MessageBubble({ message, onCancel }: Props) {
                 </svg>
                 <span className="flex-1">Queued — will send when Claude finishes</span>
                 {onCancel && (
-                  <button
-                    onClick={() => onCancel(message.id)}
-                    className="ml-1 p-0.5 rounded hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 transition-colors"
-                    title="Cancel queued message"
-                  >
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                      <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                    </svg>
-                  </button>
+                  <Tooltip text="Cancel queued message" side="top">
+                    <button
+                      onClick={() => onCancel(message.id)}
+                      className="ml-1 p-0.5 rounded hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 transition-colors"
+                    >
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                        <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  </Tooltip>
                 )}
               </div>
             )}
@@ -399,28 +401,29 @@ function CodeBlock({ lang, content }: { lang: string; content: string }) {
         <span className="text-[10px] text-text-tertiary font-mono uppercase tracking-wider">
           {lang || "text"}
         </span>
-        <button
-          onClick={handleCopy}
-          className="text-[10px] text-text-tertiary hover:text-text-secondary transition-colors flex items-center gap-1"
-          title="Copy to clipboard"
-        >
-          {copied ? (
-            <>
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <path d="M2 5.5l2 2 4-4.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              Copied
-            </>
-          ) : (
-            <>
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <rect x="3" y="3" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="0.9" />
-                <path d="M7 3V2a1 1 0 00-1-1H2a1 1 0 00-1 1v4a1 1 0 001 1h1" stroke="currentColor" strokeWidth="0.9" />
-              </svg>
-              Copy
-            </>
-          )}
-        </button>
+        <Tooltip text="Copy to clipboard" side="top" align="right">
+          <button
+            onClick={handleCopy}
+            className="text-[10px] text-text-tertiary hover:text-text-secondary transition-colors flex items-center gap-1"
+          >
+            {copied ? (
+              <>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <path d="M2 5.5l2 2 4-4.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Copied
+              </>
+            ) : (
+              <>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <rect x="3" y="3" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="0.9" />
+                  <path d="M7 3V2a1 1 0 00-1-1H2a1 1 0 00-1 1v4a1 1 0 001 1h1" stroke="currentColor" strokeWidth="0.9" />
+                </svg>
+                Copy
+              </>
+            )}
+          </button>
+        </Tooltip>
       </div>
       <pre className="px-3 py-2.5 text-[12px] font-mono text-text-secondary overflow-x-auto leading-relaxed">
         {content}

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import type { EffortLevel, AgentPermissionMode } from "../../lib/types";
 import { SUPPORTED_MODELS, modelSupports1MContext } from "../../lib/supportedModels";
+import { Tooltip } from "../ui/Tooltip";
 
 interface Props {
   model: string;
@@ -70,38 +71,35 @@ export function AgentControls({
 
       {/* 1M context toggle — only visible for models that support it */}
       {supports1M && (
-        <button
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
-            extendedContext
-              ? "border-accent bg-accent/10 text-accent"
-              : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-          }`}
-          onClick={() => onExtendedContextChange(!extendedContext)}
-          title={
-            extendedContext
-              ? "1M context: ON — extended window enabled (>200K input billed at long-context rates)"
-              : "1M context: OFF — using default 200K window"
-          }
-        >
-          1M
-        </button>
+        <Tooltip text={extendedContext ? "1M context: ON — extended window enabled" : "1M context: OFF — using default 200K window"} side="top">
+          <button
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
+              extendedContext
+                ? "border-accent bg-accent/10 text-accent"
+                : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+            }`}
+            onClick={() => onExtendedContextChange(!extendedContext)}
+          >
+            1M
+          </button>
+        </Tooltip>
       )}
 
       {/* Effort selector */}
       <div className="flex items-center rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
         {EFFORT_LEVELS.map((level) => (
-          <button
-            key={level}
-            className={`px-2 py-1 text-[11px] capitalize transition-colors ${
-              effort === level
-                ? "bg-accent text-white"
-                : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-            }`}
-            onClick={() => onEffortChange(level)}
-            title={`Set effort to ${level}`}
-          >
-            {level}
-          </button>
+          <Tooltip key={level} text={`Set effort to ${level}`} side="top">
+            <button
+              className={`px-2 py-1 text-[11px] capitalize transition-colors ${
+                effort === level
+                  ? "bg-accent text-white"
+                  : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+              }`}
+              onClick={() => onEffortChange(level)}
+            >
+              {level}
+            </button>
+          </Tooltip>
         ))}
       </div>
 
@@ -112,47 +110,50 @@ export function AgentControls({
       />
 
       {/* Concise mode toggle */}
-      <button
-        className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
-          conciseMode
-            ? "border-accent bg-accent/10 text-accent"
-            : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-        }`}
-        onClick={() => onConciseModeChange(!conciseMode)}
-        title={conciseMode ? "Concise mode: ON — Claude uses minimal tokens" : "Concise mode: OFF — Claude responds normally"}
-      >
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M3 4h10M3 8h6M3 12h8" />
-        </svg>
-        Concise
-      </button>
+      <Tooltip text={conciseMode ? "Concise mode: ON — minimal tokens" : "Concise mode: OFF — normal responses"} side="top">
+        <button
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
+            conciseMode
+              ? "border-accent bg-accent/10 text-accent"
+              : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+          }`}
+          onClick={() => onConciseModeChange(!conciseMode)}
+        >
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 4h10M3 8h6M3 12h8" />
+          </svg>
+          Concise
+        </button>
+      </Tooltip>
 
       {/* Chat mode toggle */}
-      <button
-        className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
-          chatMode
-            ? "border-accent bg-accent/10 text-accent"
-            : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-        }`}
-        onClick={() => onChatModeChange(!chatMode)}
-        title={chatMode ? "Chat mode: ON — no tools, minimal system prompt, lower cost" : "Chat mode: OFF — full agent with tools"}
-      >
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M2 3h12v8H6l-3 3v-3H2z" />
-        </svg>
-        Chat
-      </button>
+      <Tooltip text={chatMode ? "Chat mode: ON — no tools, lower cost" : "Chat mode: OFF — full agent with tools"} side="top">
+        <button
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
+            chatMode
+              ? "border-accent bg-accent/10 text-accent"
+              : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+          }`}
+          onClick={() => onChatModeChange(!chatMode)}
+        >
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 3h12v8H6l-3 3v-3H2z" />
+          </svg>
+          Chat
+        </button>
+      </Tooltip>
 
       {permissionMode === "plan" && (
         <div className="ml-1 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] text-warning">
           <span>Plan mode active</span>
-          <button
-            className="rounded border border-warning/35 bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium hover:bg-warning/25"
-            onClick={() => onPermissionModeChange("default")}
-            title="Exit plan mode and return to default permission handling"
-          >
-            Exit to Default
-          </button>
+          <Tooltip text="Exit plan mode and return to default permissions" side="top">
+            <button
+              className="rounded border border-warning/35 bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium hover:bg-warning/25"
+              onClick={() => onPermissionModeChange("default")}
+            >
+              Exit to Default
+            </button>
+          </Tooltip>
         </div>
       )}
     </div>
@@ -200,7 +201,6 @@ function ModelPicker({
       <button
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors text-[11px]"
         onClick={() => setOpen(!open)}
-        title="Select model"
       >
         <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M8 1v4M4.5 3L8 5l3.5-2M1 6l7 4 7-4M1 10l7 4 7-4" />
@@ -306,7 +306,6 @@ function PermissionModePicker({
             : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
         }`}
         onClick={() => setOpen(!open)}
-        title={selected.description}
       >
         <svg
           width="10"

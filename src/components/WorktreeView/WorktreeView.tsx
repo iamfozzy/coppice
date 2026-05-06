@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
 import { DiffViewer } from "../DiffViewer/DiffViewer";
+import { Tooltip } from "../ui/Tooltip";
 import * as commands from "../../lib/commands";
 
 export function WorktreeView() {
@@ -143,21 +144,22 @@ export function WorktreeView() {
 
       {/* Tab bar */}
       <div className="flex h-10 shrink-0 bg-bg-secondary">
-        <button
-          className="flex items-center justify-center w-10 h-full shrink-0 text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none"
-          onClick={() => newAgentTab(wtId)}
-          title="New Agent session (Ctrl+Shift+A)"
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="5" width="10" height="8" rx="1.5" />
-            <path d="M5.5 2.5h5" />
-            <line x1="8" y1="2.5" x2="8" y2="5" />
-            <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
-            <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
-            <line x1="1" y1="8.5" x2="3" y2="8.5" />
-            <line x1="13" y1="8.5" x2="15" y2="8.5" />
-          </svg>
-        </button>
+        <Tooltip text="New Agent session" side="bottom" align="left">
+          <button
+            className="flex items-center justify-center w-10 h-full shrink-0 text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none"
+            onClick={() => newAgentTab(wtId)}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="5" width="10" height="8" rx="1.5" />
+              <path d="M5.5 2.5h5" />
+              <line x1="8" y1="2.5" x2="8" y2="5" />
+              <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
+              <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
+              <line x1="1" y1="8.5" x2="3" y2="8.5" />
+              <line x1="13" y1="8.5" x2="15" y2="8.5" />
+            </svg>
+          </button>
+        </Tooltip>
         <div className="flex flex-1 min-w-0 overflow-x-auto">
           {tabs.map((tab) => (
             <Tab
@@ -175,31 +177,33 @@ export function WorktreeView() {
           ))}
         </div>
         <div className="flex shrink-0">
-          <button
-            className="flex items-center justify-center w-10 h-full text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-colors outline-none"
-            onClick={() => newTerminalTab(wtId)}
-            title="New terminal (Ctrl+T)"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M2 4l4 3-4 3M7 10h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <button
-            className="flex items-center justify-center gap-1 px-2 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none text-[11px]"
-            onClick={() => newClaudeTab(wtId)}
-            title="New Claude terminal (Ctrl+Shift+T)"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="5" width="10" height="8" rx="1.5" />
-              <path d="M5.5 2.5h5" />
-              <line x1="8" y1="2.5" x2="8" y2="5" />
-              <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
-              <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
-              <line x1="1" y1="8.5" x2="3" y2="8.5" />
-              <line x1="13" y1="8.5" x2="15" y2="8.5" />
-            </svg>
-            CLI
-          </button>
+          <Tooltip text="New terminal" side="bottom">
+            <button
+              className="flex items-center justify-center w-10 h-full text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-colors outline-none"
+              onClick={() => newTerminalTab(wtId)}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M2 4l4 3-4 3M7 10h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </Tooltip>
+          <Tooltip text="New Claude CLI terminal" side="bottom" align="right">
+            <button
+              className="flex items-center justify-center gap-1 px-2 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none text-[11px]"
+              onClick={() => newClaudeTab(wtId)}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="5" width="10" height="8" rx="1.5" />
+                <path d="M5.5 2.5h5" />
+                <line x1="8" y1="2.5" x2="8" y2="5" />
+                <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
+                <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
+                <line x1="1" y1="8.5" x2="3" y2="8.5" />
+                <line x1="13" y1="8.5" x2="15" y2="8.5" />
+              </svg>
+              CLI
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -423,19 +427,14 @@ function ActionButton({
   };
 
   return (
-    <div className="relative group/tip">
+    <Tooltip text={title} align={tooltipAlign === "right" ? "right" : "center"}>
       <button
         className="w-7 h-7 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
         onClick={onClick}
       >
         {icons[icon]}
       </button>
-      <div className={`absolute top-full mt-1 px-2 py-1 text-[11px] text-text-primary bg-bg-tertiary border border-border-secondary rounded shadow-lg whitespace-nowrap opacity-0 group-hover/tip:opacity-100 pointer-events-none transition-opacity z-50 ${
-        tooltipAlign === "right" ? "right-0" : "left-1/2 -translate-x-1/2"
-      }`}>
-        {title}
-      </div>
-    </div>
+    </Tooltip>
   );
 }
 
@@ -513,40 +512,41 @@ function TargetBranchPicker({
         <span>&rarr;</span>
         <span className="font-mono">{currentTarget}</span>
       </button>
-      <button
-        className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
-          syncResult === "success"
-            ? "text-success"
-            : syncResult === "error"
-            ? "text-error"
-            : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover"
-        }`}
-        onClick={handleSync}
-        disabled={syncing}
-        title={`Fetch ${currentTarget} from origin`}
-      >
-        <svg
-          width="11"
-          height="11"
-          viewBox="0 0 16 16"
-          fill="none"
-          className={syncing ? "animate-spin" : ""}
+      <Tooltip text={`Fetch ${currentTarget} from origin`}>
+        <button
+          className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
+            syncResult === "success"
+              ? "text-success"
+              : syncResult === "error"
+              ? "text-error"
+              : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover"
+          }`}
+          onClick={handleSync}
+          disabled={syncing}
         >
-          <path
-            d="M14 8A6 6 0 1 1 8 2"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          />
-          <path
-            d="M8 0l3 2-3 2"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 16 16"
+            fill="none"
+            className={syncing ? "animate-spin" : ""}
+          >
+            <path
+              d="M14 8A6 6 0 1 1 8 2"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+            <path
+              d="M8 0l3 2-3 2"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </Tooltip>
     </div>
   );
 }
