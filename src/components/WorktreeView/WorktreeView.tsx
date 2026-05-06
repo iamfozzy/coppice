@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
 import { DiffViewer } from "../DiffViewer/DiffViewer";
 import * as commands from "../../lib/commands";
@@ -23,6 +23,7 @@ export function WorktreeView() {
   const pendingAgentPrompt = useAppStore((s) => s.pendingAgentPrompt);
   const consumeAgentPrompt = useAppStore((s) => s.consumeAgentPrompt);
   const toggleTabPin = useAppStore((s) => s.toggleTabPin);
+  const renameTab = useAppStore((s) => s.renameTab);
 
   const prCommentsByProject = useAppStore((s) => s.prCommentsByProject);
   const project = projects.find((p) => p.id === selectedProjectId);
@@ -168,6 +169,7 @@ export function WorktreeView() {
               claudeStatus={tab.type === "claude" || tab.type === "agent" ? claudeStatusByTab[tab.id] ?? null : null}
               onClick={() => setActiveTab(wtId, tab.id)}
               onClose={() => closeTab(wtId, tab.id)}
+              onRename={(newLabel) => renameTab(wtId, tab.id, newLabel)}
               onTogglePin={tab.type === "agent" ? () => toggleTabPin(wtId, tab.id) : undefined}
             />
           ))}
@@ -244,6 +246,7 @@ function Tab({
   claudeStatus,
   onClick,
   onClose,
+  onRename,
   onTogglePin,
 }: {
   label: string;
@@ -253,9 +256,23 @@ function Tab({
   claudeStatus: ClaudeStatus | null;
   onClick: () => void;
   onClose: () => void;
+  onRename: (newLabel: string) => void;
   onTogglePin?: () => void;
 }) {
   const [dotHovered, setDotHovered] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(label);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const commitRename = () => {
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== label) {
+      onRename(trimmed);
+    } else {
+      setEditValue(label);
+    }
+    setEditing(false);
+  };
 
   const isAgentType = type === "agent";
   const agentActive = isAgentType && claudeStatus === "active";
@@ -307,7 +324,13 @@ function Tab({
             ? "text-text-primary bg-bg-primary"
             : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover/50"
       }`}
-      onClick={onClick}
+      onClick={editing ? undefined : onClick}
+      onMouseDown={(e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          onClose();
+        }
+      }}
       tabIndex={-1}
     >
       {active && (
@@ -323,7 +346,37 @@ function Tab({
       >
         {showPin ? pinIcon : dotInner}
       </span>
-      <span className="truncate max-w-[140px]">{label}</span>
+      {editing ? (
+        <input
+          ref={inputRef}
+          className="bg-transparent border border-accent rounded px-1 text-xs text-text-primary outline-none max-w-[140px] w-full"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename();
+            if (e.key === "Escape") {
+              setEditValue(label);
+              setEditing(false);
+            }
+          }}
+        />
+      ) : (
+        <span
+          className="truncate max-w-[140px]"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            setEditValue(label);
+            setEditing(true);
+            requestAnimationFrame(() => {
+              inputRef.current?.focus();
+              inputRef.current?.select();
+            });
+          }}
+        >
+          {label}
+        </span>
+      )}
       <span
         className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded hover:bg-text-tertiary/20 transition-all shrink-0 -mr-1"
         onClick={(e) => {
