@@ -57,7 +57,7 @@ export const SidebarRunners = memo(function SidebarRunners() {
 
   const availableRunners = worktree && project ? getAvailable(project) : [];
 
-  if (availableRunners.length === 0) return null;
+  if (availableRunners.length === 0 || selectedWorktreeId === "__scratchpad__") return null;
 
   return (
     <div className="border-t border-border-primary flex flex-col shrink-0">

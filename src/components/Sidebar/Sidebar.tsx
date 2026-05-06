@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useAppStore } from "../../stores/appStore";
 import { ProjectTree } from "./ProjectTree";
+import { ScratchpadNode } from "./ScratchpadNode";
 import { ChangesPanel } from "./ChangesPanel";
 import { SidebarRunners } from "./SidebarRunners";
 import { Tooltip } from "../ui/Tooltip";
@@ -138,6 +139,7 @@ export function Sidebar() {
 
       {/* Project list — scrollable */}
       <div className="flex-1 overflow-y-auto py-1 min-h-0">
+        <ScratchpadNode />
         <ProjectTree />
       </div>
 

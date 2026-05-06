@@ -144,17 +144,14 @@ export function AgentControls({
       </Tooltip>
 
       {permissionMode === "plan" && (
-        <div className="ml-1 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] text-warning">
-          <span>Plan mode active</span>
-          <Tooltip text="Exit plan mode and return to default permissions" side="top">
-            <button
-              className="rounded border border-warning/35 bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium hover:bg-warning/25"
-              onClick={() => onPermissionModeChange("default")}
-            >
-              Exit to Default
-            </button>
-          </Tooltip>
-        </div>
+        <Tooltip text="Exit plan mode and return to default permissions" side="top">
+          <button
+            className="ml-1 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1 text-[11px] text-warning hover:bg-warning/15 transition-colors"
+            onClick={() => onPermissionModeChange("default")}
+          >
+            Plan mode — Exit
+          </button>
+        </Tooltip>
       )}
     </div>
   );

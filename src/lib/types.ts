@@ -1,3 +1,6 @@
+export const SCRATCHPAD_PROJECT_ID = "__scratchpad_project__";
+export const SCRATCHPAD_WORKTREE_ID = "__scratchpad__";
+
 export interface Project {
   id: string;
   name: string;
@@ -69,6 +72,7 @@ export interface AppSettings {
   agent_api_key: string;
   agent_base_url: string;
   agent_base_url_custom_only: boolean;
+  agent_api_key_custom_only: boolean;
   agent_small_fast_model: string;
   agent_subagent_model: string;
   agent_bash_max_output: number;

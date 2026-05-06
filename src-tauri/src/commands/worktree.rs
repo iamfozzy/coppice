@@ -122,6 +122,9 @@ pub fn rename_worktree(db: State<'_, Database>, id: String, name: String) -> Res
 
 #[tauri::command]
 pub async fn delete_worktree(db: State<'_, Database>, id: String, keep_branch: bool) -> Result<(), String> {
+    if id == crate::db::SCRATCHPAD_WORKTREE_ID {
+        return Err("Cannot delete the scratchpad".to_string());
+    }
     // Collect info needed for cleanup before deleting the DB record
     // (project_path, wt_path, branch, protected_branches)
     let mut cleanup_info: Option<(String, String, String, Vec<String>)> = None;

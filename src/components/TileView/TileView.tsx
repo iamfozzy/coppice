@@ -7,6 +7,10 @@ import { Tooltip } from "../ui/Tooltip";
 import { SUPPORTED_MODELS, modelSupports1MContext } from "../../lib/supportedModels";
 import * as commands from "../../lib/commands";
 import type { ImageAttachment, EffortLevel, AgentPermissionMode, Project } from "../../lib/types";
+import { SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
+import { PermissionDialog } from "../AgentView/PermissionDialog";
+import { AskUserDialog } from "../AgentView/AskUserDialog";
+import { isPlanPermission } from "../AgentView/PlanApprovalDialog";
 
 interface PinnedTab {
   tab: TabInfo;
@@ -65,8 +69,22 @@ export function TileView() {
     }
   }, []);
 
+  const scratchpadWorktree = useAppStore((s) => s.scratchpadWorktree);
+
   const pinnedTabs = useMemo<PinnedTab[]>(() => {
     const result: PinnedTab[] = [];
+    // Include scratchpad pinned tabs
+    const spTabs = tabsByWorktree[SCRATCHPAD_WORKTREE_ID] ?? [];
+    for (const tab of spTabs) {
+      if (tab.pinned && tab.type === "agent") {
+        result.push({
+          tab,
+          worktreeId: SCRATCHPAD_WORKTREE_ID,
+          worktreeName: "Home",
+          projectName: "Scratchpad",
+        });
+      }
+    }
     for (const project of projects) {
       const worktrees = worktreesByProject[project.id] ?? [];
       for (const wt of worktrees) {
@@ -85,7 +103,7 @@ export function TileView() {
     }
     result.sort((left, right) => (left.tab.pinnedAt ?? 0) - (right.tab.pinnedAt ?? 0));
     return result;
-  }, [tabsByWorktree, worktreesByProject, projects]);
+  }, [tabsByWorktree, worktreesByProject, projects, scratchpadWorktree]);
 
   const cols = computeCols(pinnedTabs.length);
   const rows = Math.ceil(pinnedTabs.length / cols) || 1;
@@ -219,6 +237,8 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const setConciseMode = useAppStore((s) => s.setAgentConciseMode);
   const setChatMode = useAppStore((s) => s.setAgentChatMode);
   const setExtendedContext = useAppStore((s) => s.setAgentExtendedContext);
+  const setPendingPermission = useAppStore((s) => s.setAgentPendingPermission);
+  const setPendingQuestion = useAppStore((s) => s.setAgentPendingQuestion);
 
   const sessionId = tab.id;
   const cwd = tab.cwd;
@@ -334,6 +354,22 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
     commands.agentInterrupt(sessionId).catch(() => {});
   }, [sessionId]);
 
+  const handleToolResponse = useCallback((behavior: "allow" | "deny", opts?: { message?: string; updatedInput?: unknown }) => {
+    const pending = session?.pendingPermission;
+    if (!pending) return;
+    commands.agentToolResponse(sessionId, pending.callId, behavior, opts?.message, opts?.updatedInput).catch(() => {});
+    setPendingPermission(sessionId, null);
+    setStatus(sessionId, "tool_use");
+  }, [session?.pendingPermission, sessionId, setPendingPermission, setStatus]);
+
+  const handleAskResponse = useCallback((answers: Record<string, string>) => {
+    const pending = session?.pendingQuestion;
+    if (!pending) return;
+    commands.agentAskResponse(sessionId, pending.callId, answers).catch(() => {});
+    setPendingQuestion(sessionId, null);
+    setStatus(sessionId, "thinking");
+  }, [session?.pendingQuestion, sessionId, setPendingQuestion, setStatus]);
+
   if (!session) return <div className="bg-bg-primary" />;
 
   const isInputDisabled = session.status === "waiting_permission";
@@ -425,8 +461,29 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
           streamingText={session.streamingText}
           streamingThinkingText={session.streamingThinkingText}
           status={session.status}
+          pendingPlan={session.pendingPermission && isPlanPermission(session.pendingPermission) ? session.pendingPermission : null}
+          onPlanApprove={(updatedInput) => handleToolResponse("allow", { updatedInput })}
+          onPlanRequestChanges={(feedback) => handleToolResponse("deny", { message: `Please revise the plan: ${feedback}` })}
+          onPlanDeny={() => handleToolResponse("deny")}
         />
       </div>
+
+      {/* Permission dialog — non-plan permissions */}
+      {session.pendingPermission && !isPlanPermission(session.pendingPermission) && (
+        <PermissionDialog
+          pending={session.pendingPermission}
+          onAllow={() => handleToolResponse("allow")}
+          onDeny={() => handleToolResponse("deny")}
+        />
+      )}
+
+      {/* Ask user dialog */}
+      {session.pendingQuestion && (
+        <AskUserDialog
+          pending={session.pendingQuestion}
+          onSubmit={handleAskResponse}
+        />
+      )}
 
       {/* Input with inline controls dropdown */}
       <div className="shrink-0" onPointerDown={clearTileNotification}>
@@ -722,6 +779,7 @@ function TilePickerDropdown({
 }: TilePickerProps & { position: "dropdown" | "inline" }) {
   const projects = useAppStore((s) => s.projects);
   const worktreesByProject = useAppStore((s) => s.worktreesByProject);
+  const spWorktree = useAppStore((s) => s.scratchpadWorktree);
   const [expandedId, setExpandedId] = useState<string | null>(
     // Auto-expand if there's only one project
     projects.length === 1 ? projects[0].id : null
@@ -732,12 +790,25 @@ function TilePickerDropdown({
       ? "absolute right-0 top-full mt-1 w-64 max-h-80 flex flex-col bg-bg-secondary rounded-lg border border-border-primary shadow-lg overflow-hidden z-10"
       : "flex-1 overflow-y-auto min-h-0";
 
-  const content = projects.length === 0 ? (
+  const content = projects.length === 0 && !spWorktree ? (
     <div className="flex items-center justify-center py-6 text-text-tertiary text-xs">
       No projects available
     </div>
   ) : (
-    projects.map((project) => {
+    <>
+    {spWorktree && (
+      <button
+        className="w-full text-left px-3 py-2 flex items-center gap-2 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+        onClick={() => onAddExisting(SCRATCHPAD_WORKTREE_ID, spWorktree.path)}
+      >
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="shrink-0 opacity-60">
+          <rect x="2" y="1" width="12" height="14" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M5 5h6M5 8h6M5 11h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+        </svg>
+        <span className="text-[12px] font-medium">Scratchpad</span>
+      </button>
+    )}
+    {projects.map((project) => {
       const expanded = expandedId === project.id;
       const worktrees = (worktreesByProject[project.id] ?? []).filter(
         (wt) => !wt.archived
@@ -793,7 +864,8 @@ function TilePickerDropdown({
           )}
         </div>
       );
-    })
+    })}
+    </>
   );
 
   if (position === "inline") {

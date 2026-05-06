@@ -4,6 +4,9 @@ use std::sync::Mutex;
 
 use crate::models::{AgentTabCache, Project, ProjectFormData, Worktree};
 
+pub const SCRATCHPAD_PROJECT_ID: &str = "__scratchpad_project__";
+pub const SCRATCHPAD_WORKTREE_ID: &str = "__scratchpad__";
+
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -103,6 +106,48 @@ impl Database {
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN sdk_context_window INTEGER", []);
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN pinned_at INTEGER", []);
+
+        drop(conn);
+        self.ensure_scratchpad()?;
+
+        Ok(())
+    }
+
+    fn ensure_scratchpad(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let home = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .to_string_lossy()
+            .to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let project_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE id=?1)",
+            params![SCRATCHPAD_PROJECT_ID],
+            |row| row.get(0),
+        )?;
+        if !project_exists {
+            conn.execute(
+                "INSERT INTO projects (id, name, local_path, github_remote, base_branch, target_branch, setup_scripts, build_command, run_command, env_files, pr_create_skill, claude_command, created_at) VALUES (?1, 'Scratchpad', ?2, '', '', '', '[]', '', '', '[]', '', '', ?3)",
+                params![SCRATCHPAD_PROJECT_ID, home, now],
+            )?;
+        } else {
+            conn.execute("UPDATE projects SET local_path=?1 WHERE id=?2", params![home, SCRATCHPAD_PROJECT_ID])?;
+        }
+
+        let wt_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM worktrees WHERE id=?1)",
+            params![SCRATCHPAD_WORKTREE_ID],
+            |row| row.get(0),
+        )?;
+        if !wt_exists {
+            conn.execute(
+                "INSERT INTO worktrees (id, project_id, name, path, branch, source_type, created_at) VALUES (?1, ?2, 'Home', ?3, '', 'branch', ?4)",
+                params![SCRATCHPAD_WORKTREE_ID, SCRATCHPAD_PROJECT_ID, home, now],
+            )?;
+        } else {
+            conn.execute("UPDATE worktrees SET path=?1 WHERE id=?2", params![home, SCRATCHPAD_WORKTREE_ID])?;
+        }
 
         Ok(())
     }

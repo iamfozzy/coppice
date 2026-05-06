@@ -220,6 +220,16 @@ export function AppSettingsModal() {
                   hint="When enabled, Claude models go direct to Anthropic while custom models (e.g. openai/gpt-4o) route through the proxy."
                 />
               )}
+              {form.agent_api_key && (
+                <Toggle
+                  label="Use API key for custom models only"
+                  checked={form.agent_api_key_custom_only}
+                  onChange={(agent_api_key_custom_only) =>
+                    setForm({ ...form, agent_api_key_custom_only })
+                  }
+                  hint="When enabled, Claude models use the default SDK key while custom models (e.g. openai/gpt-4o) use this API key."
+                />
+              )}
               <ModelCombobox
                 label="Default model"
                 value={form.agent_default_model}

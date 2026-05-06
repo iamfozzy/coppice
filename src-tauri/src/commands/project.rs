@@ -1,5 +1,5 @@
 use tauri::State;
-use crate::db::Database;
+use crate::db::{Database, SCRATCHPAD_PROJECT_ID};
 use crate::models::{Project, ProjectFormData};
 
 #[tauri::command]
@@ -23,5 +23,8 @@ pub fn update_project(
 
 #[tauri::command]
 pub fn delete_project(db: State<'_, Database>, id: String) -> Result<(), String> {
+    if id == SCRATCHPAD_PROJECT_ID {
+        return Err("Cannot delete the scratchpad project".to_string());
+    }
     db.delete_project(&id).map_err(|e| e.to_string())
 }
