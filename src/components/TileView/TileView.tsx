@@ -235,6 +235,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const clearClaudeIdleStatus = useAppStore((s) => s.clearClaudeIdleStatus);
   const toggleTileView = useAppStore((s) => s.toggleTileView);
   const toggleTabPin = useAppStore((s) => s.toggleTabPin);
+  const closeTab = useAppStore((s) => s.closeTab);
   const appendMessage = useAppStore((s) => s.appendAgentMessage);
   const setStatus = useAppStore((s) => s.setAgentStatus);
   const pushQueuedMessage = useAppStore((s) => s.pushAgentQueuedMessage);
@@ -412,17 +413,26 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
           <span className="text-text-tertiary mx-1">/</span>
           {worktreeName}
           <span className="text-text-tertiary mx-1">&mdash;</span>
-          {tab.label}
+          <span className="font-semibold">{tab.label}</span>
         </span>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-2.5">
           <TileRunnerButtons worktreeId={pinned.worktreeId} />
           <button
-            className="text-text-tertiary hover:text-text-primary transition-colors"
+            className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
             onClick={handleNavigate}
             title="Go to tab"
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M4 1h7v7M11 1L5 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.5 2.5h5v5M9.5 2.5L4 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
+            onClick={() => closeTab(pinned.worktreeId, tab.id)}
+            title="Close tab"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
             </svg>
           </button>
         </div>

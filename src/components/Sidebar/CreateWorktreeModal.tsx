@@ -11,18 +11,24 @@ interface Props {
 
 type Mode = "existing" | "new";
 
-// Strip characters that are illegal in Windows filenames so the worktree
-// folder name is portable. Backend also validates, but sanitizing here
-// avoids surprising "invalid name" errors on submit.
-//   < > : " | ? * \  → replaced with `-`
-//   /                → replaced with `-` (path separator)
-//   control chars    → removed
-//   trailing . or ␠  → trimmed
+function sanitizeBranchName(input: string): string {
+  return input
+    .replace(/[\s~^:?*[\]\\@{}<>"'|]/g, "-")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, "")
+    .replace(/\.\./g, "-")
+    .replace(/\.lock($|\/)/g, "-lock$1")
+    .replace(/^[-.]/, "")
+    .replace(/\.$/, "")
+    .replace(/-{2,}/g, "-");
+}
+
 function sanitizeWorktreeName(input: string): string {
   return input
-    .replace(/[<>:"|?*\\/]/g, "-")
+    .replace(/[<>:"|?*\\/ \s]/g, "-")
     // eslint-disable-next-line no-control-regex
-    .replace(/[\x00-\x1f]/g, "")
+    .replace(/[\x00-\x1f\x7f]/g, "")
+    .replace(/-{2,}/g, "-")
     .replace(/[. ]+$/, "");
 }
 
@@ -291,8 +297,9 @@ export function CreateWorktreeModal({ projectId, onClose, onCreated }: Props) {
                     type="text"
                     value={newBranchName}
                     onChange={(e) => {
-                      setNewBranchName(e.target.value);
-                      setWorktreeName(sanitizeWorktreeName(e.target.value));
+                      const sanitized = sanitizeBranchName(e.target.value);
+                      setNewBranchName(sanitized);
+                      setWorktreeName(sanitizeWorktreeName(sanitized));
                     }}
                     placeholder="feature/my-feature"
                     autoComplete="off"

@@ -1031,6 +1031,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       label,
       command: prompt,
       cwd,
+      pinned: true,
+      pinnedAt: Date.now(),
     };
     const sessionState: AgentSessionState = {
       messages: [],
@@ -1076,13 +1078,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   addPinnedAgentTab: (worktreeId, cwd) => {
+    // addAgentTab already pins by default, so just delegate
     get().addAgentTab(worktreeId, cwd);
-    // Pin the tab that was just created (it's the last one in the list)
-    const tabs = get().tabsByWorktree[worktreeId] ?? [];
-    const lastTab = tabs[tabs.length - 1];
-    if (lastTab) {
-      get().toggleTabPin(worktreeId, lastTab.id);
-    }
   },
 
   newAgentTab: (worktreeId) => {
