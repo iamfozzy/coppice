@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { AgentCost, TokenUsage, AgentSessionState } from "../../lib/types";
 import { useAppStore } from "../../stores/appStore";
 import { contextWindowFor } from "../../lib/traceUtils";
+import { Tooltip } from "../ui/Tooltip";
 
 interface Props {
   session: AgentSessionState;
@@ -42,34 +43,36 @@ export function AgentToolbar({
 
       {/* Trace toggle button */}
       {hasTraceEvents && (
-        <button
-          className={`flex items-center gap-1 px-2 py-0.5 rounded border transition-colors ${
-            traceMode !== "closed"
-              ? "bg-accent/15 border-accent/40 text-accent"
-              : "bg-bg-tertiary border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary/80"
-          }`}
-          onClick={() => toggleTrace(sessionId)}
-          title={traceMode !== "closed" ? "Close trace panel" : "Open trace panel"}
-        >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 12h4l3-9 4 18 3-9h4" />
-          </svg>
-          Trace
-        </button>
+        <Tooltip text={traceMode !== "closed" ? "Close trace panel" : "Open trace panel"} side="top">
+          <button
+            className={`flex items-center gap-1 px-2 py-0.5 rounded border transition-colors ${
+              traceMode !== "closed"
+                ? "bg-accent/15 border-accent/40 text-accent"
+                : "bg-bg-tertiary border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary/80"
+            }`}
+            onClick={() => toggleTrace(sessionId)}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 12h4l3-9 4 18 3-9h4" />
+            </svg>
+            Trace
+          </button>
+        </Tooltip>
       )}
 
       {/* Interrupt button */}
       {isWorking && (
-        <button
-          className="flex items-center gap-1 px-2 py-0.5 rounded bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
-          onClick={onInterrupt}
-          title="Stop Claude"
-        >
-          <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor">
-            <rect x="0" y="0" width="8" height="8" rx="1" />
-          </svg>
-          Stop
-        </button>
+        <Tooltip text="Stop Claude" side="top">
+          <button
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
+            onClick={onInterrupt}
+          >
+            <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor">
+              <rect x="0" y="0" width="8" height="8" rx="1" />
+            </svg>
+            Stop
+          </button>
+        </Tooltip>
       )}
     </div>
   );

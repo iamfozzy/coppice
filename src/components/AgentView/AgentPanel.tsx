@@ -831,7 +831,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
               ? "Answer Claude's question..."
               : session.status === "idle"
                 ? "Send a message to start..."
-                : "Queue a message for when Claude finishes..."
+                : "Queue message..."
         }
         slashCommands={session.slashCommands}
         onSend={handleSend}

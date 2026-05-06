@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import type { SlashCommand, ImageAttachment } from "../../lib/types";
 import { useAppStore } from "../../stores/appStore";
+import { Tooltip } from "../ui/Tooltip";
 
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20 MB
@@ -75,6 +76,7 @@ interface Props {
   slashCommands?: SlashCommand[];
   leftAddon?: React.ReactNode;
   onSend: (text: string, images?: ImageAttachment[]) => void;
+  onInterrupt?: () => void;
 }
 
 /** Return the command name the user is currently typing, or null. */
@@ -87,7 +89,7 @@ function parseLeadingSlash(text: string): string | null {
   return rest;
 }
 
-export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, placeholder, slashCommands, leftAddon, onSend }: Props) {
+export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, placeholder, slashCommands, leftAddon, onSend, onInterrupt }: Props) {
   const [text, setText] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [images, setImages] = useState<ImageAttachment[]>([]);
@@ -367,19 +369,20 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
         />
         {leftAddon}
         {/* Attach image button */}
-        <button
-          type="button"
-          className="shrink-0 self-stretch flex items-center justify-center w-8 rounded-lg border border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled}
-          title="Attach images"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.3" />
-            <circle cx="5.5" cy="5.5" r="1.25" stroke="currentColor" strokeWidth="1.1" />
-            <path d="M2 11l3-3 2 2 3-4 4 5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        <Tooltip text="Attach images" side="top">
+          <button
+            type="button"
+            className="shrink-0 self-stretch flex items-center justify-center w-8 rounded-lg border border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.3" />
+              <circle cx="5.5" cy="5.5" r="1.25" stroke="currentColor" strokeWidth="1.1" />
+              <path d="M2 11l3-3 2 2 3-4 4 5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </Tooltip>
         <textarea
           ref={textareaRef}
           className="flex-1 resize-none overflow-hidden bg-transparent border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-0 transition-colors font-mono leading-relaxed"
@@ -392,30 +395,43 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
           disabled={disabled}
           spellCheck={false}
         />
-        <button
-          className={`shrink-0 self-stretch flex items-center justify-center rounded-lg text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
-            showQueueButton
-              ? "bg-amber-500/80 hover:bg-amber-500 px-2.5 gap-1.5"
-              : "bg-accent hover:bg-accent-hover w-8"
-          }`}
-          onClick={() => sendText(text)}
-          disabled={disabled || (!text.trim() && images.length === 0)}
-          title={showQueueButton ? "Queue (Enter)" : "Send (Enter)"}
-        >
-          {showQueueButton ? (
-            <>
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.2" />
-                <path d="M6 3v3.5l2 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        {isAgentBusy && onInterrupt && (
+          <Tooltip text="Stop Claude" side="top">
+            <button
+              className="shrink-0 self-stretch flex items-center justify-center w-8 rounded-lg bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
+              onClick={onInterrupt}
+            >
+              <svg width="10" height="10" viewBox="0 0 8 8" fill="currentColor">
+                <rect x="0" y="0" width="8" height="8" rx="1" />
               </svg>
-              <span className="text-[11px] font-medium">Queue</span>
-            </>
-          ) : (
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M1 7h12M8 2l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          )}
-        </button>
+            </button>
+          </Tooltip>
+        )}
+        <Tooltip text={showQueueButton ? "Queue message (Enter)" : "Send message (Enter)"} side="top" align="right">
+          <button
+            className={`shrink-0 self-stretch flex items-center justify-center rounded-lg text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+              showQueueButton
+                ? "bg-amber-500/80 hover:bg-amber-500 px-2.5 gap-1.5"
+                : "bg-accent hover:bg-accent-hover w-8"
+            }`}
+            onClick={() => sendText(text)}
+            disabled={disabled || (!text.trim() && images.length === 0)}
+          >
+            {showQueueButton ? (
+              <>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.2" />
+                  <path d="M6 3v3.5l2 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                </svg>
+                <span className="text-[11px] font-medium">Queue</span>
+              </>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M1 7h12M8 2l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

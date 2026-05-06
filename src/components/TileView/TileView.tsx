@@ -3,6 +3,7 @@ import { useAppStore, type TabInfo } from "../../stores/appStore";
 import { MessageList } from "../AgentView/MessageList";
 import { AgentInputBar } from "../AgentView/AgentInputBar";
 import { CreateWorktreeModal } from "../Sidebar/CreateWorktreeModal";
+import { Tooltip } from "../ui/Tooltip";
 import { SUPPORTED_MODELS, modelSupports1MContext } from "../../lib/supportedModels";
 import * as commands from "../../lib/commands";
 import type { ImageAttachment, EffortLevel, AgentPermissionMode, Project } from "../../lib/types";
@@ -151,32 +152,34 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
   return (
     <div className="flex items-center h-10 px-3 shrink-0 bg-bg-secondary border-b border-border-primary">
       {/* Left: close toggle */}
-      <button
-        onClick={toggleTileView}
-        className="w-7 h-7 flex items-center justify-center rounded text-accent hover:text-accent-hover hover:bg-accent/10 transition-colors"
-        title="Close tile view (Esc)"
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-          <rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-          <rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-          <rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-        </svg>
-      </button>
+      <Tooltip text="Close tile view (Esc)" align="left">
+        <button
+          onClick={toggleTileView}
+          className="w-7 h-7 flex items-center justify-center rounded text-accent hover:text-accent-hover hover:bg-accent/10 transition-colors"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+        </button>
+      </Tooltip>
 
       <span className="text-[11px] text-text-tertiary ml-2 select-none">Tile View</span>
 
       {/* Right: add tile */}
       <div className="ml-auto relative" ref={pickerRef}>
-        <button
-          onClick={() => setPickerOpen((v) => !v)}
-          className="w-7 h-7 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-          title="Add tile"
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </button>
+        <Tooltip text="Add tile" align="right">
+          <button
+            onClick={() => setPickerOpen((v) => !v)}
+            className="w-7 h-7 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        </Tooltip>
 
         {pickerOpen && (
           <TilePickerDropdown
@@ -327,6 +330,10 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
     setExtendedContext(sessionId, enabled);
   }, [sessionId, setExtendedContext]);
 
+  const handleInterrupt = useCallback(() => {
+    commands.agentInterrupt(sessionId).catch(() => {});
+  }, [sessionId]);
+
   if (!session) return <div className="bg-bg-primary" />;
 
   const isInputDisabled = session.status === "waiting_permission";
@@ -361,7 +368,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
         ? "Answer Claude's question..."
         : session.status === "idle"
           ? "Send a message to start..."
-          : "Queue a message for when Claude finishes...";
+          : "Queue message...";
 
   return (
     <div
@@ -369,15 +376,16 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
     >
       {/* Tile header */}
       <div className="flex items-center gap-2 px-3 h-8 shrink-0 border-b border-border-primary bg-bg-secondary">
-        <span
-          className={`w-4 h-4 flex items-center justify-center shrink-0 rounded-sm cursor-pointer transition-colors ${dotHovered ? "text-accent hover:bg-accent/10" : ""}`}
-          onMouseEnter={() => setDotHovered(true)}
-          onMouseLeave={() => setDotHovered(false)}
-          onClick={() => toggleTabPin(pinned.worktreeId, tab.id)}
-          title="Unpin from tiles"
-        >
-          {dotHovered ? pinIcon : dotInner}
-        </span>
+        <Tooltip text="Unpin from tiles" align="left">
+          <span
+            className={`w-4 h-4 flex items-center justify-center shrink-0 rounded-sm cursor-pointer transition-colors ${dotHovered ? "text-accent hover:bg-accent/10" : ""}`}
+            onMouseEnter={() => setDotHovered(true)}
+            onMouseLeave={() => setDotHovered(false)}
+            onClick={() => toggleTabPin(pinned.worktreeId, tab.id)}
+          >
+            {dotHovered ? pinIcon : dotInner}
+          </span>
+        </Tooltip>
         <span className="text-[11px] text-text-secondary truncate">
           {projectName}
           <span className="text-text-tertiary mx-1">/</span>
@@ -387,24 +395,26 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
         </span>
         <div className="ml-auto flex items-center gap-2.5">
           <TileRunnerButtons worktreeId={pinned.worktreeId} />
-          <button
-            className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
-            onClick={handleNavigate}
-            title="Go to tab"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M4.5 2.5h5v5M9.5 2.5L4 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <button
-            className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
-            onClick={() => closeTab(pinned.worktreeId, tab.id)}
-            title="Close tab"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-            </svg>
-          </button>
+          <Tooltip text="Go to tab" align="right">
+            <button
+              className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
+              onClick={handleNavigate}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M4.5 2.5h5v5M9.5 2.5L4 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </Tooltip>
+          <Tooltip text="Close tab" align="right">
+            <button
+              className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
+              onClick={() => closeTab(pinned.worktreeId, tab.id)}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -427,6 +437,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
           placeholder={placeholder}
           slashCommands={session.slashCommands}
           onSend={handleSend}
+          onInterrupt={handleInterrupt}
           leftAddon={
             <TileControlsDropdown
               model={session.model}
@@ -502,21 +513,22 @@ function TileControlsDropdown({
 
   return (
     <div className="relative self-stretch" ref={ref}>
-      <button
-        type="button"
-        className={`h-full shrink-0 flex items-center justify-center w-8 rounded-lg border transition-colors ${
-          open
-            ? "border-accent bg-accent/10 text-accent"
-            : "border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary"
-        }`}
-        onClick={() => setOpen((v) => !v)}
-        title="Agent settings"
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="8" cy="8" r="2.5" />
-          <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />
-        </svg>
-      </button>
+      <Tooltip text="Agent settings" side="top" align="left">
+        <button
+          type="button"
+          className={`h-full shrink-0 flex items-center justify-center w-8 rounded-lg border transition-colors ${
+            open
+              ? "border-accent bg-accent/10 text-accent"
+              : "border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary"
+          }`}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="8" cy="8" r="2.5" />
+            <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />
+          </svg>
+        </button>
+      </Tooltip>
 
       {open && (
         <div className="absolute bottom-full mb-1 left-0 min-w-[200px] bg-bg-secondary border border-border-primary rounded-lg shadow-lg overflow-hidden z-50">
@@ -666,35 +678,35 @@ function TileRunnerButtons({ worktreeId }: { worktreeId: string }) {
 
         if (status === "running") {
           return (
-            <button
-              key={key}
-              onClick={async (e) => {
-                e.stopPropagation();
-                if (runner) {
-                  await commands.terminalKill(runner.id).catch(() => {});
-                  setRunnerStatus(worktreeId, key, "stopped");
-                }
-              }}
-              className="px-1.5 py-0.5 text-[10px] rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
-              title={`Stop ${label}`}
-            >
-              Stop
-            </button>
+            <Tooltip key={key} text={`Stop ${label.toLowerCase()}`} side="top">
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (runner) {
+                    await commands.terminalKill(runner.id).catch(() => {});
+                    setRunnerStatus(worktreeId, key, "stopped");
+                  }
+                }}
+                className="px-1.5 py-0.5 text-[10px] rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
+              >
+                Stop
+              </button>
+            </Tooltip>
           );
         }
 
         return (
-          <button
-            key={key}
-            onClick={(e) => {
-              e.stopPropagation();
-              openOrRestartRunner(worktreeId, key, command, worktreePath);
-            }}
-            className="px-1.5 py-0.5 text-[10px] rounded text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
-            title={`${label}`}
-          >
-            {label}
-          </button>
+          <Tooltip key={key} text={`Run ${label.toLowerCase()}`} side="top">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                openOrRestartRunner(worktreeId, key, command, worktreePath);
+              }}
+              className="px-1.5 py-0.5 text-[10px] rounded text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            >
+              {label}
+            </button>
+          </Tooltip>
         );
       })}
     </div>

@@ -102,26 +102,6 @@ function App() {
 
   // On macOS with overlay titlebar, push content below the traffic lights.
   // In fullscreen or when decorations are off, the inset is 0.
-  useEffect(() => {
-    const isMac = navigator.userAgent.includes("Macintosh");
-    if (!isMac) return;
-
-    const decorations = appSettings?.window_decorations !== false;
-
-    const update = () => {
-      getCurrentWindow().isFullscreen().then((fs) => {
-        document.documentElement.style.setProperty(
-          "--titlebar-inset",
-          !fs && decorations ? "28px" : "0px",
-        );
-      }).catch(() => {});
-    };
-
-    update();
-    // Delay the fullscreen check so the window state has settled after resize.
-    const unlisten = getCurrentWindow().onResized(() => { setTimeout(update, 150); });
-    return () => { unlisten.then((fn) => fn()); };
-  }, [appSettings?.window_decorations]);
 
   const termFontFamily = appSettings?.terminal_font_family || undefined;
   const termFontSize = appSettings?.terminal_font_size || undefined;
@@ -343,7 +323,7 @@ function App() {
       <main className="flex-1 flex flex-col min-w-0 bg-bg-primary relative">
         <WorktreeView />
         {/* Terminal + Agent layer — always mounted */}
-        <div id="terminal-layer" className="absolute inset-0" style={{ top: "calc(3rem + 2.5rem + var(--titlebar-inset, 0px))", pointerEvents: "none" }}>
+        <div id="terminal-layer" className="absolute inset-0" style={{ top: "calc(3rem + 2.5rem)", pointerEvents: "none" }}>
           {terminalTabs.map((t) => (
             <div
               key={t.id}

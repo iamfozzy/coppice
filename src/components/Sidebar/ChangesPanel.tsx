@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, memo } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../../stores/appStore";
 import { PRPanel } from "../PRStatus/PRPanel";
+import { Tooltip } from "../ui/Tooltip";
 import * as commands from "../../lib/commands";
 import type { GitFileStatus } from "../../lib/commands";
 
@@ -234,28 +235,32 @@ export const ChangesPanel = memo(function ChangesPanel() {
           />
         </div>
         {hasLocalChanges ? (
-          <button
-            className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
-            onClick={handlePush}
-          >
-            {uncommittedFiles.length > 0 ? "Commit & Push" : `Push (${unpushedCount})`}
-          </button>
+          <Tooltip text={uncommittedFiles.length > 0 ? "Commit all changes and push to origin" : `Push ${unpushedCount} unpushed commit${unpushedCount !== 1 ? "s" : ""} to origin`} side="top" align="right">
+            <button
+              className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
+              onClick={handlePush}
+            >
+              {uncommittedFiles.length > 0 ? "Commit & Push" : `Push (${unpushedCount})`}
+            </button>
+          </Tooltip>
         ) : (
-          <button
-            className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
-            onClick={() => {
-              if (project.pr_create_skill && !useAgent) {
-                requestClaudeTab(project.pr_create_skill);
-              } else {
-                sendToAgent(
-                  `Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}`,
-                  HAIKU_MODEL
-                );
-              }
-            }}
-          >
-            Create PR
-          </button>
+          <Tooltip text={`Create a pull request targeting ${baseBranch}`} side="top" align="right">
+            <button
+              className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
+              onClick={() => {
+                if (project.pr_create_skill && !useAgent) {
+                  requestClaudeTab(project.pr_create_skill);
+                } else {
+                  sendToAgent(
+                    `Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}`,
+                    HAIKU_MODEL
+                  );
+                }
+              }}
+            >
+              Create PR
+            </button>
+          </Tooltip>
         )}
       </div>
 
@@ -404,17 +409,18 @@ function FileList({ files, loading, emptyMessage, worktreePath, onFileClick, onF
             <FilePathLabel file={f.file} />
           </button>
           {onRevert && (
-            <button
-              className="opacity-0 group-hover:opacity-100 shrink-0 px-1 py-0.5 text-[10px] text-text-tertiary hover:text-error transition-all"
-              title="Revert changes"
-              disabled={revertingFile === f.file}
-              onClick={(e) => {
-                e.stopPropagation();
-                onRevert(f.file, f.status);
-              }}
-            >
-              {revertingFile === f.file ? "..." : "\u21A9"}
-            </button>
+            <Tooltip text="Revert changes" side="top" align="right">
+              <button
+                className="opacity-0 group-hover:opacity-100 shrink-0 px-1 py-0.5 text-[10px] text-text-tertiary hover:text-error transition-all"
+                disabled={revertingFile === f.file}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRevert(f.file, f.status);
+                }}
+              >
+                {revertingFile === f.file ? "..." : "\u21A9"}
+              </button>
+            </Tooltip>
           )}
         </div>
       ))}
