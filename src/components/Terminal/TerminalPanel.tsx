@@ -6,6 +6,8 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { listen } from "@tauri-apps/api/event";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import * as commands from "../../lib/commands";
+import { XTERM_DARK, XTERM_LIGHT, resolveTheme } from "../../lib/theme";
+import { useAppStore } from "../../stores/appStore";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
@@ -20,6 +22,7 @@ interface Props {
 export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFamily, keepAlive = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termInstanceRef = useRef<Terminal | null>(null);
+  const themeMode = useAppStore((s) => s.appSettings?.theme ?? "dark");
   // Mirror props that are read inside the long-lived PTY-output listener
   // into refs. Keeps the main effect's dep array tight (so we don't tear
   // down the terminal when these change) while still letting changes take
@@ -57,29 +60,9 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     const container = containerRef.current;
     if (!container) return;
 
+    const xtermTheme = resolveTheme(themeMode) === "light" ? XTERM_LIGHT : XTERM_DARK;
     const term = new Terminal({
-      theme: {
-        background: "#0a0a0b",
-        foreground: "#e4e4e7",
-        cursor: "#e4e4e7",
-        selectionBackground: "#6366f150",
-        black: "#0a0a0b",
-        red: "#ef4444",
-        green: "#22c55e",
-        yellow: "#eab308",
-        blue: "#6366f1",
-        magenta: "#a855f7",
-        cyan: "#06b6d4",
-        white: "#e4e4e7",
-        brightBlack: "#71717a",
-        brightRed: "#f87171",
-        brightGreen: "#4ade80",
-        brightYellow: "#fde047",
-        brightBlue: "#818cf8",
-        brightMagenta: "#c084fc",
-        brightCyan: "#22d3ee",
-        brightWhite: "#fafafa",
-      },
+      theme: xtermTheme,
       fontFamily: fontFamily
         ? `'${fontFamily}', 'JetBrains Mono', monospace`
         : "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', 'DejaVu Sans Mono', monospace",
@@ -251,6 +234,13 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       term.dispose();
     };
   }, [sessionId, cwd, command, fontFamily, fontSize]);
+
+  // Live-update xterm theme without re-creating the terminal
+  useEffect(() => {
+    const term = termInstanceRef.current;
+    if (!term) return;
+    term.options.theme = resolveTheme(themeMode) === "light" ? XTERM_LIGHT : XTERM_DARK;
+  }, [themeMode]);
 
 
   return (

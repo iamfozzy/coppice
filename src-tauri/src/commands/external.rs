@@ -2,18 +2,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use crate::settings::SettingsState;
 
-fn open_path_in_editor(editor: &str, path: &Path) -> Result<(), String> {
+fn open_path_in_editor(editor: &str, paths: &[&Path]) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         if editor.is_empty() {
             Command::new("open")
                 .args(["-a", "Visual Studio Code"])
-                .arg(path)
+                .args(paths)
                 .spawn()
                 .map_err(|e| format!("Failed to open editor: {}", e))?;
         } else {
             Command::new(editor)
-                .arg(path)
+                .args(paths)
                 .spawn()
                 .map_err(|e| format!("Failed to open editor '{}': {}", editor, e))?;
         }
@@ -23,7 +23,7 @@ fn open_path_in_editor(editor: &str, path: &Path) -> Result<(), String> {
     {
         let cmd = if editor.is_empty() { "code" } else { editor };
         Command::new(cmd)
-            .arg(path)
+            .args(paths)
             .spawn()
             .map_err(|e| format!("Failed to open editor '{}': {}", cmd, e))?;
     }
@@ -31,14 +31,14 @@ fn open_path_in_editor(editor: &str, path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let ed = if editor.is_empty() { "code" } else { editor };
-        let direct = Command::new(ed).arg(path).spawn();
+        let direct = Command::new(ed).args(paths).spawn();
         if direct.is_err() {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             Command::new("cmd")
                 .arg("/c")
                 .arg(ed)
-                .arg(path)
+                .args(paths)
                 .creation_flags(CREATE_NO_WINDOW)
                 .spawn()
                 .map_err(|e| format!("Failed to open editor '{}': {}", ed, e))?;
@@ -55,7 +55,7 @@ pub async fn open_in_editor(state: tauri::State<'_, SettingsState>, path: String
         settings.editor_command.clone()
     };
 
-    open_path_in_editor(&editor, Path::new(&path))
+    open_path_in_editor(&editor, &[Path::new(&path)])
 }
 
 #[tauri::command]
@@ -80,7 +80,8 @@ pub async fn open_worktree_file_in_editor(
         full_path.push(segment);
     }
 
-    open_path_in_editor(&editor, &full_path)
+    let worktree_dir = Path::new(&worktree_path);
+    open_path_in_editor(&editor, &[worktree_dir, &full_path])
 }
 
 #[tauri::command]

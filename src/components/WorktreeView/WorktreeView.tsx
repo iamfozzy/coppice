@@ -127,7 +127,14 @@ export function WorktreeView() {
         />
 
         <div className="ml-auto flex items-center gap-1.5">
-          <ActionButton title="Open in editor" icon="vscode" onClick={() => commands.openInEditor(worktree.path)} />
+          <ActionButton title="Open in editor" icon="vscode" onClick={() => {
+            const activeTab = tabs.find((t) => t.id === activeTabId);
+            if (activeTab?.type === "diff" && activeTab.diffFile) {
+              commands.openWorktreeFileInEditor(worktree.path, activeTab.diffFile);
+            } else {
+              commands.openInEditor(worktree.path);
+            }
+          }} />
           <ActionButton title="Open terminal" icon="terminal" onClick={() => commands.openInTerminal(worktree.path)} />
           <ActionButton title="Open in Finder" icon="finder" onClick={() => commands.openInFinder(worktree.path)} tooltipAlign="right" />
         </div>
@@ -135,6 +142,21 @@ export function WorktreeView() {
 
       {/* Tab bar */}
       <div className="flex h-10 shrink-0 bg-bg-secondary">
+        <button
+          className="flex items-center justify-center w-10 h-full shrink-0 text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none"
+          onClick={() => newAgentTab(wtId)}
+          title="New Agent session (Ctrl+Shift+A)"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="5" width="10" height="8" rx="1.5" />
+            <path d="M5.5 2.5h5" />
+            <line x1="8" y1="2.5" x2="8" y2="5" />
+            <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
+            <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
+            <line x1="1" y1="8.5" x2="3" y2="8.5" />
+            <line x1="13" y1="8.5" x2="15" y2="8.5" />
+          </svg>
+        </button>
         <div className="flex flex-1 min-w-0 overflow-x-auto">
           {tabs.map((tab) => (
             <Tab
@@ -175,21 +197,6 @@ export function WorktreeView() {
               <line x1="13" y1="8.5" x2="15" y2="8.5" />
             </svg>
             CLI
-          </button>
-          <button
-            className="flex items-center justify-center w-10 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none"
-            onClick={() => newAgentTab(wtId)}
-            title="New Agent session (Ctrl+Shift+A)"
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="5" width="10" height="8" rx="1.5" />
-              <path d="M5.5 2.5h5" />
-              <line x1="8" y1="2.5" x2="8" y2="5" />
-              <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
-              <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
-              <line x1="1" y1="8.5" x2="3" y2="8.5" />
-              <line x1="13" y1="8.5" x2="15" y2="8.5" />
-            </svg>
           </button>
         </div>
       </div>

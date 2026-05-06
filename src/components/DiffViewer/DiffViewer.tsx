@@ -4,6 +4,11 @@ import type { editor as monacoEditor } from "monaco-editor";
 import { useAppStore } from "../../stores/appStore";
 import * as commands from "../../lib/commands";
 import type { PrComment } from "../../lib/commands";
+import {
+  resolveTheme,
+  MONACO_DARK_RULES, MONACO_DARK_COLORS,
+  MONACO_LIGHT_RULES, MONACO_LIGHT_COLORS,
+} from "../../lib/theme";
 
 interface Props {
   cwd: string;
@@ -142,6 +147,9 @@ function createCommentZoneNode(lineComments: PrComment[]): HTMLDivElement {
 
 export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
   const appSettings = useAppStore((s) => s.appSettings);
+  const themeMode = appSettings?.theme ?? "dark";
+  const resolved = resolveTheme(themeMode);
+  const monacoThemeName = resolved === "light" ? "coppice-light" : "coppice-dark";
   const [original, setOriginal] = useState<string>("");
   const [modified, setModified] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -335,7 +343,7 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
           original={original}
           modified={modified}
           language={language}
-          theme="coppice-dark"
+          theme={monacoThemeName}
           options={{
             readOnly: mode === "pr",
             renderSideBySide: true,
@@ -350,11 +358,12 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
             renderOverviewRuler: true,
             diffWordWrap: "off",
             originalEditable: false,
+            enableSplitViewResizing: true,
+            renderGutterMenu: false,
             glyphMargin: commentCount > 0,
           }}
           onMount={handleMount}
           beforeMount={(monaco) => {
-            // Disable all diagnostics so imports etc don't show errors
             monaco.languages.typescript?.typescriptDefaults?.setDiagnosticsOptions({
               noSemanticValidation: true,
               noSyntaxValidation: true,
@@ -363,54 +372,28 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
               noSemanticValidation: true,
               noSyntaxValidation: true,
             });
-            // Disable JSON validation too
             monaco.languages.json?.jsonDefaults?.setDiagnosticsOptions({
               validate: false,
             });
+            monaco.languages.css?.cssDefaults?.setOptions({ validate: false });
+            monaco.languages.css?.lessDefaults?.setOptions({ validate: false });
+            monaco.languages.css?.scssDefaults?.setOptions({ validate: false });
+            monaco.languages.html?.htmlDefaults?.setOptions?.({ validate: false } as any);
 
-            // Atom One Dark inspired theme
+            monaco.editor.setModelMarkers = () => {};
+
+            // Define both themes so switching is instant
             monaco.editor.defineTheme("coppice-dark", {
               base: "vs-dark",
               inherit: true,
-              rules: [
-                { token: "comment", foreground: "5c6370", fontStyle: "italic" },
-                { token: "keyword", foreground: "c678dd" },
-                { token: "keyword.control", foreground: "c678dd" },
-                { token: "storage.type", foreground: "c678dd" },
-                { token: "string", foreground: "98c379" },
-                { token: "string.escape", foreground: "56b6c2" },
-                { token: "number", foreground: "d19a66" },
-                { token: "constant", foreground: "d19a66" },
-                { token: "type", foreground: "e5c07b" },
-                { token: "type.identifier", foreground: "e5c07b" },
-                { token: "identifier", foreground: "e06c75" },
-                { token: "variable", foreground: "e06c75" },
-                { token: "variable.predefined", foreground: "e06c75" },
-                { token: "function", foreground: "61afef" },
-                { token: "tag", foreground: "e06c75" },
-                { token: "attribute.name", foreground: "d19a66" },
-                { token: "attribute.value", foreground: "98c379" },
-                { token: "delimiter", foreground: "abb2bf" },
-                { token: "delimiter.bracket", foreground: "abb2bf" },
-                { token: "operator", foreground: "56b6c2" },
-                { token: "regexp", foreground: "98c379" },
-              ],
-              colors: {
-                "editor.background": "#0a0a0b",
-                "editor.foreground": "#abb2bf",
-                "editorLineNumber.foreground": "#495162",
-                "editorLineNumber.activeForeground": "#abb2bf",
-                "editor.selectionBackground": "#3e4451",
-                "editor.lineHighlightBackground": "#1a1a1e",
-                "editorCursor.foreground": "#528bff",
-                "editorGutter.addedBackground": "#98c37980",
-                "editorGutter.modifiedBackground": "#e5c07b80",
-                "editorGutter.deletedBackground": "#e06c7580",
-                "diffEditor.insertedTextBackground": "#98c37930",
-                "diffEditor.removedTextBackground": "#e06c7530",
-                "diffEditor.insertedLineBackground": "#98c37920",
-                "diffEditor.removedLineBackground": "#e06c7520",
-              },
+              rules: MONACO_DARK_RULES,
+              colors: MONACO_DARK_COLORS,
+            });
+            monaco.editor.defineTheme("coppice-light", {
+              base: "vs",
+              inherit: true,
+              rules: MONACO_LIGHT_RULES,
+              colors: MONACO_LIGHT_COLORS,
             });
           }}
         />

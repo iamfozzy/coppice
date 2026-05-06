@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useAppStore } from "../../stores/appStore";
-import type { AppSettings, McpServerEntry } from "../../lib/types";
+import type { AppSettings, McpServerEntry, ThemeMode } from "../../lib/types";
 import { SUPPORTED_MODELS } from "../../lib/supportedModels";
 import { GitHubAuthSection } from "./GitHubAuthSection";
 
@@ -11,6 +11,7 @@ const defaultSettings: AppSettings = {
   terminal_font_size: 0,
   terminal_emulator: "",
   shell: "",
+  theme: "dark",
   window_decorations: true,
   notification_sound: true,
   notification_popup: true,
@@ -123,6 +124,30 @@ export function AppSettingsModal() {
             placeholder="$SHELL"
             hint="Override default shell for terminal sessions"
           />
+          <div>
+            <label className="block text-xs text-text-secondary mb-1">Theme</label>
+            <div className="flex gap-1">
+              {(["dark", "light", "system"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setForm({ ...form, theme: mode as ThemeMode })}
+                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                    form.theme === mode
+                      ? "bg-accent text-white"
+                      : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
+                  }`}
+                >
+                  {mode === "dark" ? "Dark" : mode === "light" ? "Light" : "System"}
+                </button>
+              ))}
+            </div>
+            <p className="mt-0.5 text-[10px] text-text-tertiary">
+              {form.theme === "system"
+                ? "Follows your OS appearance setting"
+                : `Always use ${form.theme} mode`}
+            </p>
+          </div>
           <Toggle
             label="Window decorations"
             checked={form.window_decorations}

@@ -11,6 +11,7 @@ import { TracePanel } from "./components/TraceView/TracePanel";
 import { TileView } from "./components/TileView/TileView";
 import { useAppStore, flushAllAgentTabCaches } from "./stores/appStore";
 import { setWindowFocused } from "./lib/windowFocus";
+import { applyTheme } from "./lib/theme";
 import * as commands from "./lib/commands";
 
 function App() {
@@ -86,6 +87,18 @@ function App() {
       getCurrentWindow().setDecorations(appSettings.window_decorations).catch(() => {});
     }
   }, [appSettings?.window_decorations]);
+
+  // Apply theme setting and listen for OS preference changes in "system" mode
+  useEffect(() => {
+    const mode = appSettings?.theme ?? "dark";
+    applyTheme(mode);
+    if (mode === "system") {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      const handler = () => applyTheme("system");
+      mq.addEventListener("change", handler);
+      return () => mq.removeEventListener("change", handler);
+    }
+  }, [appSettings?.theme]);
 
   // On macOS with overlay titlebar, push content below the traffic lights.
   // In fullscreen or when decorations are off, the inset is 0.

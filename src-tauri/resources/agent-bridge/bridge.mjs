@@ -299,6 +299,7 @@ let hasInitialized = false;
 let currentPermissionMode = "default";
 let titleGenerated = false;
 let currentCwd = process.cwd();
+let heartbeatTimer = null;
 
 // Track per-turn usage for accurate context window display.
 // The SDK's result.usage is the aggregate across ALL API calls in a query,
@@ -816,6 +817,10 @@ async function startSession(msg) {
     });
     activeQuery = result;
 
+    // Heartbeat — lets the frontend detect network stalls
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(() => emit({ type: "heartbeat" }), 10_000);
+
     for await (const message of result) {
       processMessage(message);
     }
@@ -826,6 +831,7 @@ async function startSession(msg) {
       emit({ type: "error", message: err.message || String(err) });
     }
   } finally {
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
     activeQuery = null;
     activeAbort = null;
     pendingInterrupt = false;
@@ -1080,6 +1086,7 @@ function processMessage(message) {
 // ── Cleanup ──
 
 function cleanup() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
   if (activeQuery) {
     try {
       activeQuery.close();

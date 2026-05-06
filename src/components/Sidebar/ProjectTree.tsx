@@ -50,6 +50,17 @@ export function ProjectTree() {
       return result;
     })
   );
+  // Derive tab count per worktree — use live tabs if loaded, otherwise
+  // fall back to the eagerly-fetched cached count from the DB.
+  const tabCountByWorktree = useAppStore(
+    useShallow((s) => {
+      const result: Record<string, number> = { ...s.cachedTabCountByWorktree };
+      for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
+        result[wtId] = tabs.length;
+      }
+      return result;
+    })
+  );
   const [creatingWorktreeForProject, setCreatingWorktreeForProject] =
     useState<string | null>(null);
   const [worktreeToDelete, setWorktreeToDelete] = useState<{
@@ -87,6 +98,7 @@ export function ProjectTree() {
           runnersByWorktree={runnersByWorktree}
           claudeStatusByWorktree={claudeStatusByWorktree}
           hasPinnedByWorktree={hasPinnedByWorktree}
+          tabCountByWorktree={tabCountByWorktree}
           onDeleteWorktree={(wt) => {
             setWorktreeToDelete({ worktree: wt, projectId: project.id });
           }}
@@ -127,6 +139,7 @@ function ProjectNode({
   runnersByWorktree,
   claudeStatusByWorktree,
   hasPinnedByWorktree,
+  tabCountByWorktree,
   onSelectWorktree,
   onDeleteWorktree,
   onRenameWorktree,
@@ -142,6 +155,7 @@ function ProjectNode({
   runnersByWorktree: Record<string, Record<string, import("../../stores/appStore").RunnerInfo>>;
   claudeStatusByWorktree: Record<string, ClaudeStatus | null>;
   hasPinnedByWorktree: Record<string, boolean>;
+  tabCountByWorktree: Record<string, number>;
   onSelectWorktree: (wt: Worktree) => void;
   onDeleteWorktree: (wt: Worktree) => void;
   onRenameWorktree: (wt: Worktree, name: string) => void;
@@ -320,6 +334,9 @@ function ProjectNode({
                     </span>
                   )}
                 </div>
+                {(tabCountByWorktree[wt.id] ?? 0) >= 1 && !isDeleting && (
+                  <TabCountIndicator count={tabCountByWorktree[wt.id]} />
+                )}
                 {hasPinnedByWorktree[wt.id] && !isDeleting && <PinnedIndicator />}
                 {claudeStatus && !isDeleting && <ClaudeIndicator status={claudeStatus} />}
                 {hasRunningRunner && !isDeleting && <RunningIndicator />}
@@ -343,6 +360,17 @@ function ProjectNode({
         );
       })()}
     </div>
+  );
+}
+
+function TabCountIndicator({ count }: { count: number }) {
+  return (
+    <span
+      className="shrink-0 text-[9px] leading-none text-text-tertiary"
+      title={`${count} tabs open`}
+    >
+      {count}
+    </span>
   );
 }
 

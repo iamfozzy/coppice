@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as commands from "../../lib/commands";
 import { useAppStore } from "../../stores/appStore";
@@ -33,6 +33,8 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const appendMessage = useAppStore((s) => s.appendAgentMessage);
   const updateStreaming = useAppStore((s) => s.updateAgentStreamingText);
   const clearStreaming = useAppStore((s) => s.clearAgentStreamingText);
+  const updateStreamingThinking = useAppStore((s) => s.updateAgentStreamingThinking);
+  const clearStreamingThinking = useAppStore((s) => s.clearAgentStreamingThinking);
   const setStatus = useAppStore((s) => s.setAgentStatus);
   const setSdkSessionId = useAppStore((s) => s.setAgentSdkSessionId);
   const setPendingPermission = useAppStore((s) => s.setAgentPendingPermission);
@@ -60,6 +62,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt).
   // If the tab was restored from cache (has existing messages), treat it as already renamed.
   const tabRenamedRef = useRef((session?.messages?.length ?? 0) > 0);
+
+  // Stall detection — track last event from bridge, warn if no events for 30s while busy
+  const lastEventTimeRef = useRef(Date.now());
+  const [stalled, setStalled] = useState(false);
 
   /** Rename this tab by looking up the owning worktree. */
   const renameThisTab = (label: string) => {
@@ -144,12 +150,26 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       } catch {
         return;
       }
+      lastEventTimeRef.current = Date.now();
+      if (stalled) setStalled(false);
       handleBridgeEvent(msg);
     });
 
     return () => {
       unlisten.then((fn) => fn());
     };
+  }, [sessionId]);
+
+  // Stall detection — check every 5s if the bridge has gone silent while busy
+  useEffect(() => {
+    const STALL_THRESHOLD_MS = 30_000;
+    const id = setInterval(() => {
+      const s = useAppStore.getState().agentSessionByTab[sessionId];
+      const isBusy = s?.status === "thinking" || s?.status === "tool_use";
+      const elapsed = Date.now() - lastEventTimeRef.current;
+      setStalled(isBusy && elapsed > STALL_THRESHOLD_MS);
+    }, 5_000);
+    return () => clearInterval(id);
   }, [sessionId]);
 
   // Eagerly load project slash commands from .claude/commands/ so they appear
@@ -275,6 +295,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         if (currentSession?.streamingText) {
           clearStreaming(sessionId);
         }
+        if (currentSession?.streamingThinkingText) {
+          clearStreamingThinking(sessionId);
+        }
 
         // Track uuid to deduplicate against result event
         const uuid = msg.uuid as string | undefined;
@@ -332,9 +355,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       }
 
       case "partial": {
-        const delta = msg.delta as { type: string; text?: string } | undefined;
+        const delta = msg.delta as { type: string; text?: string; thinking?: string } | undefined;
         if (delta?.type === "text" && delta.text) {
           updateStreaming(sessionId, delta.text);
+        } else if (delta?.type === "thinking" && delta.text) {
+          updateStreamingThinking(sessionId, delta.text);
         }
         setStatus(sessionId, "thinking");
         break;
@@ -412,6 +437,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       case "result": {
         // Flush streaming
         clearStreaming(sessionId);
+        clearStreamingThinking(sessionId);
         // Don't emit resultText as a message — it duplicates the last assistant message.
         const cost = msg.cost as { totalCostUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
         const lastTurn = msg.lastTurnCost as { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined;
@@ -592,6 +618,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         bt({ type: "compact", preTokens, trigger: trigger ?? undefined });
         break;
       }
+
+      case "heartbeat":
+        break;
     }
 
     // Flush all batched trace events in a single state update
@@ -734,7 +763,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       <MessageList
         messages={session.messages}
         streamingText={session.streamingText}
+        streamingThinkingText={session.streamingThinkingText}
         status={session.status}
+        stalled={stalled}
         onCancelQueued={(msgId) => cancelQueuedMessage(sessionId, msgId)}
       />
 
