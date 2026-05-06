@@ -20,6 +20,7 @@ const defaultSettings: AppSettings = {
   agent_default_effort: "high",
   agent_default_extended_context: false,
   agent_api_key: "",
+  agent_api_key_custom_only: false,
   agent_base_url: "",
   agent_base_url_custom_only: false,
   agent_small_fast_model: "",
