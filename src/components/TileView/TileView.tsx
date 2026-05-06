@@ -40,15 +40,6 @@ export function TileView() {
 
   const [creatingForProject, setCreatingForProject] = useState<string | null>(null);
 
-  // Ref to hold the unsubscribe function for the pending-pin subscription.
-  // Cleaned up on unmount or when a new creation starts.
-  const pendingPinUnsub = useRef<(() => void) | null>(null);
-
-  // Cleanup subscription on unmount
-  useEffect(() => {
-    return () => pendingPinUnsub.current?.();
-  }, []);
-
   // Add a pinned agent tab to an existing worktree
   const handleAddExisting = useCallback((worktreeId: string, worktreePath: string) => {
     addPinnedAgentTab(worktreeId, worktreePath);
@@ -64,34 +55,13 @@ export function TileView() {
   }, []);
 
   // Called by CreateWorktreeModal after a worktree is successfully created
-  // and selected. Reactively waits for the first agent tab to appear, then
-  // pins it — no timeouts, fully event-driven.
+  // and selected. Immediately creates a pinned agent tab for the tile view.
   const handleWorktreeCreated = useCallback((worktreeId: string) => {
-    // Clean up any previous subscription
-    pendingPinUnsub.current?.();
-
-    // Check if an agent tab already exists (synchronous fast-path)
     const state = useAppStore.getState();
-    const existing = (state.tabsByWorktree[worktreeId] ?? []).find(
-      (t) => t.type === "agent"
-    );
-    if (existing) {
-      state.toggleTabPin(worktreeId, existing.id);
-      pendingPinUnsub.current = null;
-      return;
+    const path = state.getWorktreePath(worktreeId);
+    if (path) {
+      state.addPinnedAgentTab(worktreeId, path);
     }
-
-    // Subscribe to store — pin the first agent tab as soon as it appears
-    const unsub = useAppStore.subscribe((s) => {
-      const tabs = s.tabsByWorktree[worktreeId] ?? [];
-      const firstAgent = tabs.find((t) => t.type === "agent");
-      if (firstAgent) {
-        unsub();
-        pendingPinUnsub.current = null;
-        useAppStore.getState().toggleTabPin(worktreeId, firstAgent.id);
-      }
-    });
-    pendingPinUnsub.current = unsub;
   }, []);
 
   const pinnedTabs = useMemo<PinnedTab[]>(() => {
