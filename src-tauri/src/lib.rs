@@ -94,6 +94,8 @@ pub fn run() {
             // Agent tab cache commands
             commands::agent_tab_cache::save_agent_tab_cache,
             commands::agent_tab_cache::list_agent_tab_cache,
+            commands::agent_tab_cache::list_pinned_worktree_ids,
+            commands::agent_tab_cache::count_agent_tab_caches,
             commands::agent_tab_cache::delete_agent_tab_cache,
             commands::agent_tab_cache::delete_agent_tab_cache_for_worktree,
             commands::agent_tab_cache::purge_old_agent_tab_cache,

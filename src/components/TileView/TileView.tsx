@@ -1,8 +1,11 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useAppStore, type TabInfo } from "../../stores/appStore";
 import { MessageList } from "../AgentView/MessageList";
+import { AgentInputBar } from "../AgentView/AgentInputBar";
 import { CreateWorktreeModal } from "../Sidebar/CreateWorktreeModal";
+import { SUPPORTED_MODELS, modelSupports1MContext } from "../../lib/supportedModels";
 import * as commands from "../../lib/commands";
+import type { ImageAttachment, EffortLevel, AgentPermissionMode, Project } from "../../lib/types";
 
 interface PinnedTab {
   tab: TabInfo;
@@ -130,7 +133,7 @@ export function TileView() {
           gridTemplateColumns: `repeat(${cols}, 1fr)`,
           gridAutoRows: "1fr",
           gap: "1px",
-          background: "var(--color-accent, #6366f1)",
+          background: "var(--color-border-primary, #333)",
         }}
       >
         {pinnedTabs.map((pinned) => (
@@ -176,7 +179,7 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
   }, [pickerOpen]);
 
   return (
-    <div className="flex items-center h-10 px-3 shrink-0 bg-bg-secondary border-b border-accent/30">
+    <div className="flex items-center h-10 px-3 shrink-0 bg-bg-secondary border-b border-border-primary">
       {/* Left: close toggle */}
       <button
         onClick={toggleTileView}
@@ -223,7 +226,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const { tab, worktreeName, projectName } = pinned;
   const session = useAppStore((s) => s.agentSessionByTab[tab.id]);
   const claudeStatus = useAppStore((s) => s.claudeStatusByTab[tab.id] ?? null);
-  const [isFocused, setIsFocused] = useState(false);
+  const appSettings = useAppStore((s) => s.appSettings);
   const [dotHovered, setDotHovered] = useState(false);
 
   const selectProject = useAppStore((s) => s.selectProject);
@@ -232,16 +235,23 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const clearClaudeIdleStatus = useAppStore((s) => s.clearClaudeIdleStatus);
   const toggleTileView = useAppStore((s) => s.toggleTileView);
   const toggleTabPin = useAppStore((s) => s.toggleTabPin);
+  const appendMessage = useAppStore((s) => s.appendAgentMessage);
+  const setStatus = useAppStore((s) => s.setAgentStatus);
+  const pushQueuedMessage = useAppStore((s) => s.pushAgentQueuedMessage);
+  const appendTrace = useAppStore((s) => s.appendTraceEvent);
+  const setModel = useAppStore((s) => s.setAgentModel);
+  const setEffort = useAppStore((s) => s.setAgentEffort);
+  const setPermissionMode = useAppStore((s) => s.setAgentPermissionMode);
+  const setConciseMode = useAppStore((s) => s.setAgentConciseMode);
+  const setChatMode = useAppStore((s) => s.setAgentChatMode);
+  const setExtendedContext = useAppStore((s) => s.setAgentExtendedContext);
+
+  const sessionId = tab.id;
+  const cwd = tab.cwd;
 
   const clearTileNotification = useCallback(() => {
     clearClaudeIdleStatus(tab.id);
   }, [clearClaudeIdleStatus, tab.id]);
-
-  useEffect(() => {
-    if (isFocused && claudeStatus === "idle") {
-      clearClaudeIdleStatus(tab.id);
-    }
-  }, [isFocused, claudeStatus, clearClaudeIdleStatus, tab.id]);
 
   const handleNavigate = useCallback(() => {
     const store = useAppStore.getState();
@@ -256,7 +266,100 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
     toggleTileView();
   }, [pinned.worktreeId, tab.id, selectProject, selectWorktree, setActiveTab, toggleTileView]);
 
+  const handleSend = useCallback((text: string, images?: ImageAttachment[]) => {
+    if (!session) return;
+    const msgId = nextTileMsgId();
+    const imageNote = images?.length ? ` [${images.length} image${images.length > 1 ? "s" : ""} attached]` : "";
+
+    if (session.status === "done" || session.status === "error" || session.status === "idle") {
+      appendMessage(sessionId, {
+        id: msgId,
+        type: "user",
+        content: text + imageNote,
+        timestamp: Date.now(),
+      });
+      appendTrace(sessionId, { type: "query_start", content: text, id: `tile-tr-${Date.now()}`, timestamp: Date.now() });
+      setStatus(sessionId, "thinking");
+
+      const opts: Parameters<typeof commands.agentStart>[3] = {
+        model: session.model || undefined,
+        effort: session.effort || undefined,
+        permissionMode: session.permissionMode || undefined,
+        conciseMode: session.conciseMode || undefined,
+        chatMode: session.chatMode || undefined,
+        extendedContext: session.extendedContext || undefined,
+        apiKey: appSettings?.agent_api_key || undefined,
+        priorCost: session.cost ?? undefined,
+        resume: session.sdkSessionId ?? undefined,
+      };
+
+      commands.agentStart(sessionId, cwd, text, opts, images).catch((err) => {
+        appendMessage(sessionId, {
+          id: nextTileMsgId(),
+          type: "error",
+          content: String(err),
+          timestamp: Date.now(),
+        });
+        setStatus(sessionId, "error");
+      });
+    } else if (session.status === "thinking" || session.status === "tool_use") {
+      pushQueuedMessage(sessionId, text, images);
+      appendMessage(sessionId, {
+        id: msgId,
+        type: "user",
+        content: text + imageNote,
+        isQueued: true,
+        timestamp: Date.now(),
+      });
+    } else if (session.status === "waiting_input") {
+      appendMessage(sessionId, {
+        id: msgId,
+        type: "user",
+        content: text + imageNote,
+        timestamp: Date.now(),
+      });
+      setStatus(sessionId, "thinking");
+      commands.agentSendInput(sessionId, text, images).catch((err) => {
+        appendMessage(sessionId, {
+          id: nextTileMsgId(),
+          type: "error",
+          content: String(err),
+          timestamp: Date.now(),
+        });
+      });
+    }
+  }, [session, sessionId, cwd, appendMessage, setStatus, pushQueuedMessage, appendTrace, appSettings]);
+
+  const handleModelChange = useCallback((model: string) => {
+    setModel(sessionId, model);
+    commands.agentSetModel(sessionId, model).catch(() => {});
+  }, [sessionId, setModel]);
+
+  const handleEffortChange = useCallback((effort: EffortLevel) => {
+    setEffort(sessionId, effort);
+  }, [sessionId, setEffort]);
+
+  const handlePermissionModeChange = useCallback((mode: AgentPermissionMode) => {
+    setPermissionMode(sessionId, mode);
+    commands.agentSetPermissionMode(sessionId, mode).catch(() => {});
+  }, [sessionId, setPermissionMode]);
+
+  const handleConciseModeChange = useCallback((enabled: boolean) => {
+    setConciseMode(sessionId, enabled);
+  }, [sessionId, setConciseMode]);
+
+  const handleChatModeChange = useCallback((enabled: boolean) => {
+    setChatMode(sessionId, enabled);
+  }, [sessionId, setChatMode]);
+
+  const handleExtendedContextChange = useCallback((enabled: boolean) => {
+    setExtendedContext(sessionId, enabled);
+  }, [sessionId, setExtendedContext]);
+
   if (!session) return <div className="bg-bg-primary" />;
+
+  const isInputDisabled = session.status === "waiting_permission";
+  const isAgentBusy = session.status === "thinking" || session.status === "tool_use";
 
   // Status dot — same fixed-width hover-to-pin pattern as the tab bar
   let dotInner: React.ReactNode;
@@ -280,6 +383,15 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
     </svg>
   );
 
+  const placeholder =
+    session.status === "done"
+      ? "Send a follow-up message..."
+      : session.status === "waiting_input"
+        ? "Answer Claude's question..."
+        : session.status === "idle"
+          ? "Send a message to start..."
+          : "Queue a message for when Claude finishes...";
+
   return (
     <div
       className="bg-bg-primary flex flex-col min-h-0 relative"
@@ -302,15 +414,18 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
           <span className="text-text-tertiary mx-1">&mdash;</span>
           {tab.label}
         </span>
-        <button
-          className="ml-auto text-text-tertiary hover:text-text-primary transition-colors"
-          onClick={handleNavigate}
-          title="Go to tab"
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M4 1h7v7M11 1L5 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        <div className="ml-auto flex items-center gap-1">
+          <TileRunnerButtons worktreeId={pinned.worktreeId} />
+          <button
+            className="text-text-tertiary hover:text-text-primary transition-colors"
+            onClick={handleNavigate}
+            title="Go to tab"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M4 1h7v7M11 1L5 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -318,19 +433,290 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
         <MessageList
           messages={session.messages}
           streamingText={session.streamingText}
+          streamingThinkingText={session.streamingThinkingText}
           status={session.status}
         />
       </div>
 
-      {/* Simplified input */}
-      <div className="shrink-0">
-        <TileInputBar
-          sessionId={tab.id}
-          cwd={tab.cwd}
-          onInteract={clearTileNotification}
-          onFocusChange={setIsFocused}
+      {/* Input with inline controls dropdown */}
+      <div className="shrink-0" onPointerDown={clearTileNotification}>
+        <AgentInputBar
+          sessionId={sessionId}
+          disabled={isInputDisabled}
+          isAgentBusy={isAgentBusy}
+          placeholder={placeholder}
+          slashCommands={session.slashCommands}
+          onSend={handleSend}
+          leftAddon={
+            <TileControlsDropdown
+              model={session.model}
+              effort={session.effort}
+              permissionMode={session.permissionMode}
+              conciseMode={session.conciseMode}
+              chatMode={session.chatMode}
+              extendedContext={session.extendedContext}
+              onModelChange={handleModelChange}
+              onEffortChange={handleEffortChange}
+              onPermissionModeChange={handlePermissionModeChange}
+              onConciseModeChange={handleConciseModeChange}
+              onChatModeChange={handleChatModeChange}
+              onExtendedContextChange={handleExtendedContextChange}
+            />
+          }
         />
       </div>
+    </div>
+  );
+}
+
+// ── Compact controls dropdown for tile input bars ──
+
+const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+const PERMISSION_MODES: { value: AgentPermissionMode; label: string }[] = [
+  { value: "default", label: "Default" },
+  { value: "acceptEdits", label: "Accept Edits" },
+  { value: "bypassPermissions", label: "Allow All" },
+  { value: "plan", label: "Plan Only" },
+];
+
+function TileControlsDropdown({
+  model,
+  effort,
+  permissionMode,
+  conciseMode,
+  chatMode,
+  extendedContext,
+  onModelChange,
+  onEffortChange,
+  onPermissionModeChange,
+  onConciseModeChange,
+  onChatModeChange,
+  onExtendedContextChange,
+}: {
+  model: string;
+  effort: EffortLevel;
+  permissionMode: AgentPermissionMode;
+  conciseMode: boolean;
+  chatMode: boolean;
+  extendedContext: boolean;
+  onModelChange: (m: string) => void;
+  onEffortChange: (e: EffortLevel) => void;
+  onPermissionModeChange: (m: AgentPermissionMode) => void;
+  onConciseModeChange: (v: boolean) => void;
+  onChatModeChange: (v: boolean) => void;
+  onExtendedContextChange: (v: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const supports1M = modelSupports1MContext(model);
+
+  return (
+    <div className="relative self-stretch" ref={ref}>
+      <button
+        type="button"
+        className={`h-full shrink-0 flex items-center justify-center w-8 rounded-lg border transition-colors ${
+          open
+            ? "border-accent bg-accent/10 text-accent"
+            : "border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary"
+        }`}
+        onClick={() => setOpen((v) => !v)}
+        title="Agent settings"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="8" cy="8" r="2.5" />
+          <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full mb-1 left-0 min-w-[200px] bg-bg-secondary border border-border-primary rounded-lg shadow-lg overflow-hidden z-50">
+          {/* Model */}
+          <div className="px-3 py-2 border-b border-border-primary">
+            <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Model</div>
+            <div className="flex flex-wrap gap-1">
+              {SUPPORTED_MODELS.map((m) => (
+                <button
+                  key={m.value}
+                  className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                    m.value === model
+                      ? "bg-accent/15 text-accent"
+                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  }`}
+                  onClick={() => onModelChange(m.value)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Effort */}
+          <div className="px-3 py-2 border-b border-border-primary">
+            <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Effort</div>
+            <div className="flex rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
+              {EFFORT_LEVELS.map((level) => (
+                <button
+                  key={level}
+                  className={`flex-1 px-1.5 py-0.5 text-[10px] capitalize transition-colors ${
+                    effort === level
+                      ? "bg-accent text-white"
+                      : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                  }`}
+                  onClick={() => onEffortChange(level)}
+                >
+                  {level}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Permission mode */}
+          <div className="px-3 py-2 border-b border-border-primary">
+            <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Permissions</div>
+            <div className="flex flex-wrap gap-1">
+              {PERMISSION_MODES.map((m) => (
+                <button
+                  key={m.value}
+                  className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                    m.value === permissionMode
+                      ? "bg-accent/15 text-accent"
+                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  }`}
+                  onClick={() => onPermissionModeChange(m.value)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Toggles */}
+          <div className="px-3 py-2 flex flex-wrap gap-1.5">
+            {supports1M && (
+              <button
+                className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                  extendedContext
+                    ? "bg-accent/15 text-accent"
+                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                }`}
+                onClick={() => onExtendedContextChange(!extendedContext)}
+              >
+                1M
+              </button>
+            )}
+            <button
+              className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                conciseMode
+                  ? "bg-accent/15 text-accent"
+                  : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+              }`}
+              onClick={() => onConciseModeChange(!conciseMode)}
+            >
+              Concise
+            </button>
+            <button
+              className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                chatMode
+                  ? "bg-accent/15 text-accent"
+                  : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+              }`}
+              onClick={() => onChatModeChange(!chatMode)}
+            >
+              Chat
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Runner buttons for tile headers ──
+
+function getAvailableRunners(project: Project) {
+  return [
+    ...(project.setup_scripts.length > 0
+      ? [{ key: "setup", label: "Setup", command: project.setup_scripts.join(" && ") }]
+      : []),
+    ...(project.build_command
+      ? [{ key: "build", label: "Build", command: project.build_command }]
+      : []),
+    ...(project.run_command
+      ? [{ key: "run", label: "Run", command: project.run_command }]
+      : []),
+  ];
+}
+
+function TileRunnerButtons({ worktreeId }: { worktreeId: string }) {
+  const projects = useAppStore((s) => s.projects);
+  const worktreesByProject = useAppStore((s) => s.worktreesByProject);
+  const runnersByWorktree = useAppStore((s) => s.runnersByWorktree);
+  const openOrRestartRunner = useAppStore((s) => s.openOrRestartRunner);
+  const setRunnerStatus = useAppStore((s) => s.setRunnerStatus);
+
+  const { project, worktreePath } = useMemo(() => {
+    for (const p of projects) {
+      const wts = worktreesByProject[p.id] ?? [];
+      const wt = wts.find((w) => w.id === worktreeId);
+      if (wt) return { project: p, worktreePath: wt.path };
+    }
+    return { project: null, worktreePath: "" };
+  }, [projects, worktreesByProject, worktreeId]);
+
+  const runners = runnersByWorktree[worktreeId] ?? {};
+  const available = project ? getAvailableRunners(project) : [];
+
+  if (available.length === 0) return null;
+
+  return (
+    <div className="flex items-center gap-1">
+      {available.map(({ key, label, command }) => {
+        const runner = runners[key];
+        const status = runner?.status ?? "idle";
+
+        if (status === "running") {
+          return (
+            <button
+              key={key}
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (runner) {
+                  await commands.terminalKill(runner.id).catch(() => {});
+                  setRunnerStatus(worktreeId, key, "stopped");
+                }
+              }}
+              className="px-1.5 py-0.5 text-[10px] rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
+              title={`Stop ${label}`}
+            >
+              Stop
+            </button>
+          );
+        }
+
+        return (
+          <button
+            key={key}
+            onClick={(e) => {
+              e.stopPropagation();
+              openOrRestartRunner(worktreeId, key, command, worktreePath);
+            }}
+            className="px-1.5 py-0.5 text-[10px] rounded text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            title={`${label}`}
+          >
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -480,148 +866,3 @@ function AddTileCell({ onAddExisting, onCreateNew }: TilePickerProps) {
   );
 }
 
-// ── Tile input bar (simplified, no model/effort controls) ──
-
-function TileInputBar({
-  sessionId,
-  cwd,
-  onInteract,
-  onFocusChange,
-}: {
-  sessionId: string;
-  cwd: string;
-  onInteract: () => void;
-  onFocusChange: (focused: boolean) => void;
-}) {
-  const [text, setText] = useState("");
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const session = useAppStore((s) => s.agentSessionByTab[sessionId]);
-  const appendMessage = useAppStore((s) => s.appendAgentMessage);
-  const setStatus = useAppStore((s) => s.setAgentStatus);
-  const pushQueuedMessage = useAppStore((s) => s.pushAgentQueuedMessage);
-  const appendTrace = useAppStore((s) => s.appendTraceEvent);
-  const appSettings = useAppStore((s) => s.appSettings);
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 80) + "px";
-  }, [text]);
-
-  const handleSend = useCallback(() => {
-    const trimmed = text.trim();
-    if (!trimmed || !session) return;
-
-    const msgId = nextTileMsgId();
-
-    if (session.status === "done" || session.status === "error" || session.status === "idle") {
-      appendMessage(sessionId, {
-        id: msgId,
-        type: "user",
-        content: trimmed,
-        timestamp: Date.now(),
-      });
-      appendTrace(sessionId, { type: "query_start", content: trimmed, id: `tile-tr-${Date.now()}`, timestamp: Date.now() });
-      setStatus(sessionId, "thinking");
-
-      const opts: Parameters<typeof commands.agentStart>[3] = {
-        model: session.model || undefined,
-        effort: session.effort || undefined,
-        permissionMode: session.permissionMode || undefined,
-        conciseMode: session.conciseMode || undefined,
-        chatMode: session.chatMode || undefined,
-        extendedContext: session.extendedContext || undefined,
-        apiKey: appSettings?.agent_api_key || undefined,
-        priorCost: session.cost ?? undefined,
-        resume: session.sdkSessionId ?? undefined,
-      };
-
-      commands.agentStart(sessionId, cwd, trimmed, opts).catch((err) => {
-        appendMessage(sessionId, {
-          id: nextTileMsgId(),
-          type: "error",
-          content: String(err),
-          timestamp: Date.now(),
-        });
-        setStatus(sessionId, "error");
-      });
-    } else if (session.status === "thinking" || session.status === "tool_use") {
-      pushQueuedMessage(sessionId, trimmed);
-      appendMessage(sessionId, {
-        id: msgId,
-        type: "user",
-        content: trimmed,
-        isQueued: true,
-        timestamp: Date.now(),
-      });
-    } else if (session.status === "waiting_input") {
-      appendMessage(sessionId, {
-        id: msgId,
-        type: "user",
-        content: trimmed,
-        timestamp: Date.now(),
-      });
-      setStatus(sessionId, "thinking");
-      commands.agentSendInput(sessionId, trimmed).catch((err) => {
-        appendMessage(sessionId, {
-          id: nextTileMsgId(),
-          type: "error",
-          content: String(err),
-          timestamp: Date.now(),
-        });
-      });
-    }
-
-    setText("");
-  }, [text, session, sessionId, cwd, appendMessage, setStatus, pushQueuedMessage, appendTrace, appSettings]);
-
-  const isDisabled = session?.status === "waiting_permission";
-  const isBusy = session?.status === "thinking" || session?.status === "tool_use";
-
-  return (
-    <div className="flex items-end gap-1.5 px-2 py-1.5 bg-bg-secondary border-t border-border-primary">
-      <textarea
-        ref={textareaRef}
-        className="flex-1 resize-none overflow-hidden bg-transparent border border-border-primary rounded px-2 py-1 text-[12px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 font-mono leading-relaxed"
-        rows={1}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onPointerDown={onInteract}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            handleSend();
-          }
-        }}
-        onFocus={() => {
-          onInteract();
-          onFocusChange(true);
-        }}
-        onBlur={() => onFocusChange(false)}
-        placeholder={isBusy ? "Queue a message..." : "Send a message..."}
-        disabled={isDisabled}
-        spellCheck={false}
-      />
-      <button
-        className={`shrink-0 w-7 h-7 flex items-center justify-center rounded text-white transition-colors disabled:opacity-30 ${
-          isBusy ? "bg-amber-500/80 hover:bg-amber-500" : "bg-accent hover:bg-accent-hover"
-        }`}
-        onClick={handleSend}
-        disabled={isDisabled || !text.trim()}
-        title={isBusy ? "Queue" : "Send"}
-      >
-        {isBusy ? (
-          <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-            <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.2" />
-            <path d="M6 3v3.5l2 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-          </svg>
-        ) : (
-          <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-            <path d="M1 7h12M8 2l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        )}
-      </button>
-    </div>
-  );
-}

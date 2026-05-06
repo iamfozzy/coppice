@@ -19,6 +19,24 @@ pub fn list_agent_tab_cache(
 }
 
 #[tauri::command]
+pub fn list_pinned_worktree_ids(
+    db: State<'_, Database>,
+) -> Result<Vec<String>, String> {
+    db.list_pinned_worktree_ids().map_err(|e| e.to_string())
+}
+
+use std::collections::HashMap;
+
+#[tauri::command]
+pub fn count_agent_tab_caches(
+    db: State<'_, Database>,
+) -> Result<HashMap<String, usize>, String> {
+    db.count_agent_tab_caches()
+        .map(|v| v.into_iter().collect())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn delete_agent_tab_cache(
     db: State<'_, Database>,
     tab_id: String,

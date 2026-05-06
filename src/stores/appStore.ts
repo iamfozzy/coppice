@@ -109,6 +109,8 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
       created_at: new Date().toISOString(),
       last_turn_cost_json: session.lastTurnCost ? JSON.stringify(session.lastTurnCost) : null,
       sdk_context_window: session.sdkContextWindow,
+      pinned: tabInfo.pinned ?? false,
+      pinned_at: tabInfo.pinnedAt ?? null,
     };
     commands.saveAgentTabCache(cache).catch(() => {});
   };
@@ -224,6 +226,8 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         created_at: new Date().toISOString(),
         last_turn_cost_json: session.lastTurnCost ? JSON.stringify(session.lastTurnCost) : null,
         sdk_context_window: session.sdkContextWindow,
+        pinned: tab.pinned ?? false,
+        pinned_at: tab.pinnedAt ?? null,
       };
       saves.push(commands.saveAgentTabCache(cache));
 
@@ -311,6 +315,9 @@ interface AppState {
   // Trace panel mode per agent tab
   traceModeByTab: Record<string, TraceMode>;
 
+  // Cached tab counts from DB (for worktrees not yet loaded into memory)
+  cachedTabCountByWorktree: Record<string, number>;
+
   // Tile view
   showTileView: boolean;
 
@@ -386,6 +393,8 @@ interface AppState {
   appendAgentMessage: (tabId: string, message: AgentMessage) => void;
   updateAgentStreamingText: (tabId: string, text: string) => void;
   clearAgentStreamingText: (tabId: string) => void;
+  updateAgentStreamingThinking: (tabId: string, text: string) => void;
+  clearAgentStreamingThinking: (tabId: string) => void;
   setAgentStatus: (tabId: string, status: AgentStatus) => void;
   setAgentModel: (tabId: string, model: string) => void;
   setAgentEffort: (tabId: string, effort: EffortLevel) => void;
@@ -437,7 +446,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedProjectId: null,
   selectedWorktreeId: null,
   editingProject: null,
-  sidebarWidth: 310,
+  sidebarWidth: 450,
   collapsedProjectIds: new Set(JSON.parse(localStorage.getItem("coppice:collapsedProjects") || "[]") as string[]),
   pendingClaudeCommand: null,
   pendingAgentPrompt: null,
@@ -450,6 +459,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   agentSessionByTab: {},
   traceEventsByTab: {},
   traceModeByTab: {},
+  cachedTabCountByWorktree: {},
   showTileView: false,
   pendingDroppedImages: {},
   prCommentsByProject: {},
@@ -497,6 +507,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     for (const project of projects) {
       get().loadWorktrees(project.id);
     }
+    // Eagerly load cached tab counts so the sidebar shows them before
+    // the user clicks into each worktree.
+    commands.countAgentTabCaches()
+      .then((counts) => set({ cachedTabCountByWorktree: counts }))
+      .catch(() => {});
+    // Eagerly restore tabs for worktrees that have pinned tabs so they
+    // appear in tile view immediately without clicking each worktree.
+    commands.listPinnedWorktreeIds()
+      .then((ids) => { for (const id of ids) get().restoreAgentTabs(id); })
+      .catch(() => {});
   },
 
   loadWorktrees: async (projectId) => {
@@ -521,8 +541,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (nextClaudeStatus) {
         set({ claudeStatusByTab: nextClaudeStatus });
       }
-      // Restore cached agent tabs or auto-create a new one when switching
-      // to a worktree with no tabs.
+      // Restore cached agent tabs (but don't auto-create new ones).
       const tabs = s.tabsByWorktree[id];
       if (!tabs || tabs.length === 0) {
         get().restoreAgentTabs(id);
@@ -641,6 +660,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    // Persist pinned state to DB for agent tabs
+    persistAgentTabDebounced(tabId, true);
   },
 
 
@@ -748,13 +769,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const cachedTabs = await commands.listAgentTabCache(worktreeId);
       if (cachedTabs.length === 0) {
-        // No cached tabs — fall back to auto-create if agent mode is default
-        const s = get();
-        if (s.appSettings?.default_claude_mode === "agent") {
-          if (!s.tabsByWorktree[worktreeId]?.length) {
-            get().newAgentTab(worktreeId);
-          }
-        }
         return;
       }
 
@@ -771,6 +785,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           type: "agent",
           label: cached.label,
           cwd: cached.cwd,
+          pinned: cached.pinned || false,
+          pinnedAt: cached.pinned_at ?? undefined,
           // command is intentionally omitted — restored tabs should NOT auto-start
         };
         restoredTabs.push(tab);
@@ -800,6 +816,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           pendingPermission: null,
           pendingQuestion: null,
           streamingText: "",
+          streamingThinkingText: "",
           slashCommands: DEFAULT_SLASH_COMMANDS,
           queuedMessages: [],
         };
@@ -832,13 +849,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       }));
     } catch (err) {
       console.error("Failed to restore agent tabs:", err);
-      // Fall back to auto-create
-      const s = get();
-      if (s.appSettings?.default_claude_mode === "agent") {
-        if (!s.tabsByWorktree[worktreeId]?.length) {
-          get().newAgentTab(worktreeId);
-        }
-      }
     }
   },
 
@@ -1039,6 +1049,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingPermission: null,
       pendingQuestion: null,
       streamingText: "",
+      streamingThinkingText: "",
       slashCommands: DEFAULT_SLASH_COMMANDS,
       queuedMessages: [],
     };
@@ -1135,6 +1146,32 @@ export const useAppStore = create<AppState>((set, get) => ({
         agentSessionByTab: {
           ...s.agentSessionByTab,
           [tabId]: { ...session, streamingText: "" },
+        },
+      };
+    });
+  },
+
+  updateAgentStreamingThinking: (tabId, text) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, streamingThinkingText: session.streamingThinkingText + text },
+        },
+      };
+    });
+  },
+
+  clearAgentStreamingThinking: (tabId) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, streamingThinkingText: "" },
         },
       };
     });

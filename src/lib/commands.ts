@@ -436,6 +436,8 @@ export interface AgentTabCache {
   created_at: string;
   last_turn_cost_json: string | null;
   sdk_context_window: number | null;
+  pinned: boolean;
+  pinned_at: number | null;
 }
 
 // Agent tab cache commands
@@ -445,6 +447,14 @@ export async function saveAgentTabCache(tab: AgentTabCache): Promise<void> {
 
 export async function listAgentTabCache(worktreeId: string): Promise<AgentTabCache[]> {
   return invoke("list_agent_tab_cache", { worktreeId });
+}
+
+export async function listPinnedWorktreeIds(): Promise<string[]> {
+  return invoke("list_pinned_worktree_ids");
+}
+
+export async function countAgentTabCaches(): Promise<Record<string, number>> {
+  return invoke("count_agent_tab_caches");
 }
 
 export async function deleteAgentTabCache(tabId: string): Promise<void> {

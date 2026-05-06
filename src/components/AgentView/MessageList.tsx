@@ -7,7 +7,9 @@ import { AnimatedRobotIcon, AnimatedToolIcon, useRotatingThinkingPhrase } from "
 interface Props {
   messages: AgentMessage[];
   streamingText: string;
+  streamingThinkingText: string;
   status: AgentStatus;
+  stalled?: boolean;
   onCancelQueued?: (messageId: string) => void;
 }
 
@@ -67,7 +69,7 @@ function mergeMessages(messages: AgentMessage[]): { items: RenderItem[]; queued:
   return { items, queued };
 }
 
-export function MessageList({ messages, streamingText, status, onCancelQueued }: Props) {
+export function MessageList({ messages, streamingText, streamingThinkingText, status, stalled, onCancelQueued }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
 
@@ -82,7 +84,7 @@ export function MessageList({ messages, streamingText, status, onCancelQueued }:
     if (isAtBottomRef.current && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [messages.length, streamingText]);
+  }, [messages.length, streamingText, streamingThinkingText]);
 
   const { items, queued } = useMemo(() => mergeMessages(messages), [messages]);
 
@@ -118,6 +120,22 @@ export function MessageList({ messages, streamingText, status, onCancelQueued }:
         return <MessageBubble key={item.msg.id} message={item.msg} />;
       })}
 
+      {/* Live streaming thinking — shown while thinking deltas arrive */}
+      {streamingThinkingText && (
+        <div className="pr-8">
+          <div className="mb-2">
+            <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary mb-1.5">
+              <AnimatedRobotIcon size={12} className="text-accent" />
+              <span>Thinking...</span>
+            </div>
+            <div className="pl-3 border-l-2 border-accent/30 text-xs text-text-tertiary/80 whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
+              {streamingThinkingText}
+              <span className="inline-block w-1 h-3 bg-accent/30 animate-pulse rounded-sm ml-0.5 -mb-0.5" />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Live streaming text — render with markdown */}
       {streamingText && (
         <div className="pr-8">
@@ -127,8 +145,8 @@ export function MessageList({ messages, streamingText, status, onCancelQueued }:
       )}
 
       {/* Status indicator — shown when agent is active but no streaming text yet */}
-      {!streamingText && (status === "thinking" || status === "tool_use" || status === "waiting_permission" || status === "waiting_input") && (
-        <StatusIndicator status={status} />
+      {!streamingText && !streamingThinkingText && (status === "thinking" || status === "tool_use" || status === "waiting_permission" || status === "waiting_input") && (
+        <StatusIndicator status={status} stalled={stalled} />
       )}
 
       {/* Queued messages — always at bottom until sent */}
@@ -142,7 +160,7 @@ export function MessageList({ messages, streamingText, status, onCancelQueued }:
 // ---------------------------------------------------------------------------
 // Inline status indicator with animated icons and rotating phrases
 // ---------------------------------------------------------------------------
-function StatusIndicator({ status }: { status: "thinking" | "tool_use" | "waiting_permission" | "waiting_input" }) {
+function StatusIndicator({ status, stalled }: { status: "thinking" | "tool_use" | "waiting_permission" | "waiting_input"; stalled?: boolean }) {
   const thinkingPhrase = useRotatingThinkingPhrase();
 
   if (status === "waiting_permission") {
@@ -164,15 +182,25 @@ function StatusIndicator({ status }: { status: "thinking" | "tool_use" | "waitin
   }
 
   return (
-    <div className="flex items-center gap-2 py-1">
-      {status === "tool_use" ? (
-        <AnimatedToolIcon size={14} className="text-accent" />
-      ) : (
-        <AnimatedRobotIcon size={14} className="text-accent" />
+    <div className="flex flex-col gap-1 py-1">
+      <div className="flex items-center gap-2">
+        {status === "tool_use" ? (
+          <AnimatedToolIcon size={14} className="text-accent" />
+        ) : (
+          <AnimatedRobotIcon size={14} className="text-accent" />
+        )}
+        <span className="text-[11px] text-text-tertiary">
+          {status === "tool_use" ? "Running tool..." : thinkingPhrase}
+        </span>
+      </div>
+      {stalled && (
+        <div className="flex items-center gap-2 ml-0.5">
+          <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
+          <span className="text-[11px] text-warning">
+            No response from API — check your network connection
+          </span>
+        </div>
       )}
-      <span className="text-[11px] text-text-tertiary">
-        {status === "tool_use" ? "Running tool..." : thinkingPhrase}
-      </span>
     </div>
   );
 }

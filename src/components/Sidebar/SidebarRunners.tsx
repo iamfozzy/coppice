@@ -91,12 +91,14 @@ export const SidebarRunners = memo(function SidebarRunners() {
                 <StatusDot status={status} />
               </button>
               <div className="flex items-center gap-1">
-                <button
-                  onClick={() => openOrRestartRunner(wtId, key, command, worktree!.path)}
-                  className="px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors"
-                >
-                  {label}
-                </button>
+                {status !== "running" && (
+                  <button
+                    onClick={() => openOrRestartRunner(wtId, key, command, worktree!.path)}
+                    className="px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors"
+                  >
+                    {label}
+                  </button>
+                )}
                 {runner && status === "running" && (
                   <button
                     onClick={async () => {

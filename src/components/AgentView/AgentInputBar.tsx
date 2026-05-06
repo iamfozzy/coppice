@@ -73,6 +73,7 @@ interface Props {
   autoFocus?: boolean;
   placeholder?: string;
   slashCommands?: SlashCommand[];
+  leftAddon?: React.ReactNode;
   onSend: (text: string, images?: ImageAttachment[]) => void;
 }
 
@@ -86,7 +87,7 @@ function parseLeadingSlash(text: string): string | null {
   return rest;
 }
 
-export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, placeholder, slashCommands, onSend }: Props) {
+export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, placeholder, slashCommands, leftAddon, onSend }: Props) {
   const [text, setText] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [images, setImages] = useState<ImageAttachment[]>([]);
@@ -364,6 +365,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
             e.target.value = "";
           }}
         />
+        {leftAddon}
         {/* Attach image button */}
         <button
           type="button"

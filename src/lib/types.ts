@@ -49,6 +49,8 @@ export interface TerminalSession {
 
 export type ProjectFormData = Omit<Project, "id" | "created_at">;
 
+export type ThemeMode = "dark" | "light" | "system";
+
 export interface AppSettings {
   editor_command: string;
   claude_command: string;
@@ -56,6 +58,7 @@ export interface AppSettings {
   terminal_font_size: number;
   terminal_emulator: string;
   shell: string;
+  theme: ThemeMode;
   window_decorations: boolean;
   notification_sound: boolean;
   notification_popup: boolean;
@@ -215,6 +218,7 @@ export interface AgentSessionState {
   pendingPermission: AgentPendingPermission | null;
   pendingQuestion: AgentPendingQuestion | null;
   streamingText: string;
+  streamingThinkingText: string;
   conciseMode: boolean;
   chatMode: boolean;
   slashCommands: SlashCommand[];

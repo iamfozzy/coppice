@@ -69,4 +69,6 @@ pub struct AgentTabCache {
     pub created_at: String,
     pub last_turn_cost_json: Option<String>,
     pub sdk_context_window: Option<i64>,
+    pub pinned: bool,
+    pub pinned_at: Option<i64>,
 }
