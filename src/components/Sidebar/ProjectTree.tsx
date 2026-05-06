@@ -14,7 +14,6 @@ export function ProjectTree() {
   const openProjectSettings = useAppStore((s) => s.openProjectSettings);
   const deleteWorktree = useAppStore((s) => s.deleteWorktree);
   const deletingWorktreeIds = useAppStore((s) => s.deletingWorktreeIds);
-  const renameWorktree = useAppStore((s) => s.renameWorktree);
   const runnersByWorktree = useAppStore((s) => s.runnersByWorktree);
   const collapsedProjectIds = useAppStore((s) => s.collapsedProjectIds);
   const toggleProjectCollapsed = useAppStore((s) => s.toggleProjectCollapsed);
@@ -102,9 +101,6 @@ export function ProjectTree() {
           onDeleteWorktree={(wt) => {
             setWorktreeToDelete({ worktree: wt, projectId: project.id });
           }}
-          onRenameWorktree={(wt, name) => {
-            renameWorktree(wt.id, project.id, name);
-          }}
           onEditProject={() => openProjectSettings(project.id)}
           onAddWorktree={() => setCreatingWorktreeForProject(project.id)}
         />
@@ -142,7 +138,6 @@ function ProjectNode({
   tabCountByWorktree,
   onSelectWorktree,
   onDeleteWorktree,
-  onRenameWorktree,
   onEditProject,
   onAddWorktree,
 }: {
@@ -158,13 +153,10 @@ function ProjectNode({
   tabCountByWorktree: Record<string, number>;
   onSelectWorktree: (wt: Worktree) => void;
   onDeleteWorktree: (wt: Worktree) => void;
-  onRenameWorktree: (wt: Worktree, name: string) => void;
   onEditProject: () => void;
   onAddWorktree: () => void;
 }) {
   const expanded = !collapsed;
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -291,40 +283,10 @@ function ProjectNode({
                       : "text-text-secondary hover:text-text-primary hover:bg-bg-hover cursor-pointer"
                 }`}
                 onClick={() => !isDeleting && onSelectWorktree(wt)}
-                onDoubleClick={(e) => {
-                  if (isDeleting) return;
-                  e.stopPropagation();
-                  setRenamingId(wt.id);
-                  setRenameValue(wt.name);
-                }}
               >
                 <div className="flex-1 min-w-0">
                   {isDeleting ? (
                     <span className="truncate italic text-text-tertiary">Deleting...</span>
-                  ) : renamingId === wt.id ? (
-                    <input
-                      className="min-w-0 px-1 py-0 text-xs bg-bg-tertiary border border-accent rounded text-text-primary focus:outline-none font-mono"
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && renameValue.trim()) {
-                          onRenameWorktree(wt, renameValue.trim());
-                          setRenamingId(null);
-                        } else if (e.key === "Escape") {
-                          setRenamingId(null);
-                        }
-                      }}
-                      onBlur={() => {
-                        if (renameValue.trim() && renameValue.trim() !== wt.name) {
-                          onRenameWorktree(wt, renameValue.trim());
-                        }
-                        setRenamingId(null);
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      autoFocus
-                      spellCheck={false}
-                      autoComplete="off"
-                    />
                   ) : (
                     <span className="truncate font-mono">
                       {wt.branch}

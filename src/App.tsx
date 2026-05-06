@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { onAction } from "@tauri-apps/plugin-notification";
+import { listen } from "@tauri-apps/api/event";
+import { onAction, sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { WorktreeView } from "./components/WorktreeView/WorktreeView";
 import { ProjectSettingsModal } from "./components/ProjectSettings/ProjectSettingsModal";
@@ -10,7 +11,9 @@ import { AgentPanel } from "./components/AgentView/AgentPanel";
 import { TracePanel } from "./components/TraceView/TracePanel";
 import { TileView } from "./components/TileView/TileView";
 import { useAppStore, flushAllAgentTabCaches } from "./stores/appStore";
+import { SCRATCHPAD_WORKTREE_ID } from "./lib/types";
 import { setWindowFocused } from "./lib/windowFocus";
+import { playNotificationSound } from "./lib/sounds";
 import { applyTheme } from "./lib/theme";
 import * as commands from "./lib/commands";
 
@@ -235,6 +238,121 @@ function App() {
     const handler = () => { flushAllAgentTabCaches().catch(() => {}); };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
+  }, []);
+
+  // Refresh project/worktree data when the Rust backend signals a change
+  // (e.g. a Coppice tool created a new worktree).
+  useEffect(() => {
+    const unlisten = listen<string>("worktrees-changed", () => {
+      useAppStore.getState().loadProjects();
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  // ── Coppice IDE tool actions ──
+  // The Rust backend emits "coppice-action" events when Claude calls a Coppice
+  // tool that requires frontend/UI work (spawning tabs, showing notifications).
+  useEffect(() => {
+    const unlisten = listen<string>("coppice-action", (event) => {
+      let action: Record<string, unknown>;
+      try {
+        action = JSON.parse(event.payload as string);
+      } catch {
+        return;
+      }
+
+      const store = useAppStore.getState();
+
+      switch (action.action) {
+        case "spawn_terminal": {
+          const cwd = (action.cwd as string) || "";
+          const command = (action.command as string) || undefined;
+          // Rust resolves the worktree ID from the cwd; fall back to selected
+          const wtId = (action.worktreeId as string) || store.selectedWorktreeId;
+          if (wtId) {
+            store.addTab(wtId, "terminal", cwd, command);
+          }
+          break;
+        }
+
+        case "open_file": {
+          const filePath = (action.path as string) || "";
+          const wtId = (action.worktreeId as string) || store.selectedWorktreeId;
+          if (wtId) {
+            // Derive the relative file path from the worktree root
+            const worktreePath = store.getWorktreePath(wtId);
+            const relFile = filePath.startsWith(worktreePath)
+              ? filePath.slice(worktreePath.length).replace(/^[/\\]/, "")
+              : filePath;
+            store.openDiffTab(wtId, relFile, worktreePath, "uncommitted");
+          }
+          break;
+        }
+
+        case "open_scratchpad": {
+          const content = (action.content as string) || "";
+          const title = (action.title as string) || undefined;
+          const spWorktree = store.scratchpadWorktree;
+          if (spWorktree) {
+            store.addAgentTab(SCRATCHPAD_WORKTREE_ID, spWorktree.path, content);
+            // If a title was provided, rename the newly created tab
+            if (title) {
+              const tabs = store.tabsByWorktree[SCRATCHPAD_WORKTREE_ID] ?? [];
+              const lastTab = tabs[tabs.length - 1];
+              if (lastTab) store.renameTab(SCRATCHPAD_WORKTREE_ID, lastTab.id, title);
+            }
+          }
+          break;
+        }
+
+        case "worktree_created": {
+          const projectId = (action.projectId as string) || "";
+          const worktreeId = (action.worktreeId as string) || "";
+          const prompt = (action.prompt as string) || "";
+          // Refresh projects so the new worktree appears, then switch to it
+          (async () => {
+            await store.loadProjects();
+            const s = useAppStore.getState();
+            if (projectId) s.selectProject(projectId);
+            if (worktreeId) s.selectWorktree(worktreeId);
+            // Spawn an agent tab with the delegated task
+            if (prompt && worktreeId) {
+              const wtPath = s.getWorktreePath(worktreeId);
+              if (wtPath) {
+                s.addAgentTab(worktreeId, wtPath, prompt);
+              }
+            }
+          })();
+          break;
+        }
+
+        case "notify": {
+          const message = (action.message as string) || "";
+          const title = (action.title as string) || "Coppice";
+          // Play sound if enabled
+          if (store.appSettings?.notification_sound) {
+            playNotificationSound();
+          }
+          // Show OS notification if enabled
+          if (store.appSettings?.notification_popup) {
+            (async () => {
+              try {
+                let granted = await isPermissionGranted();
+                if (!granted) {
+                  const perm = await requestPermission();
+                  granted = perm === "granted";
+                }
+                if (granted) {
+                  sendNotification({ title, body: message });
+                }
+              } catch { /* ignore */ }
+            })();
+          }
+          break;
+        }
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
   }, []);
 
   // Tab keyboard shortcuts — capture phase so xterm and the webview's native

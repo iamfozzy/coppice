@@ -248,8 +248,12 @@ export const ChangesPanel = memo(function ChangesPanel() {
             <button
               className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
               onClick={() => {
-                if (project.pr_create_skill && !useAgent) {
-                  requestClaudeTab(project.pr_create_skill);
+                if (project.pr_create_skill) {
+                  if (useAgent) {
+                    requestAgentTab(project.pr_create_skill);
+                  } else {
+                    requestClaudeTab(project.pr_create_skill);
+                  }
                 } else {
                   sendToAgent(
                     `Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}`,
