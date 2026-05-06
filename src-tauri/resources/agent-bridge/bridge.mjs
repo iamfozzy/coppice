@@ -9,7 +9,8 @@
  * Stderr: debug/error logging (forwarded by Rust to app logs)
  */
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod/v4";
 import { createInterface } from "readline";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -67,6 +68,19 @@ const CONCISE_MODE_INSTRUCTION = `CONCISE MODE: no preamble, no filler, no resta
 const TOOL_FRUGALITY_INSTRUCTION = `Keep tool outputs small: they persist in context for every later turn. Prefer Grep with path/glob filters over wide searches; read files with offset/limit when you know the region; pipe noisy commands through head/tail. Don't cat whole large files or directories to browse — target what you need.`;
 
 const NO_ATTRIBUTION_INSTRUCTION = `IMPORTANT: Do NOT add any Co-Authored-By lines, attribution trailers, or similar attribution metadata to git commit messages. The user has disabled git attribution in their settings.`;
+
+/**
+ * Coppice IDE tools instruction — tells Claude to prefer the IDE-integrated
+ * tools over shell equivalents when the action benefits from IDE awareness.
+ */
+const COPPICE_TOOLS_INSTRUCTION = `You are running inside the Coppice desktop IDE. You have access to Coppice-specific tools (prefixed "coppice_") that interact directly with the IDE:
+- Use coppice_create_worktree instead of git worktree commands — it registers the worktree in the IDE's project model and copies env files. When you need to do work in the new worktree, pass the task as the 'prompt' parameter — Coppice will switch to the new worktree and spawn a separate agent tab to execute it. NEVER cd into the new worktree yourself after creating it.
+- Use coppice_spawn_terminal to open new terminal tabs in the IDE, optionally running a command.
+- Use coppice_open_file to surface files in the IDE's editor tabs so the user can see them.
+- Use coppice_notify_user for important events (task completion, errors needing attention) instead of just printing a message.
+- Use coppice_open_url for links the user should visit (PR URLs, documentation).
+- Use coppice_open_scratchpad to create a scratchpad with notes, plans, or generated content.
+Don't use these for routine intermediate steps — only when IDE integration genuinely helps.`;
 
 /**
  * Load the user's ~/.claude/settings.json and check whether git attribution
@@ -231,10 +245,114 @@ async function expandProjectCommand(prompt, cwd) {
 
 const pendingToolResponses = new Map();
 const pendingAskResponses = new Map();
+const pendingCoppiceToolCalls = new Map();
 let callIdCounter = 0;
 
 function nextCallId() {
   return String(++callIdCounter);
+}
+
+/**
+ * Call a Coppice IDE tool by sending a request to the Rust backend via stdout
+ * and waiting for the result on stdin. Returns an MCP CallToolResult.
+ */
+function callCoppice(toolName, args) {
+  const callId = nextCallId();
+  emit({
+    type: "coppice_tool_call",
+    callId,
+    toolName,
+    args,
+  });
+  return new Promise((resolve) => {
+    pendingCoppiceToolCalls.set(callId, { resolve });
+    // Timeout after 60s — return error
+    setTimeout(() => {
+      if (pendingCoppiceToolCalls.has(callId)) {
+        pendingCoppiceToolCalls.delete(callId);
+        resolve({
+          content: [{ type: "text", text: "Coppice tool call timed out" }],
+          isError: true,
+        });
+      }
+    }, 60_000);
+  });
+}
+
+/**
+ * Build the Coppice IDE tool definitions for the in-process MCP server.
+ */
+function buildCoppiceTools() {
+  return [
+    tool(
+      "coppice_create_worktree",
+      "Create a new git worktree in the Coppice IDE. Registers it in the project model and copies env files. Provide an existing branch name to check out, OR set new_branch + base_branch to create a new branch. When you have a task to perform in the new worktree, pass it as 'prompt' — Coppice will switch to the new worktree and spawn a new agent tab with that task. Do NOT cd into the worktree yourself after creating it.",
+      {
+        branch: z.string().optional().describe("Existing branch to check out"),
+        new_branch: z.string().optional().describe("Name for a new branch to create"),
+        base_branch: z.string().optional().describe("Base branch for new_branch (defaults to main)"),
+        name: z.string().optional().describe("Worktree folder name (defaults to branch name)"),
+        prompt: z.string().optional().describe("Task for a new agent tab to execute in the created worktree. Coppice will switch to the worktree and spawn an agent with this prompt."),
+      },
+      async (args) => callCoppice("create_worktree", args),
+      { annotations: { destructiveHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_list_worktrees",
+      "List all worktrees registered in the current Coppice project.",
+      {},
+      async () => callCoppice("list_worktrees", {}),
+      { annotations: { readOnlyHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_spawn_terminal",
+      "Open a new terminal tab in the Coppice IDE, optionally running a command in it.",
+      {
+        cwd: z.string().optional().describe("Working directory for the terminal (defaults to current worktree)"),
+        command: z.string().optional().describe("Command to run in the terminal after opening"),
+      },
+      async (args) => callCoppice("spawn_terminal", args),
+      { annotations: { destructiveHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_open_file",
+      "Open a file in the Coppice IDE's editor/diff tab so the user can see it.",
+      {
+        path: z.string().describe("Absolute path or path relative to the worktree root"),
+      },
+      async (args) => callCoppice("open_file", args),
+      { annotations: { readOnlyHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_open_scratchpad",
+      "Create a new agent tab in the Coppice scratchpad with pre-filled content. Useful for plans, notes, or generated content.",
+      {
+        content: z.string().describe("Content to pre-fill as the initial prompt"),
+        title: z.string().optional().describe("Label for the scratchpad tab"),
+      },
+      async (args) => callCoppice("open_scratchpad", args),
+      { annotations: { readOnlyHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_notify_user",
+      "Show a system notification to the user via the Coppice IDE. Use for important events like task completion or errors that need attention.",
+      {
+        message: z.string().describe("Notification body text"),
+        title: z.string().optional().describe("Notification title (defaults to 'Coppice')"),
+      },
+      async (args) => callCoppice("notify_user", args),
+      { annotations: { readOnlyHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_open_url",
+      "Open a URL in the user's system browser. Use for PR links, documentation, or other web pages the user should see.",
+      {
+        url: z.string().describe("The URL to open"),
+      },
+      async (args) => callCoppice("open_url", args),
+      { annotations: { readOnlyHint: true }, alwaysLoad: true },
+    ),
+  ];
 }
 
 /**
@@ -433,6 +551,18 @@ async function handleCommand(msg) {
       break;
     }
 
+    case "coppice_tool_result": {
+      const pending = pendingCoppiceToolCalls.get(msg.callId);
+      if (pending) {
+        pendingCoppiceToolCalls.delete(msg.callId);
+        pending.resolve({
+          content: [{ type: "text", text: msg.result || "" }],
+          isError: msg.isError || false,
+        });
+      }
+      break;
+    }
+
     case "close":
       cleanup();
       process.exit(0);
@@ -618,6 +748,7 @@ async function startSession(msg) {
   } else {
     const appendParts = [];
     appendParts.push(TOOL_FRUGALITY_INSTRUCTION);
+    appendParts.push(COPPICE_TOOLS_INSTRUCTION);
     if (opts.conciseMode) appendParts.push(CONCISE_MODE_INSTRUCTION);
     if (noAttribution) appendParts.push(NO_ATTRIBUTION_INSTRUCTION);
     queryOptions.systemPrompt = {
@@ -631,6 +762,19 @@ async function startSession(msg) {
     queryOptions.mcpServers = opts.mcpServers;
   }
 
+  // Register Coppice IDE tools as an in-process MCP server (skip for chat mode)
+  if (!opts.chatMode) {
+    const coppiceMcpServer = createSdkMcpServer({
+      name: "coppice",
+      tools: buildCoppiceTools(),
+      alwaysLoad: true,
+    });
+    queryOptions.mcpServers = {
+      ...(queryOptions.mcpServers || {}),
+      coppice: coppiceMcpServer,
+    };
+  }
+
   // Permission callback — blocks until frontend responds (unless bypassed)
   queryOptions.canUseTool = async (toolName, toolInput, context) => {
     // Bypass mode — auto-allow everything without prompting
@@ -639,6 +783,18 @@ async function startSession(msg) {
       if (toolName === "AskUserQuestion") {
         return handleAskUserTool(toolInput);
       }
+      return { behavior: "allow" };
+    }
+
+    // Coppice IDE tools — read-only tools auto-allow, mutating tools fall
+    // through to the normal permission prompt. MCP tool names are prefixed
+    // by the SDK as "mcp__<server>__<tool>", so match on the suffix.
+    const coppiceReadOnly = [
+      "coppice_list_worktrees", "coppice_open_file",
+      "coppice_open_scratchpad", "coppice_notify_user", "coppice_open_url",
+    ];
+    const effectiveToolName = toolName.includes("__") ? toolName.split("__").pop() : toolName;
+    if (coppiceReadOnly.includes(effectiveToolName)) {
       return { behavior: "allow" };
     }
 
@@ -1111,6 +1267,13 @@ function cleanup() {
     pending.resolve({});
   }
   pendingAskResponses.clear();
+  for (const [, pending] of pendingCoppiceToolCalls) {
+    pending.resolve({
+      content: [{ type: "text", text: "Bridge shutting down" }],
+      isError: true,
+    });
+  }
+  pendingCoppiceToolCalls.clear();
 }
 
 // Handle uncaught errors gracefully

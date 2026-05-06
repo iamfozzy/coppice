@@ -6,8 +6,11 @@ use std::thread;
 use tauri::{AppHandle, Emitter};
 
 pub struct AgentSession {
-    stdin: ChildStdin,
+    stdin: Arc<Mutex<ChildStdin>>,
     child: Child,
+    /// The working directory this session was started with.
+    #[allow(dead_code)]
+    cwd: String,
 }
 
 pub struct AgentManager {
@@ -37,16 +40,15 @@ impl AgentManager {
     ) -> Result<(), String> {
         // Check if we already have a running bridge for this session
         {
-            let mut sessions = self.sessions.lock().unwrap();
-            if let Some(session) = sessions.get_mut(session_id) {
+            let sessions = self.sessions.lock().unwrap();
+            if let Some(session) = sessions.get(session_id) {
                 // Reuse existing bridge process — send new start command
                 let line = format!("{}\n", start_msg);
-                session
-                    .stdin
+                let mut stdin = session.stdin.lock().unwrap();
+                stdin
                     .write_all(line.as_bytes())
                     .map_err(|e| format!("Failed to write to agent: {}", e))?;
-                session
-                    .stdin
+                stdin
                     .flush()
                     .map_err(|e| format!("Failed to flush agent stdin: {}", e))?;
                 return Ok(());
@@ -90,7 +92,7 @@ impl AgentManager {
             .spawn()
             .map_err(|e| format!("Failed to spawn agent bridge: {}", e))?;
 
-        let mut stdin = child
+        let stdin_raw = child
             .stdin
             .take()
             .ok_or_else(|| "Failed to get stdin for agent bridge".to_string())?;
@@ -103,20 +105,34 @@ impl AgentManager {
             .take()
             .ok_or_else(|| "Failed to get stderr for agent bridge".to_string())?;
 
-        // Write the start command immediately
-        let start_line = format!("{}\n", start_msg);
-        stdin
-            .write_all(start_line.as_bytes())
-            .map_err(|e| format!("Failed to write start command: {}", e))?;
-        stdin
-            .flush()
-            .map_err(|e| format!("Failed to flush start command: {}", e))?;
+        let stdin = Arc::new(Mutex::new(stdin_raw));
 
-        // Stdout reader thread — emits Tauri events for each JSON line
+        // Write the start command immediately
+        {
+            let start_line = format!("{}\n", start_msg);
+            let mut stdin_guard = stdin.lock().unwrap();
+            stdin_guard
+                .write_all(start_line.as_bytes())
+                .map_err(|e| format!("Failed to write start command: {}", e))?;
+            stdin_guard
+                .flush()
+                .map_err(|e| format!("Failed to flush start command: {}", e))?;
+        }
+
+        // Extract cwd from the start message for Coppice tool handlers
+        let cwd = serde_json::from_str::<serde_json::Value>(start_msg)
+            .ok()
+            .and_then(|v| v.get("cwd").and_then(|c| c.as_str()).map(String::from))
+            .unwrap_or_default();
+
+        // Stdout reader thread — emits Tauri events for each JSON line,
+        // intercepting coppice_tool_call messages for local execution.
         let event_name = format!("agent-event-{}", session_id);
         let app = app_handle.clone();
         let sid = session_id.to_string();
         let sessions_ref = self.sessions.clone();
+        let stdin_for_reader = stdin.clone();
+        let cwd_for_reader = cwd.clone();
 
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
@@ -126,6 +142,64 @@ impl AgentManager {
                         if text.trim().is_empty() {
                             continue;
                         }
+
+                        // Check if this is a coppice_tool_call that we handle locally
+                        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if msg.get("type").and_then(|t| t.as_str())
+                                == Some("coppice_tool_call")
+                            {
+                                let call_id = msg
+                                    .get("callId")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let tool_name = msg
+                                    .get("toolName")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let args = msg
+                                    .get("args")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Object(Default::default()));
+                                let app_clone = app.clone();
+                                let stdin_clone = stdin_for_reader.clone();
+                                let cwd_clone = cwd_for_reader.clone();
+
+                                // Handle in a separate thread so the reader isn't blocked
+                                thread::spawn(move || {
+                                    let result =
+                                        crate::services::coppice_tools::handle_coppice_tool(
+                                            &tool_name,
+                                            &args,
+                                            &app_clone,
+                                            &cwd_clone,
+                                        );
+                                    let response = match result {
+                                        Ok(r) => serde_json::json!({
+                                            "type": "coppice_tool_result",
+                                            "callId": call_id,
+                                            "result": r,
+                                            "isError": false,
+                                        }),
+                                        Err(e) => serde_json::json!({
+                                            "type": "coppice_tool_result",
+                                            "callId": call_id,
+                                            "result": e,
+                                            "isError": true,
+                                        }),
+                                    };
+                                    let line = format!("{}\n", response);
+                                    if let Ok(mut stdin_guard) = stdin_clone.lock() {
+                                        let _ = stdin_guard.write_all(line.as_bytes());
+                                        let _ = stdin_guard.flush();
+                                    }
+                                });
+                                continue; // Don't forward coppice_tool_call to frontend
+                            }
+                        }
+
+                        // Regular message — forward to frontend as Tauri event
                         let _ = app.emit(&event_name, &text);
                     }
                     Err(_) => break,
@@ -164,7 +238,7 @@ impl AgentManager {
             }
         });
 
-        let session = AgentSession { stdin, child };
+        let session = AgentSession { stdin, child, cwd };
         self.sessions
             .lock()
             .unwrap()
@@ -175,17 +249,19 @@ impl AgentManager {
 
     /// Send a JSON line to the agent bridge's stdin.
     pub fn send(&self, session_id: &str, json_line: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock().unwrap();
         let session = sessions
-            .get_mut(session_id)
+            .get(session_id)
             .ok_or_else(|| "Agent session not found".to_string())?;
         let line = format!("{}\n", json_line);
-        session
+        let mut stdin = session
             .stdin
+            .lock()
+            .map_err(|e| format!("Failed to lock agent stdin: {}", e))?;
+        stdin
             .write_all(line.as_bytes())
             .map_err(|e| format!("Failed to write to agent: {}", e))?;
-        session
-            .stdin
+        stdin
             .flush()
             .map_err(|e| format!("Failed to flush agent stdin: {}", e))?;
         Ok(())
@@ -201,8 +277,10 @@ impl AgentManager {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(mut session) = sessions.remove(session_id) {
             // Try to send close command gracefully
-            let _ = session.stdin.write_all(b"{\"type\":\"close\"}\n");
-            let _ = session.stdin.flush();
+            if let Ok(mut stdin) = session.stdin.lock() {
+                let _ = stdin.write_all(b"{\"type\":\"close\"}\n");
+                let _ = stdin.flush();
+            }
             // Kill the process tree. On Windows, child.kill() only terminates
             // the direct child (node), leaving any grandchildren (Claude SDK
             // sub-processes) orphaned. Use taskkill /T to kill the whole tree.
@@ -216,8 +294,10 @@ impl AgentManager {
     pub fn close_all(&self) {
         let mut sessions = self.sessions.lock().unwrap();
         for (_, mut session) in sessions.drain() {
-            let _ = session.stdin.write_all(b"{\"type\":\"close\"}\n");
-            let _ = session.stdin.flush();
+            if let Ok(mut stdin) = session.stdin.lock() {
+                let _ = stdin.write_all(b"{\"type\":\"close\"}\n");
+                let _ = stdin.flush();
+            }
             kill_process_tree(&mut session.child);
         }
     }
