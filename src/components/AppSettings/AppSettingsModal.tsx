@@ -3,6 +3,7 @@ import { useAppStore } from "../../stores/appStore";
 import type { AppSettings, McpServerEntry, ThemeMode } from "../../lib/types";
 import { SUPPORTED_MODELS } from "../../lib/supportedModels";
 import { GitHubAuthSection } from "./GitHubAuthSection";
+import { piGetModels, piOAuthLogin, piOAuthCheck } from "../../lib/commands";
 
 const defaultSettings: AppSettings = {
   editor_command: "",
@@ -28,6 +29,12 @@ const defaultSettings: AppSettings = {
   agent_bash_max_output: 0,
   agent_task_max_output: 0,
   mcp_servers: {},
+  agent_backend: "claude",
+  pi_default_provider: "anthropic",
+  pi_default_model: "claude-sonnet-4-20250514",
+  pi_enable_web_access: true,
+  pi_api_keys: {},
+  pi_configured_providers: ["anthropic"],
 };
 
 export function AppSettingsModal() {
@@ -168,34 +175,45 @@ export function AppSettingsModal() {
             hint="Show a system notification when Claude finishes (visible even when Coppice is minimized)"
           />
 
-          {/* Claude mode selector */}
+          {/* Agent mode selector — three top-level options */}
           <div className="pt-2 border-t border-border-primary">
-            <label className="block text-xs text-text-secondary mb-1">Claude mode</label>
+            <label className="block text-xs text-text-secondary mb-1">Agent mode</label>
             <div className="flex gap-1">
-              {(["terminal", "agent"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setForm({ ...form, default_claude_mode: mode })}
-                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                    form.default_claude_mode === mode
-                      ? "bg-accent text-white"
-                      : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
-                  }`}
-                >
-                  {mode === "terminal" ? "Terminal (CLI)" : "Agent (SDK)"}
-                </button>
-              ))}
+              {([
+                { mode: "terminal", backend: "claude", label: "Terminal (CLI)" },
+                { mode: "agent", backend: "claude", label: "Claude Agent" },
+                { mode: "agent", backend: "pi", label: "Pi Agent" },
+              ] as const).map(({ mode, backend, label }) => {
+                const isActive =
+                  form.default_claude_mode === mode &&
+                  (mode === "terminal" || (form.agent_backend || "claude") === backend);
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setForm({ ...form, default_claude_mode: mode, agent_backend: backend })}
+                    className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                      isActive
+                        ? backend === "pi" ? "bg-purple-500 text-white" : "bg-accent text-white"
+                        : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
-            <p className="mt-0.5 text-[10px] text-text-tertiary">
+            <p className="mt-1 text-[10px] text-text-tertiary">
               {form.default_claude_mode === "terminal"
                 ? "Runs Claude Code CLI in a PTY terminal (requires claude CLI installed)"
-                : "Runs Claude via the Agent SDK with an interactive UI (requires API key)"}
+                : (form.agent_backend || "claude") === "pi"
+                  ? "Pi Agent: 25+ LLM providers (Claude, GPT, Gemini, Ollama, etc.), built-in coding tools, web access"
+                  : "Claude Agent SDK with the full claude_code system prompt (requires Anthropic API key)"}
             </p>
           </div>
 
-          {/* Agent SDK settings — only shown when agent mode is selected */}
-          {form.default_claude_mode === "agent" && (
+          {/* Claude Agent settings */}
+          {form.default_claude_mode === "agent" && (form.agent_backend || "claude") === "claude" && (
             <div className="space-y-4 pl-2 border-l-2 border-accent/30">
               <Field
                 label="Anthropic API key"
@@ -297,6 +315,17 @@ export function AppSettingsModal() {
             </div>
           )}
 
+          {/* Pi Agent settings */}
+          {form.default_claude_mode === "agent" && form.agent_backend === "pi" && (
+            <div className="space-y-4 pl-2 border-l-2 border-purple-400/30">
+              <PiSettingsSection form={form} setForm={setForm} />
+              <McpServersEditor
+                servers={form.mcp_servers}
+                onChange={(mcp_servers) => setForm({ ...form, mcp_servers })}
+              />
+            </div>
+          )}
+
         </div>
 
         {/* Footer */}
@@ -316,6 +345,725 @@ export function AppSettingsModal() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+const API_KEY_PLACEHOLDERS: Record<string, string> = {
+  anthropic: "sk-ant-...",
+  openai: "sk-...",
+  google: "AIza...",
+  "google-vertex": "AIza...",
+  deepseek: "sk-...",
+  mistral: "...",
+  groq: "gsk_...",
+  cerebras: "csk-...",
+  xai: "xai-...",
+  openrouter: "sk-or-...",
+  fireworks: "fw_...",
+  "github-copilot": "ghu_... or ghp_...",
+  huggingface: "hf_...",
+  "azure-openai-responses": "...",
+};
+
+const API_KEY_ENV_VARS: Record<string, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  "azure-openai-responses": "AZURE_OPENAI_API_KEY",
+  google: "GEMINI_API_KEY",
+  "google-vertex": "GOOGLE_CLOUD_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  groq: "GROQ_API_KEY",
+  cerebras: "CEREBRAS_API_KEY",
+  xai: "XAI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  fireworks: "FIREWORKS_API_KEY",
+  "github-copilot": "COPILOT_GITHUB_TOKEN",
+  huggingface: "HF_TOKEN",
+  "kimi-coding": "KIMI_API_KEY",
+  "cloudflare-ai-gateway": "CLOUDFLARE_API_KEY",
+  "cloudflare-workers-ai": "CLOUDFLARE_API_KEY",
+};
+
+/** Pretty-print a provider slug: "openai" → "OpenAI", "amazon-bedrock" → "Amazon Bedrock" */
+function formatProvider(slug: string): string {
+  const overrides: Record<string, string> = {
+    openai: "OpenAI", xai: "xAI", deepseek: "DeepSeek", openrouter: "OpenRouter",
+    "amazon-bedrock": "Bedrock", "azure-openai-responses": "Azure OpenAI",
+    "google-vertex": "Vertex AI", "github-copilot": "Copilot",
+    "cloudflare-ai-gateway": "CF Gateway", "cloudflare-workers-ai": "CF Workers",
+    "openai-codex": "Codex", "vercel-ai-gateway": "Vercel AI",
+  };
+  return overrides[slug] || slug.charAt(0).toUpperCase() + slug.slice(1);
+}
+
+/** Well-known Pi providers — always shown even before a session is started. */
+const PI_KNOWN_PROVIDERS = [
+  "anthropic", "openai", "google", "deepseek", "mistral",
+  "groq", "cerebras", "xai", "openrouter", "fireworks",
+  "amazon-bedrock", "google-vertex", "github-copilot", "azure-openai-responses",
+];
+
+/** Providers that support OAuth login (no API key needed). */
+const OAUTH_PROVIDERS = new Set(["anthropic", "github-copilot", "openai-codex"]);
+
+function PiAuthSection({ provider, form, setForm }: {
+  provider: string;
+  form: AppSettings;
+  setForm: (f: AppSettings) => void;
+}) {
+  const [oauthStatus, setOauthStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
+  const [oauthMessage, setOauthMessage] = useState("");
+  const [deviceCode, setDeviceCode] = useState("");
+  const supportsOAuth = OAUTH_PROVIDERS.has(provider);
+
+  useEffect(() => {
+    if (!supportsOAuth) return;
+    piOAuthCheck().then((providers) => {
+      if (providers[provider]) {
+        setOauthStatus("success");
+        setOauthMessage(`Logged in to ${formatProvider(provider)}`);
+      }
+    }).catch(() => {});
+  }, [provider]);
+
+  const currentKey = provider === "anthropic"
+    ? form.agent_api_key || ""
+    : (form.pi_api_keys || {})[provider] || "";
+
+  const handleOAuthLogin = async () => {
+    setOauthStatus("pending");
+    setOauthMessage("Starting login...");
+    setDeviceCode("");
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      const unlisten = await listen<string>("pi-oauth-event", (event) => {
+        try {
+          const msg = JSON.parse(event.payload);
+          if (msg.type === "auth") {
+            // Device code flow — show the code to the user
+            if (msg.instructions) {
+              setDeviceCode(msg.instructions);
+            }
+            setOauthMessage("Waiting for authorization in browser...");
+          } else if (msg.type === "progress") {
+            setOauthMessage(msg.message);
+          } else if (msg.type === "success") {
+            setOauthStatus("success");
+            setOauthMessage(`Logged in to ${formatProvider(provider)}`);
+            setDeviceCode("");
+            // Clear the API key for this provider — OAuth credentials in
+            // ~/.pi/agent/auth.json take over. If we leave the old key,
+            // it gets sent as an env var and overrides the OAuth token.
+            if (provider === "anthropic") {
+              setForm({ ...form, agent_api_key: "" });
+            } else {
+              const keys = { ...(form.pi_api_keys || {}) };
+              delete keys[provider];
+              setForm({ ...form, pi_api_keys: keys });
+            }
+            unlisten();
+          } else if (msg.type === "error") {
+            setOauthStatus("error");
+            setOauthMessage(msg.message);
+            setDeviceCode("");
+            unlisten();
+          }
+        } catch {}
+      });
+      await piOAuthLogin(provider);
+    } catch (err) {
+      setOauthStatus("error");
+      setOauthMessage(String(err));
+    }
+  };
+
+  return (
+    <div>
+      {/* OAuth login button for supported providers */}
+      {supportsOAuth && (
+        <div className="mb-2">
+          <button
+            type="button"
+            onClick={handleOAuthLogin}
+            disabled={oauthStatus === "pending"}
+            className={`px-3 py-1.5 text-[11px] font-medium rounded transition-colors ${
+              oauthStatus === "success"
+                ? "bg-green-500/15 text-green-400 border border-green-500/30"
+                : oauthStatus === "pending"
+                  ? "bg-purple-500/10 text-purple-400 border border-purple-500/30 animate-pulse"
+                  : "bg-purple-500/10 text-purple-400 border border-purple-500/30 hover:bg-purple-500/20"
+            }`}
+          >
+            {oauthStatus === "pending" ? "Waiting for authorization..." :
+             oauthStatus === "success" ? "✓ Logged in" :
+             `Login with ${formatProvider(provider)} subscription`}
+          </button>
+
+          {/* Device code — shown prominently for GitHub Copilot device flow */}
+          {deviceCode && (
+            <div className="mt-2 p-2 rounded bg-bg-tertiary border border-purple-500/30">
+              <p className="text-[11px] text-text-secondary mb-1">
+                Enter this code in your browser:
+              </p>
+              <p className="text-lg font-mono font-bold text-purple-400 tracking-widest select-all">
+                {deviceCode.replace(/^Enter code:\s*/i, "")}
+              </p>
+            </div>
+          )}
+
+          {oauthMessage && !deviceCode && oauthStatus !== "idle" && (
+            <p className={`mt-1 text-[10px] ${
+              oauthStatus === "error" ? "text-red-400" :
+              oauthStatus === "success" ? "text-green-400" : "text-text-tertiary"
+            }`}>
+              {oauthMessage}
+            </p>
+          )}
+          <p className="mt-1 text-[10px] text-text-tertiary">
+            {oauthStatus === "idle"
+              ? "Uses your existing subscription — no API key needed."
+              : oauthStatus === "pending"
+                ? "Complete authorization in your browser, then return here."
+                : "Credentials saved to ~/.pi/agent/auth.json"}
+          </p>
+        </div>
+      )}
+
+      {/* Divider between OAuth and API key */}
+      {supportsOAuth && (
+        <div className="flex items-center gap-2 my-2">
+          <div className="flex-1 border-t border-border-primary" />
+          <span className="text-[10px] text-text-tertiary">or use an API key</span>
+          <div className="flex-1 border-t border-border-primary" />
+        </div>
+      )}
+
+      {/* Manual API key input */}
+      <input
+        type="password"
+        value={currentKey}
+        onChange={(e) => {
+          if (provider === "anthropic") {
+            setForm({ ...form, agent_api_key: e.target.value });
+          } else {
+            setForm({
+              ...form,
+              pi_api_keys: { ...(form.pi_api_keys || {}), [provider]: e.target.value },
+            });
+          }
+        }}
+        placeholder={API_KEY_PLACEHOLDERS[provider] || "API key"}
+        className="w-full px-2 py-1 text-xs bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary font-mono"
+      />
+      <p className="mt-0.5 text-[10px] text-text-tertiary">
+        {provider === "anthropic"
+          ? "Shared with Claude Agent mode. Also set via ANTHROPIC_API_KEY env var."
+          : `Set via ${API_KEY_ENV_VARS[provider] || "environment variable"} or enter here.`}
+      </p>
+    </div>
+  );
+}
+
+/** Fallback models per provider — shown before a Pi session populates the full list. */
+const PI_FALLBACK_MODELS: Record<string, Array<{ value: string; label: string; contextWindow?: number; reasoning?: boolean }>> = {
+  anthropic: [
+    { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4", contextWindow: 200000, reasoning: true },
+    { value: "claude-opus-4-20250515", label: "Claude Opus 4", contextWindow: 200000, reasoning: true },
+    { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", contextWindow: 200000, reasoning: true },
+  ],
+  openai: [
+    { value: "gpt-4o", label: "GPT-4o", contextWindow: 128000 },
+    { value: "gpt-4o-mini", label: "GPT-4o Mini", contextWindow: 128000 },
+    { value: "o3", label: "o3", contextWindow: 200000, reasoning: true },
+    { value: "o4-mini", label: "o4 Mini", contextWindow: 200000, reasoning: true },
+  ],
+  google: [
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash", contextWindow: 1048576, reasoning: true },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", contextWindow: 1048576, reasoning: true },
+  ],
+  deepseek: [
+    { value: "deepseek-chat", label: "DeepSeek Chat", contextWindow: 65536 },
+    { value: "deepseek-reasoner", label: "DeepSeek Reasoner", contextWindow: 65536, reasoning: true },
+  ],
+  mistral: [
+    { value: "mistral-large-latest", label: "Mistral Large", contextWindow: 131072 },
+    { value: "codestral-latest", label: "Codestral", contextWindow: 262144 },
+  ],
+  groq: [
+    { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", contextWindow: 131072 },
+  ],
+  xai: [
+    { value: "grok-3-fast", label: "Grok 3 Fast", contextWindow: 131072, reasoning: true },
+    { value: "grok-3-mini-fast", label: "Grok 3 Mini Fast", contextWindow: 131072, reasoning: true },
+  ],
+  openrouter: [
+    { value: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4", contextWindow: 200000 },
+    { value: "openai/gpt-4o", label: "GPT-4o", contextWindow: 128000 },
+    { value: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash", contextWindow: 1048576 },
+  ],
+};
+
+function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: AppSettings) => void }) {
+  const piModels = useAppStore((s) => s.piAvailableModels);
+  const [loading, setLoading] = useState(false);
+  const [addProviderOpen, setAddProviderOpen] = useState(false);
+  const [addProviderFilter, setAddProviderFilter] = useState("");
+  const addProviderRef = useRef<HTMLDivElement>(null);
+  const addProviderInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (piModels.length > 0) return;
+    setLoading(true);
+    piGetModels()
+      .then((models) => {
+        if (models && models.length > 0) {
+          useAppStore.setState({ piAvailableModels: models });
+        }
+      })
+      .catch((err) => console.warn("Failed to load Pi models:", err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!addProviderOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (addProviderRef.current && !addProviderRef.current.contains(e.target as Node))
+        setAddProviderOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [addProviderOpen]);
+
+  useEffect(() => {
+    if (addProviderOpen && addProviderInputRef.current) addProviderInputRef.current.focus();
+  }, [addProviderOpen]);
+
+  const configured = form.pi_configured_providers?.length > 0
+    ? form.pi_configured_providers
+    : ["anthropic"];
+
+  const sdkProviders = [...new Set(piModels.map((m) => m.provider).filter(Boolean))] as string[];
+  const allProviders = sdkProviders.length > 0 ? sdkProviders : PI_KNOWN_PROVIDERS;
+  const unconfigured = allProviders.filter((p) => !configured.includes(p));
+  const filteredUnconfigured = addProviderFilter
+    ? unconfigured.filter((p) =>
+        p.toLowerCase().includes(addProviderFilter.toLowerCase()) ||
+        formatProvider(p).toLowerCase().includes(addProviderFilter.toLowerCase())
+      )
+    : unconfigured;
+
+  const defaultProvider = form.pi_default_provider || configured[0] || "anthropic";
+
+  const getModelsForProvider = (p: string) => {
+    const sdk = piModels.filter((m) => m.provider === p);
+    return sdk.length > 0
+      ? sdk
+      : (PI_FALLBACK_MODELS[p] || []).map((m) => ({ ...m, provider: p }));
+  };
+
+  const providerModels = getModelsForProvider(defaultProvider);
+  const storedModelId = (form.pi_default_model || "").includes("/")
+    ? form.pi_default_model.split("/").slice(1).join("/")
+    : form.pi_default_model;
+  const selectedModel = piModels.find((m) => m.value === storedModelId && m.provider === defaultProvider)
+    ?? providerModels.find((m) => m.value === storedModelId);
+
+  const addProvider = (p: string) => {
+    const next = [...configured, p];
+    setForm({ ...form, pi_configured_providers: next });
+    setAddProviderOpen(false);
+    setAddProviderFilter("");
+  };
+
+  const removeProvider = (p: string) => {
+    const next = configured.filter((x) => x !== p);
+    const updates: Partial<AppSettings> = { pi_configured_providers: next };
+    // If removing the current default, reassign it
+    if (defaultProvider === p) {
+      updates.pi_default_provider = next[0] || "anthropic";
+      const firstModel = piModels.find((m) => m.provider === (next[0] || "anthropic"));
+      updates.pi_default_model = firstModel ? `${next[0]}/${firstModel.value}` : "";
+    }
+    setForm({ ...form, ...updates });
+  };
+
+  return (
+    <div className="space-y-4">
+      {loading && (
+        <p className="text-[10px] text-purple-400 animate-pulse">Loading models from Pi SDK...</p>
+      )}
+
+      {/* ── Default provider & model ── */}
+      <div>
+        <label className="block text-xs text-text-secondary mb-1.5">Default provider</label>
+        <PiProviderCombobox
+          providers={configured}
+          value={defaultProvider}
+          onChange={(p) => {
+            const firstModel = piModels.find((m) => m.provider === p);
+            setForm({
+              ...form,
+              pi_default_provider: p,
+              pi_default_model: firstModel ? `${p}/${firstModel.value}` : "",
+            });
+          }}
+        />
+      </div>
+
+      <PiModelCombobox
+        provider={defaultProvider}
+        models={providerModels}
+        value={form.pi_default_model}
+        onChange={(pi_default_model) => setForm({ ...form, pi_default_model })}
+      />
+
+      {/* ── Configured providers with per-provider auth ── */}
+      <div className="pt-3 border-t border-border-primary">
+        <label className="block text-xs text-text-secondary mb-1.5">Providers &amp; Authentication</label>
+        <p className="text-[10px] text-text-tertiary mb-2">
+          Add providers you want to use. Each needs an API key or OAuth login.
+        </p>
+        <div className="space-y-2 mb-2">
+          {configured.map((p) => (
+            <PiProviderCard
+              key={p}
+              provider={p}
+              form={form}
+              setForm={setForm}
+              canRemove={configured.length > 1}
+              onRemove={() => removeProvider(p)}
+            />
+          ))}
+        </div>
+        {/* Add provider dropdown */}
+        <div className="relative" ref={addProviderRef}>
+          <button
+            type="button"
+            onClick={() => setAddProviderOpen(!addProviderOpen)}
+            className="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded bg-bg-tertiary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M5 1v8M1 5h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+            Add Provider
+          </button>
+          {addProviderOpen && (
+            <div className="absolute left-0 top-full mt-1 w-[220px] bg-bg-secondary border border-border-primary rounded-md shadow-lg z-10 overflow-hidden">
+              <div className="px-2 py-1.5 border-b border-border-primary">
+                <input
+                  ref={addProviderInputRef}
+                  type="text"
+                  value={addProviderFilter}
+                  onChange={(e) => setAddProviderFilter(e.target.value)}
+                  placeholder="Search providers..."
+                  className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+                />
+              </div>
+              <div className="max-h-[200px] overflow-y-auto py-1">
+                {filteredUnconfigured.length > 0 ? filteredUnconfigured.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className="w-full text-left px-3 py-1.5 text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
+                    onClick={() => addProvider(p)}
+                  >
+                    {formatProvider(p)}
+                  </button>
+                )) : (
+                  <p className="px-3 py-1.5 text-[10px] text-text-tertiary">No more providers to add</p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Thinking level */}
+      <div className="pt-3 border-t border-border-primary">
+        <label className="block text-xs text-text-secondary mb-1.5">Thinking level</label>
+        <div className="flex flex-wrap gap-1">
+          {([
+            { value: "off", label: "Off" },
+            { value: "minimal", label: "Minimal" },
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+            { value: "xhigh", label: "Max" },
+          ] as const).map((level) => {
+            const current = form.agent_default_effort || "medium";
+            const isActive = current === level.value || (current === "max" && level.value === "xhigh");
+            return (
+              <button
+                key={level.value}
+                type="button"
+                onClick={() => setForm({ ...form, agent_default_effort: level.value as AppSettings["agent_default_effort"] })}
+                className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
+                  isActive
+                    ? "bg-purple-500 text-white"
+                    : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
+                }`}
+              >
+                {level.label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-0.5 text-[10px] text-text-tertiary">
+          Controls reasoning depth. "Off" disables extended thinking. Higher levels use more tokens but produce better results.
+          {selectedModel?.reasoning === false ? " Current model does not support extended thinking." : ""}
+        </p>
+      </div>
+
+      {/* Tools section */}
+      <div className="pt-3 border-t border-border-primary">
+        <label className="block text-xs text-text-secondary mb-2">Tools</label>
+        <Toggle
+          label="Web access (search & fetch)"
+          checked={form.pi_enable_web_access !== false}
+          onChange={(pi_enable_web_access) => setForm({ ...form, pi_enable_web_access })}
+          hint="Adds web_search and fetch_content tools via pi-web-access (supports Perplexity, Exa, Gemini)"
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Collapsible card for a single configured provider — shows auth inline. */
+function PiProviderCard({ provider, form, setForm, canRemove, onRemove }: {
+  provider: string;
+  form: AppSettings;
+  setForm: (f: AppSettings) => void;
+  canRemove: boolean;
+  onRemove: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [oauthConnected, setOauthConnected] = useState(false);
+
+  const hasKey = provider === "anthropic"
+    ? !!form.agent_api_key
+    : !!(form.pi_api_keys || {})[provider];
+
+  // Check OAuth status for badge display in header
+  useEffect(() => {
+    if (!OAUTH_PROVIDERS.has(provider)) return;
+    piOAuthCheck().then((providers) => {
+      if (providers[provider]) setOauthConnected(true);
+    }).catch(() => {});
+  }, [provider]);
+
+  const authBadge = oauthConnected
+    ? "connected"
+    : hasKey
+      ? "key set"
+      : null;
+
+  return (
+    <div className="rounded border border-border-primary bg-bg-tertiary overflow-hidden">
+      {/* Header row — always visible */}
+      <div
+        className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer hover:bg-bg-hover transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform shrink-0 ${expanded ? "rotate-90" : ""}`}>
+          <path d="M2.5 1L5.5 4 2.5 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="text-[11px] font-medium text-text-primary flex-1">{formatProvider(provider)}</span>
+        {authBadge && <span className="text-[9px] text-green-400 shrink-0">{authBadge}</span>}
+        {canRemove && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            className="text-text-tertiary hover:text-error transition-colors shrink-0"
+            title="Remove provider"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M2 2l6 6M8 2L2 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
+      </div>
+      {/* Expanded auth section */}
+      {expanded && (
+        <div className="px-2.5 pb-2.5 pt-1 border-t border-border-primary">
+          <PiAuthSection provider={provider} form={form} setForm={setForm} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Dropdown for picking the default provider from the configured list. */
+function PiProviderCombobox({ providers, value, onChange }: {
+  providers: string[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (open && inputRef.current) inputRef.current.focus();
+  }, [open]);
+
+  const matched = providers.includes(value);
+  const filtered = filter
+    ? providers.filter((p) =>
+        p.toLowerCase().includes(filter.toLowerCase()) ||
+        formatProvider(p).toLowerCase().includes(filter.toLowerCase())
+      )
+    : providers;
+
+  return (
+    <div className="relative" ref={wrapperRef}>
+      <button
+        type="button"
+        onClick={() => { setOpen(!open); setFilter(""); }}
+        className={`w-full flex items-center justify-between px-3 py-1.5 text-sm bg-bg-tertiary border rounded text-text-primary transition-colors ${
+          open ? "border-purple-500/50" : "border-border-primary hover:border-border-secondary"
+        }`}
+      >
+        <span>{matched ? formatProvider(value) : value || "Select provider"}</span>
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${open ? "rotate-180" : ""}`}>
+          <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-bg-secondary border border-border-primary rounded shadow-lg overflow-hidden">
+          {providers.length > 3 && (
+            <div className="px-2 py-1.5 border-b border-border-primary">
+              <input
+                ref={inputRef}
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter..."
+                className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+              />
+            </div>
+          )}
+          <div className="max-h-[200px] overflow-y-auto py-1">
+            {filtered.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { onChange(p); setOpen(false); }}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm text-left transition-colors ${
+                  p === value
+                    ? "bg-purple-500/10 text-purple-400"
+                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                }`}
+              >
+                <span>{formatProvider(p)}</span>
+                {p === value && (
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-purple-400 shrink-0">
+                    <path d="M2 5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PiModelCombobox({ provider, models, value, onChange }: {
+  provider: string;
+  models: Array<{ value: string; label: string; contextWindow?: number; provider?: string }>;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDocClick); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  const storedModelId = (value || "").includes("/") ? value.split("/").slice(1).join("/") : value;
+  const matchedPreset = models.find((m) => m.value === storedModelId);
+  const filterText = matchedPreset ? "" : (value || "").toLowerCase();
+  const filtered = filterText
+    ? models.filter((m) => m.label.toLowerCase().includes(filterText) || m.value.toLowerCase().includes(filterText))
+    : models;
+
+  return (
+    <div>
+      <label className="block text-xs text-text-secondary mb-1">Model</label>
+      <div className="relative" ref={wrapperRef}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={matchedPreset && !inputFocused ? matchedPreset.label : value}
+          onChange={(e) => {
+            const val = e.target.value;
+            onChange(val.includes("/") ? val : `${provider}/${val}`);
+            setOpen(true);
+          }}
+          onFocus={() => {
+            setInputFocused(true);
+            setOpen(true);
+            if (matchedPreset) onChange(`${provider}/${matchedPreset.value}`);
+          }}
+          onBlur={() => setInputFocused(false)}
+          placeholder={`${provider}/model-id`}
+          className={`w-full px-3 py-1.5 text-sm bg-bg-tertiary border rounded text-text-primary placeholder:text-text-tertiary focus:outline-none transition-colors font-mono ${
+            open ? "border-purple-500/50" : "border-border-primary hover:border-border-secondary"
+          }`}
+        />
+        {open && filtered.length > 0 && (
+          <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-bg-secondary border border-border-primary rounded shadow-lg max-h-60 overflow-y-auto py-1">
+            {filtered.map((m) => {
+              const isSelected = m.value === storedModelId;
+              return (
+                <button
+                  key={m.value}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { onChange(`${provider}/${m.value}`); setOpen(false); }}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm text-left transition-colors ${
+                    isSelected
+                      ? "bg-purple-500/10 text-purple-400"
+                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  }`}
+                >
+                  <span>{m.label}</span>
+                  <span className="text-[10px] text-text-tertiary">
+                    {m.contextWindow ? `${Math.round(m.contextWindow / 1000)}K` : ""}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <p className="mt-0.5 text-[10px] text-text-tertiary">
+        {models.length} models from {formatProvider(provider)}. Type to filter or enter a custom model ID.
+      </p>
     </div>
   );
 }

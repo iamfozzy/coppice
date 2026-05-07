@@ -89,6 +89,9 @@ pub fn run() {
             commands::agent::agent_close,
             commands::agent::agent_exists,
             commands::agent::agent_check_available,
+            commands::agent::pi_get_models,
+            commands::agent::pi_oauth_login,
+            commands::agent::pi_oauth_check,
             commands::agent::read_image_base64,
             commands::agent::get_project_commands,
             // Agent tab cache commands

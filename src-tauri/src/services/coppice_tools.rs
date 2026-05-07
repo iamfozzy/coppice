@@ -432,7 +432,7 @@ fn handle_open_url(args: &Value, _app: &AppHandle) -> Result<String, String> {
 }
 
 /// Open a URL in the system browser, cross-platform.
-fn open_url_in_browser(url: &str) -> Result<(), String> {
+pub fn open_url_in_browser(url: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")

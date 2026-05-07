@@ -78,6 +78,14 @@ export interface AppSettings {
   agent_bash_max_output: number;
   agent_task_max_output: number;
   mcp_servers: Record<string, McpServerEntry>;
+
+  // Pi Agent backend
+  agent_backend: "claude" | "pi";
+  pi_default_provider: string;
+  pi_default_model: string;
+  pi_enable_web_access: boolean;
+  pi_api_keys: Record<string, string>;
+  pi_configured_providers: string[];
 }
 
 export interface McpServerEntry {
@@ -103,6 +111,8 @@ export interface ImageAttachment {
 
 export type AgentStatus = "idle" | "thinking" | "tool_use" | "waiting_permission" | "waiting_input" | "done" | "error";
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+/** Pi thinking levels — superset of EffortLevel with "off" and "minimal". */
+export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type AgentPermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions";
 
 export interface AgentMessage {

@@ -1,13 +1,14 @@
 use crate::services::agent_manager::AgentManager;
-use tauri::{AppHandle, Manager, State};
+use std::thread;
+use tauri::{AppHandle, Emitter, Manager, State};
 
-/// Resolve the path to the agent bridge script.
-/// In production: <resource_dir>/agent-bridge/bridge.mjs
-/// In dev: src-tauri/resources/agent-bridge/bridge.mjs
-fn resolve_bridge_path(app: &AppHandle) -> Result<String, String> {
+/// Resolve the path to an agent bridge script by filename.
+/// In production: <resource_dir>/agent-bridge/<filename>
+/// In dev: src-tauri/resources/agent-bridge/<filename>
+fn resolve_bridge_path_for(app: &AppHandle, filename: &str) -> Result<String, String> {
     // Try the bundled resource path first (production builds)
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let bundled = resource_dir.join("agent-bridge").join("bridge.mjs");
+        let bundled = resource_dir.join("agent-bridge").join(filename);
         if bundled.exists() {
             return path_to_string(&bundled);
         }
@@ -17,12 +18,20 @@ fn resolve_bridge_path(app: &AppHandle) -> Result<String, String> {
     let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("resources")
         .join("agent-bridge")
-        .join("bridge.mjs");
+        .join(filename);
     if dev_path.exists() {
         return path_to_string(&dev_path);
     }
 
-    Err("Agent bridge script not found. Ensure agent-bridge is installed.".to_string())
+    Err(format!(
+        "Agent bridge script '{}' not found. Ensure agent-bridge is installed.",
+        filename
+    ))
+}
+
+/// Resolve the path to the agent bridge script (Claude or Pi based on settings).
+fn resolve_bridge_path(app: &AppHandle) -> Result<String, String> {
+    resolve_bridge_path_for(app, "bridge.mjs")
 }
 
 /// Convert a PathBuf to a String, using the \\?\ long-path prefix on Windows
@@ -69,7 +78,14 @@ pub fn agent_start(
     settings: State<'_, crate::settings::SettingsState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let bridge_path = resolve_bridge_path(&app)?;
+    // Select bridge script based on backend setting
+    let bridge_path = {
+        let s = settings.inner().get();
+        match s.agent_backend.as_str() {
+            "pi" => resolve_bridge_path_for(&app, "pi-bridge.mjs")?,
+            _ => resolve_bridge_path_for(&app, "bridge.mjs")?,
+        }
+    };
 
     // Build the start command JSON
     let mut options = serde_json::Map::new();
@@ -78,6 +94,8 @@ pub fn agent_start(
     }
     if let Some(e) = &effort {
         options.insert("effort".into(), serde_json::Value::String(e.clone()));
+        // Pi bridge also reads thinkingLevel directly for its native levels
+        options.insert("thinkingLevel".into(), serde_json::Value::String(e.clone()));
     }
     if let Some(pm) = &permission_mode {
         options.insert(
@@ -236,6 +254,69 @@ pub fn agent_start(
                 servers.insert(name.clone(), serde_json::Value::Object(obj));
             }
             options.insert("mcpServers".into(), serde_json::Value::Object(servers));
+        }
+    }
+
+    // Pass Pi-specific options when using the Pi backend
+    {
+        let s = settings.inner().get();
+        if s.agent_backend == "pi" {
+            // pi_default_model may be "provider/modelId" or just "modelId".
+            // Parse it and use the provider from the model string if present,
+            // falling back to pi_default_provider.
+            let (pi_provider, pi_model_id) = if s.pi_default_model.contains('/') {
+                let parts: Vec<&str> = s.pi_default_model.splitn(2, '/').collect();
+                (parts[0].to_string(), parts[1].to_string())
+            } else {
+                (s.pi_default_provider.clone(), s.pi_default_model.clone())
+            };
+            options.insert(
+                "piProvider".into(),
+                serde_json::Value::String(pi_provider.clone()),
+            );
+            options.insert(
+                "piModelId".into(),
+                serde_json::Value::String(pi_model_id),
+            );
+            options.insert(
+                "enableWebAccess".into(),
+                serde_json::Value::Bool(s.pi_enable_web_access),
+            );
+            // Pass per-provider API keys so the bridge can set env vars
+            if !s.pi_api_keys.is_empty() {
+                let keys_obj: serde_json::Map<String, serde_json::Value> = s
+                    .pi_api_keys
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                    .collect();
+                options.insert(
+                    "piApiKeys".into(),
+                    serde_json::Value::Object(keys_obj),
+                );
+            }
+            // For Pi mode, if no apiKey was resolved above (e.g. agent_api_key
+            // is empty), fall back to the Pi provider-specific key for the
+            // selected provider so the bridge always has credentials.
+            if resolved_api_key.is_none() {
+                let provider = pi_provider.as_str();
+                if let Some(k) = s.pi_api_keys.get(provider) {
+                    if !k.is_empty() {
+                        options.insert(
+                            "apiKey".into(),
+                            serde_json::Value::String(k.clone()),
+                        );
+                    }
+                }
+                // Also fall back to the main agent_api_key for Anthropic
+                if !s.agent_api_key.is_empty()
+                    && (provider == "anthropic" || provider.is_empty())
+                {
+                    options.insert(
+                        "apiKey".into(),
+                        serde_json::Value::String(s.agent_api_key.clone()),
+                    );
+                }
+            }
         }
     }
 
@@ -448,6 +529,215 @@ pub fn agent_check_available(app: AppHandle) -> Result<AgentAvailability, String
 pub struct AgentAvailability {
     pub available: bool,
     pub reason: Option<String>,
+}
+
+/// Track the active OAuth process so we can kill it before starting a new one.
+/// Prevents EADDRINUSE when the OAuth callback server port (53692) is still
+/// held by a previous attempt that didn't complete or clean up.
+static OAUTH_CHILD_PID: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
+
+/// Start a Pi OAuth login flow for a provider. Spawns a Node process that
+/// runs the OAuth flow, streaming events via `pi-oauth-event` Tauri events.
+/// Opens the browser automatically and saves credentials to ~/.pi/agent/auth.json.
+#[tauri::command]
+pub fn pi_oauth_login(
+    provider: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    eprintln!("[pi-oauth] starting login for: {}", provider);
+
+    // Kill any previous OAuth process that might still be holding the callback
+    // port (e.g. 53692 for Anthropic). Without this, a second login attempt
+    // fails with EADDRINUSE.
+    if let Ok(mut pid_guard) = OAUTH_CHILD_PID.lock() {
+        if let Some(old_pid) = pid_guard.take() {
+            eprintln!("[pi-oauth] killing previous OAuth process (pid={})", old_pid);
+            #[cfg(unix)]
+            {
+                // SIGTERM first (pi-oauth.mjs handles it), then SIGKILL as fallback
+                let _ = std::process::Command::new("kill")
+                    .args(["-TERM", &old_pid.to_string()])
+                    .output();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &old_pid.to_string()])
+                    .output();
+            }
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &old_pid.to_string()])
+                    .output();
+            }
+        }
+    }
+
+    let node_path = crate::services::shell_env::resolve_node_binary()
+        .ok_or_else(|| "Node.js not found".to_string())?;
+
+    // Use the same path resolution as the bridge scripts — dev mode falls
+    // back to the source tree because resource_dir points at target/debug/.
+    let oauth_path = resolve_bridge_path_for(&app, "pi-oauth.mjs")?;
+    let bridge_dir = std::path::Path::new(&oauth_path)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    eprintln!("[pi-oauth] script: {}", oauth_path);
+
+    let mut cmd = crate::services::shell_env::user_command(node_path);
+    cmd.arg(&oauth_path);
+    cmd.arg(&provider);
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd.current_dir(&bridge_dir);
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to start Pi OAuth: {}", e))?;
+
+    let child_pid = child.id();
+    eprintln!("[pi-oauth] process spawned (pid={})", child_pid);
+
+    // Store PID so the next call can kill us if needed
+    if let Ok(mut pid_guard) = OAUTH_CHILD_PID.lock() {
+        *pid_guard = Some(child_pid);
+    }
+
+    let stdout = child.stdout.take().ok_or("No stdout")?;
+    let stderr = child.stderr.take().ok_or("No stderr")?;
+
+    // Thread: forward stderr to eprintln (visible in tauri dev console)
+    thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            eprintln!("[pi-oauth] {}", line);
+        }
+    });
+
+    // Thread: read stdout events, open browser, emit to frontend
+    let app_clone = app.clone();
+    thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if line.trim().is_empty() { continue; }
+            eprintln!("[pi-oauth] stdout: {}", line);
+
+            // Open browser for auth URLs
+            if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
+                if msg.get("type").and_then(|t| t.as_str()) == Some("auth") {
+                    if let Some(url) = msg.get("url").and_then(|u| u.as_str()) {
+                        if !url.is_empty() {
+                            eprintln!("[pi-oauth] opening browser: {}", url);
+                            let _ = crate::services::coppice_tools::open_url_in_browser(url);
+                        }
+                    }
+                }
+            }
+
+            // Emit to frontend
+            if let Err(e) = app_clone.emit("pi-oauth-event", &line) {
+                eprintln!("[pi-oauth] emit error: {}", e);
+            }
+        }
+        eprintln!("[pi-oauth] stdout closed, waiting for exit...");
+        let _ = child.wait();
+        // Clear PID on exit
+        if let Ok(mut pid_guard) = OAUTH_CHILD_PID.lock() {
+            if *pid_guard == Some(child_pid) {
+                *pid_guard = None;
+            }
+        }
+        eprintln!("[pi-oauth] process exited");
+    });
+
+    Ok(())
+}
+
+/// Check which providers have OAuth credentials in ~/.pi/agent/auth.json.
+/// Returns a JSON object mapping provider names to true, e.g. { "anthropic": true }.
+#[tauri::command]
+pub fn pi_oauth_check() -> Result<serde_json::Value, String> {
+    let auth_path = dirs::home_dir()
+        .ok_or_else(|| "Cannot determine home directory".to_string())?
+        .join(".pi")
+        .join("agent")
+        .join("auth.json");
+
+    if !auth_path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+
+    let contents = std::fs::read_to_string(&auth_path)
+        .map_err(|e| format!("Failed to read auth.json: {}", e))?;
+
+    let data: serde_json::Value = serde_json::from_str(&contents)
+        .map_err(|e| format!("Failed to parse auth.json: {}", e))?;
+
+    let mut result = serde_json::Map::new();
+    if let Some(obj) = data.as_object() {
+        for key in obj.keys() {
+            result.insert(key.clone(), serde_json::Value::Bool(true));
+        }
+    }
+
+    Ok(serde_json::Value::Object(result))
+}
+
+/// Query the Pi SDK's built-in model registry. Spawns a short-lived Node
+/// process that imports @earendil-works/pi-ai and dumps providers + models
+/// as JSON. No running session required.
+#[tauri::command]
+pub fn pi_get_models(app: AppHandle) -> Result<serde_json::Value, String> {
+    let node_path = crate::services::shell_env::resolve_node_binary()
+        .ok_or_else(|| "Node.js not found".to_string())?;
+
+    // Resolve bridge dir using the same path logic as bridge scripts
+    let bridge_path = resolve_bridge_path_for(&app, "pi-bridge.mjs")?;
+    let bridge_dir = std::path::Path::new(&bridge_path)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+
+    let script = r#"
+        import { getProviders, getModels } from "@earendil-works/pi-ai";
+        const result = [];
+        for (const p of getProviders()) {
+            try {
+                for (const m of getModels(p)) {
+                    result.push({
+                        value: m.id,
+                        label: m.name,
+                        provider: p,
+                        contextWindow: m.contextWindow,
+                        reasoning: m.reasoning,
+                    });
+                }
+            } catch {}
+        }
+        process.stdout.write(JSON.stringify(result));
+    "#;
+
+    let mut cmd = crate::services::shell_env::user_command(node_path);
+    cmd.args(["--input-type=module", "-e", script]);
+    cmd.current_dir(&bridge_dir);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to query Pi models: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Pi model query failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(&stdout)
+        .map_err(|e| format!("Failed to parse Pi model list: {}", e))
 }
 
 /// Save attached images to temp files so the agent can reference them by path.

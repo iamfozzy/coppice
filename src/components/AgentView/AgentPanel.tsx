@@ -621,6 +621,21 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
 
       case "heartbeat":
         break;
+
+      // Pi bridge: dynamic model list from all available providers
+      case "pi_models": {
+        const models = msg.models as Array<{
+          value: string;
+          label: string;
+          provider?: string;
+          contextWindow?: number;
+          reasoning?: boolean;
+        }>;
+        if (models && models.length) {
+          useAppStore.setState({ piAvailableModels: models });
+        }
+        break;
+      }
     }
 
     // Flush all batched trace events in a single state update
@@ -813,6 +828,8 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         onConciseModeChange={handleConciseModeChange}
         onChatModeChange={handleChatModeChange}
         onExtendedContextChange={handleExtendedContextChange}
+        availableModels={appSettings?.agent_backend === "pi" ? useAppStore.getState().piAvailableModels : undefined}
+        isPiBackend={appSettings?.agent_backend === "pi"}
       />
       <AgentInputBar
         sessionId={sessionId}

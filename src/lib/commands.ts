@@ -396,6 +396,29 @@ export async function agentCheckAvailable(): Promise<AgentAvailability> {
   return invoke("agent_check_available");
 }
 
+/** Start Pi OAuth login flow for a provider. Opens browser for auth. */
+export async function piOAuthLogin(provider: string): Promise<void> {
+  return invoke("pi_oauth_login", { provider });
+}
+
+/** Check which providers have OAuth credentials in ~/.pi/agent/auth.json. */
+export async function piOAuthCheck(): Promise<Record<string, boolean>> {
+  return invoke("pi_oauth_check");
+}
+
+/** Query the Pi SDK's built-in model registry. No running session required. */
+export async function piGetModels(): Promise<
+  Array<{
+    value: string;
+    label: string;
+    provider: string;
+    contextWindow: number;
+    reasoning: boolean;
+  }>
+> {
+  return invoke("pi_get_models");
+}
+
 export interface ImageFileData {
   data: string;
   media_type: string;

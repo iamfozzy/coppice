@@ -286,6 +286,8 @@ interface AppState {
   projects: Project[];
   worktreesByProject: Record<string, Worktree[]>;
   appSettings: AppSettings | null;
+  /** Dynamic model list populated by the Pi bridge's init event. */
+  piAvailableModels: import("../lib/supportedModels").SupportedModel[];
   scratchpadProject: Project | null;
   scratchpadWorktree: Worktree | null;
 
@@ -447,6 +449,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   worktreesByProject: {},
   appSettings: null,
+  piAvailableModels: [],
   scratchpadProject: null,
   scratchpadWorktree: null,
   selectedProjectId: null,
@@ -831,7 +834,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         restoredSessions[cached.tab_id] = {
           messages,
           status,
-          model: cached.model || get().appSettings?.agent_default_model || "",
+          model: cached.model || (
+            get().appSettings?.agent_backend === "pi"
+              ? get().appSettings?.pi_default_model || ""
+              : get().appSettings?.agent_default_model || ""
+          ),
           effort: cached.effort as EffortLevel,
           extendedContext: cached.extended_context,
           conciseMode: cached.concise_mode ?? false,
@@ -1066,7 +1073,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionState: AgentSessionState = {
       messages: [],
       status: "idle",
-      model: model || s.appSettings?.agent_default_model || "",
+      model: model || (
+        s.appSettings?.agent_backend === "pi"
+          ? s.appSettings?.pi_default_model || ""
+          : s.appSettings?.agent_default_model || ""
+      ),
       effort: s.appSettings?.agent_default_effort || "high",
       extendedContext: s.appSettings?.agent_default_extended_context ?? false,
       permissionMode: "bypassPermissions",

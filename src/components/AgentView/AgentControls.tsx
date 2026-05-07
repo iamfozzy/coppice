@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import type { EffortLevel, AgentPermissionMode } from "../../lib/types";
-import { SUPPORTED_MODELS, modelSupports1MContext } from "../../lib/supportedModels";
+import { CLAUDE_MODELS, modelSupports1MContext, type SupportedModel } from "../../lib/supportedModels";
 import { Tooltip } from "../ui/Tooltip";
+import { useAppStore } from "../../stores/appStore";
 
 interface Props {
   model: string;
@@ -16,11 +17,13 @@ interface Props {
   onConciseModeChange: (enabled: boolean) => void;
   onChatModeChange: (enabled: boolean) => void;
   onExtendedContextChange: (enabled: boolean) => void;
+  /** Available models — dynamic for Pi backend, static for Claude. */
+  availableModels?: SupportedModel[];
+  /** Whether using Pi agent backend (affects which controls are shown). */
+  isPiBackend?: boolean;
 }
 
 const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
-
-const MODELS = SUPPORTED_MODELS;
 
 const PERMISSION_MODES: {
   value: AgentPermissionMode;
@@ -62,12 +65,14 @@ export function AgentControls({
   onConciseModeChange,
   onChatModeChange,
   onExtendedContextChange,
+  availableModels,
+  isPiBackend,
 }: Props) {
-  const supports1M = modelSupports1MContext(model);
+  const supports1M = !isPiBackend && modelSupports1MContext(model);
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 pb-0 pt-2 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
       {/* Model selector — custom dropdown */}
-      <ModelPicker model={model} onModelChange={onModelChange} />
+      <ModelPicker model={model} onModelChange={onModelChange} availableModels={availableModels} isPiBackend={isPiBackend} />
 
       {/* 1M context toggle — only visible for models that support it */}
       {supports1M && (
@@ -157,22 +162,39 @@ export function AgentControls({
   );
 }
 
-/** Custom model picker that looks like a button / pill instead of a native <select>.
- *  Supports both preset Claude models and custom model strings (e.g. for LiteLLM proxy). */
+const PROVIDER_LABELS: Record<string, string> = {
+  openai: "OpenAI", xai: "xAI", deepseek: "DeepSeek", openrouter: "OpenRouter",
+  "amazon-bedrock": "Bedrock", "azure-openai-responses": "Azure OpenAI",
+  "google-vertex": "Vertex AI", "github-copilot": "Copilot",
+};
+function fmtProvider(slug: string) {
+  return PROVIDER_LABELS[slug] || slug.charAt(0).toUpperCase() + slug.slice(1);
+}
+
 function ModelPicker({
   model,
   onModelChange,
+  availableModels,
+  isPiBackend,
 }: {
   model: string;
   onModelChange: (model: string) => void;
+  availableModels?: SupportedModel[];
+  isPiBackend?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [customInput, setCustomInput] = useState(false);
   const [customValue, setCustomValue] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const matchedPreset = MODELS.find((m) => m.value === model);
+  const configuredProviders = useAppStore((s) => s.appSettings?.pi_configured_providers);
+
+  const MODELS = availableModels && availableModels.length > 0 ? availableModels : CLAUDE_MODELS;
+  const matchedPreset = MODELS.find((m) =>
+    m.value === model || (m.provider && `${m.provider}/${m.value}` === model)
+  );
   const displayLabel = matchedPreset?.label ?? model ?? MODELS[0].label;
 
   useEffect(() => {
@@ -181,6 +203,7 @@ function ModelPicker({
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
         setCustomInput(false);
+        setExpandedProvider(null);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -188,10 +211,23 @@ function ModelPicker({
   }, [open]);
 
   useEffect(() => {
-    if (customInput && inputRef.current) {
-      inputRef.current.focus();
-    }
+    if (customInput && inputRef.current) inputRef.current.focus();
   }, [customInput]);
+
+  const usePiGrouped = isPiBackend && configuredProviders && configuredProviders.length > 0;
+
+  const providerGroups = usePiGrouped
+    ? configuredProviders!.map((p) => ({
+        provider: p,
+        models: MODELS.filter((m) => m.provider === p),
+      })).filter((g) => g.models.length > 0)
+    : [];
+
+  const currentProvider = model.includes("/") ? model.split("/")[0] : matchedPreset?.provider;
+
+  useEffect(() => {
+    if (open && usePiGrouped && currentProvider) setExpandedProvider(currentProvider);
+  }, [open]);
 
   return (
     <div className="relative" ref={ref}>
@@ -208,24 +244,70 @@ function ModelPicker({
         </svg>
       </button>
       {open && (
-        <div className="absolute bottom-full mb-1 left-0 min-w-[180px] bg-bg-secondary border border-border-primary rounded-md shadow-lg overflow-hidden z-50">
-          {MODELS.map((m) => (
-            <button
-              key={m.value}
-              className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
-                m.value === model
-                  ? "bg-accent/10 text-accent"
-                  : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-              }`}
-              onClick={() => {
-                onModelChange(m.value);
-                setOpen(false);
-                setCustomInput(false);
-              }}
-            >
-              {m.label}
-            </button>
-          ))}
+        <div className="absolute bottom-full mb-1 left-0 min-w-[200px] max-h-[320px] overflow-y-auto bg-bg-secondary border border-border-primary rounded-md shadow-lg z-50">
+          {usePiGrouped ? (
+            <>
+              {providerGroups.map((g) => {
+                const isExpanded = expandedProvider === g.provider;
+                return (
+                  <div key={g.provider}>
+                    <button
+                      className={`w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                        currentProvider === g.provider
+                          ? "text-accent"
+                          : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                      }`}
+                      onClick={() => setExpandedProvider(isExpanded ? null : g.provider)}
+                    >
+                      <span>{fmtProvider(g.provider)}</span>
+                      <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}>
+                        <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                    {isExpanded && (
+                      <div className="pb-1">
+                        {g.models.map((m) => {
+                          const isActive = m.value === model || `${m.provider}/${m.value}` === model;
+                          return (
+                            <button
+                              key={m.value}
+                              className={`w-full text-left pl-6 pr-3 py-1 text-[11px] transition-colors ${
+                                isActive ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                              }`}
+                              onClick={() => {
+                                onModelChange(m.provider ? `${m.provider}/${m.value}` : m.value);
+                                setOpen(false);
+                                setExpandedProvider(null);
+                              }}
+                            >
+                              {m.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </>
+          ) : (
+            MODELS.map((m) => (
+              <button
+                key={m.value}
+                className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
+                  (m.value === model || (m.provider && `${m.provider}/${m.value}` === model))
+                    ? "bg-accent/10 text-accent"
+                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                }`}
+                onClick={() => {
+                  onModelChange(m.provider ? `${m.provider}/${m.value}` : m.value);
+                  setOpen(false);
+                }}
+              >
+                {m.label}
+              </button>
+            ))
+          )}
           <div className="border-t border-border-primary my-0.5" />
           {customInput ? (
             <div className="px-2 py-1.5">
@@ -246,7 +328,7 @@ function ModelPicker({
                     setCustomValue("");
                   }
                 }}
-                placeholder="openai/gpt-4o"
+                placeholder="provider/model-id"
                 className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
               />
               <p className="mt-1 text-[9px] text-text-tertiary">Enter to confirm</p>
