@@ -44,6 +44,45 @@ function log(...args) {
 }
 
 /**
+ * Translate an MCP transport / connect error into a short, user-facing
+ * description. Returns just the description (no server name) — the caller
+ * decides whether to prefix with the server name for context.
+ *
+ * The MCP SDK's transports throw errors whose `.message` is sometimes a
+ * raw "non-200 status code: 401" string and sometimes a multi-line stack
+ * trace. We normalise both shapes here. NEVER include `err.stack`: those
+ * frames pollute the UI without telling the user anything actionable.
+ */
+function describeMcpError(err) {
+  if (!err) return "connection failed";
+  const raw = typeof err === "string" ? err : err.message || String(err);
+  // Take only the first non-empty line so a stack-formatted message still
+  // produces a clean badge.
+  const firstLine = raw.split(/\r?\n/).map((s) => s.trim()).find(Boolean) || raw;
+
+  const httpMatch = firstLine.match(/non-200 status code:\s*(\d+)/i);
+  const httpCode = httpMatch ? Number(httpMatch[1]) : (typeof err.code === "number" ? err.code : undefined);
+
+  if (httpCode === 401) return "not authorized (HTTP 401) — open Settings → MCP Servers and click Connect";
+  if (httpCode === 403) return "forbidden (HTTP 403) — your token may be missing the required scopes";
+  if (httpCode === 404) return "endpoint not found (HTTP 404) — check the server URL";
+  if (typeof httpCode === "number" && httpCode >= 500) return `server error (HTTP ${httpCode}) — try again shortly`;
+  if (typeof httpCode === "number") return `server returned HTTP ${httpCode}`;
+
+  const netMatch = firstLine.match(/\b(ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|ENETUNREACH|EAI_AGAIN)\b/);
+  const netCode = netMatch?.[1];
+  if (netCode === "ENOTFOUND" || netCode === "EAI_AGAIN") return "DNS lookup failed — check the server URL or your connection";
+  if (netCode === "ECONNREFUSED") return "connection refused — is the server running and reachable?";
+  if (netCode === "ETIMEDOUT" || /timeout/i.test(firstLine)) return "connection timed out";
+  if (netCode === "ECONNRESET") return "connection reset by the server";
+  if (netCode === "ENETUNREACH") return "network unreachable";
+
+  // Fall back to the trimmed first line — strip "Error: " prefix and limit
+  // length to keep the badge tidy.
+  return firstLine.replace(/^Error:\s*/i, "").slice(0, 200) || "connection failed";
+}
+
+/**
  * Trim large tool result text for frontend display/storage.
  * Strategy: keep the first and last N lines, insert a "[trimmed]" marker.
  */
@@ -861,9 +900,36 @@ function buildMcpTransport(serverName, entry) {
   }
   if (!entry.url) throw new Error(`${type} MCP server requires a URL`);
   const url = new URL(entry.url);
-  if (type === "sse") return new SSEClientTransport(url);
+
+  // Headers are injected by Rust (settings.rs `headers` map + the Bearer
+  // token from `mcp_oauth::access_token_for_session`). The MCP SDK's
+  // `requestInit.headers` covers the POST channel; for SSE we additionally
+  // need a fetch override on `eventSourceInit` because EventSource doesn't
+  // natively accept custom headers — without this, the GET that opens the
+  // SSE stream is unauthenticated and the server returns 401.
+  const headers = entry.headers && typeof entry.headers === "object" ? { ...entry.headers } : {};
+  const hasHeaders = Object.keys(headers).length > 0;
+  const requestInit = hasHeaders ? { headers } : undefined;
+
+  if (type === "sse") {
+    const opts = {};
+    if (requestInit) opts.requestInit = requestInit;
+    if (hasHeaders) {
+      opts.eventSourceInit = {
+        fetch: (input, init) => {
+          // The eventsource lib may hand us a Headers instance OR a plain
+          // object; using `new Headers()` normalises both. Our headers go
+          // last so they override anything (e.g. a stale Authorization).
+          const merged = new Headers(init?.headers || {});
+          for (const [k, v] of Object.entries(headers)) merged.set(k, v);
+          return fetch(input, { ...(init || {}), headers: merged });
+        },
+      };
+    }
+    return new SSEClientTransport(url, opts);
+  }
   if (type === "http" || type === "streamable_http" || type === "streamable-http") {
-    return new StreamableHTTPClientTransport(url);
+    return new StreamableHTTPClientTransport(url, requestInit ? { requestInit } : undefined);
   }
   throw new Error(`Unsupported MCP server type: ${type}`);
 }
@@ -953,8 +1019,23 @@ async function loadMcpToolDefinitions(mcpServers) {
         );
       }
     } catch (err) {
-      statuses.push({ name: serverName, status: `error: ${err.message}` });
-      log(`mcp: failed ${serverName}: ${err.stack || err.message}`);
+      const description = describeMcpError(err);
+      // Status badge in the toolbar shows the short description.
+      statuses.push({ name: serverName, status: `error: ${description}` });
+      // Surface a structured event so the chat thread gets one clean line
+      // per failed server (instead of a multi-line stack trace leaking out
+      // of stderr).
+      emit({
+        type: "mcp_error",
+        serverName,
+        message: `${serverName}: ${description}`,
+        code: typeof err?.code === "number" ? err.code : undefined,
+      });
+      // Local stderr log — kept for debugging in dev consoles, but only the
+      // first line of the message (no stack). The structured event above is
+      // what the user actually sees in the UI.
+      const firstLine = (err?.message || String(err)).split(/\r?\n/)[0];
+      log(`mcp: failed ${serverName}: ${firstLine}`);
       try {
         await client.close();
       } catch {
@@ -1220,6 +1301,58 @@ async function generateTitle(prompt, provider, modelId) {
 
 // ── Event subscription ──
 
+// Streaming updates can arrive token-by-token. If we forward every delta (and
+// especially every debug log) over Tauri IPC, WebKit's Web Content process can
+// get buried under thousands of tiny events. Batch adjacent deltas in the
+// bridge, then the frontend still does its own requestAnimationFrame flush.
+const PARTIAL_FLUSH_MS = 40;
+let partialFlushTimer = null;
+let partialTextBuffer = "";
+let partialThinkingBuffer = "";
+
+function flushPartialBuffers() {
+  if (partialFlushTimer) {
+    clearTimeout(partialFlushTimer);
+    partialFlushTimer = null;
+  }
+  if (partialThinkingBuffer) {
+    emit({ type: "partial", delta: { type: "thinking", text: partialThinkingBuffer } });
+    partialThinkingBuffer = "";
+  }
+  if (partialTextBuffer) {
+    emit({ type: "partial", delta: { type: "text", text: partialTextBuffer } });
+    partialTextBuffer = "";
+  }
+}
+
+function queuePartialDelta(kind, text) {
+  if (!text) return;
+  if (kind === "thinking") {
+    partialThinkingBuffer += text;
+  } else {
+    partialTextBuffer += text;
+  }
+
+  // Flush immediately if the buffer is getting large; otherwise coalesce over
+  // a short interval. This caps IPC event rate without making streaming feel
+  // laggy.
+  if (partialTextBuffer.length + partialThinkingBuffer.length >= 8192) {
+    flushPartialBuffers();
+    return;
+  }
+
+  if (!partialFlushTimer) {
+    partialFlushTimer = setTimeout(flushPartialBuffers, PARTIAL_FLUSH_MS);
+  }
+}
+
+/** Log only low-volume event breadcrumbs. High-volume message/tool updates and
+ * large payload events would otherwise be forwarded to the WebView on stderr. */
+function logSessionEvent(event) {
+  if (event.type === "message_update" || event.type === "tool_execution_update") return;
+  log(`event: ${event.type}`);
+}
+
 /**
  * Subscribe to AgentSession events and emit them in Coppice's event format.
  * AgentSession emits the same core Agent events (message_start, message_end,
@@ -1233,7 +1366,7 @@ function subscribeToSessionEvents(agentSession) {
   }
 
   sessionUnsubscribe = agentSession.subscribe((event) => {
-    log(`event: ${event.type}${event.type === "message_update" ? "" : " " + JSON.stringify(event).slice(0, 120)}`);
+    logSessionEvent(event);
     switch (event.type) {
       case "message_start":
         if (event.message?.role === "assistant") {
@@ -1245,12 +1378,9 @@ function subscribeToSessionEvents(agentSession) {
         const aEvent = event.assistantMessageEvent;
         if (!aEvent) break;
         if (aEvent.type === "text_delta") {
-          emit({ type: "partial", delta: { type: "text", text: aEvent.delta } });
+          queuePartialDelta("text", aEvent.delta);
         } else if (aEvent.type === "thinking_delta") {
-          emit({
-            type: "partial",
-            delta: { type: "thinking", text: aEvent.delta },
-          });
+          queuePartialDelta("thinking", aEvent.delta);
         } else if (aEvent.type === "text_start" || aEvent.type === "thinking_start") {
           emit({ type: "status", status: "thinking" });
         }
@@ -1258,6 +1388,11 @@ function subscribeToSessionEvents(agentSession) {
       }
 
       case "message_end": {
+        // Ensure no delayed partial event can arrive after the final assistant
+        // message (which would leave duplicate live text under the completed
+        // response in the frontend).
+        flushPartialBuffers();
+
         const msg = event.message;
         if (!msg || msg.role !== "assistant") break;
 
@@ -1343,6 +1478,8 @@ function subscribeToSessionEvents(agentSession) {
       }
 
       case "agent_end": {
+        flushPartialBuffers();
+
         const lastAssistant = [...(event.messages || [])]
           .reverse()
           .find((m) => m.role === "assistant");
@@ -2037,6 +2174,7 @@ function parseImages(images) {
 // ── Cleanup ──
 
 function cleanup() {
+  flushPartialBuffers();
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;

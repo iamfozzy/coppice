@@ -5,7 +5,7 @@ import { AgentInputBar } from "../AgentView/AgentInputBar";
 import { CreateWorktreeModal } from "../Sidebar/CreateWorktreeModal";
 import { Tooltip } from "../ui/Tooltip";
 import { TileViewToggleButton } from "../ui/TileViewToggleButton";
-import { ModelConfigPopover, formatPiProvider, getPiModelsForProvider, stripPiProviderPrefix, type HeaderOption } from "../ui/AgentHeaderControls";
+import { McpStatusPopover, ModelConfigPopover, formatPiProvider, getPiModelsForProvider, stripPiProviderPrefix, type HeaderOption } from "../ui/AgentHeaderControls";
 import { useAgentTabCloseConfirmation } from "../ui/useAgentTabCloseConfirmation";
 import { CLAUDE_MODELS, modelSupports1MContext, type SupportedModel } from "../../lib/supportedModels";
 import { CLAUDE_EFFORT_LEVELS, EffortPicker, ModelPicker, PI_EFFORT_LEVELS } from "../AgentView/AgentControls";
@@ -162,6 +162,10 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
   const setAgentModel = useAppStore((s) => s.setAgentModel);
   const piAvailableModels = useAppStore((s) => s.piAvailableModels);
   const ensurePiModelsLoaded = useAppStore((s) => s.ensurePiModelsLoaded);
+  const selectedWorktreeId = useAppStore((s) => s.selectedWorktreeId);
+  const activeTabByWorktree = useAppStore((s) => s.activeTabByWorktree);
+  const tabsByWorktree = useAppStore((s) => s.tabsByWorktree);
+  const agentSessionByTab = useAppStore((s) => s.agentSessionByTab);
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [switchingBackend, setSwitchingBackend] = useState(false);
@@ -315,6 +319,13 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
   const modelTooltip = currentBackend === "pi"
     ? `${formatPiProvider(currentPiProvider)} · ${piModelLabel}`
     : claudeModelLabel;
+  const activeHeaderTabId = selectedWorktreeId ? activeTabByWorktree[selectedWorktreeId] ?? null : null;
+  const activeHeaderTab = selectedWorktreeId && activeHeaderTabId
+    ? tabsByWorktree[selectedWorktreeId]?.find((tab) => tab.id === activeHeaderTabId)
+    : null;
+  const activeHeaderSession = activeHeaderTab?.type === "agent" && activeHeaderTabId
+    ? agentSessionByTab[activeHeaderTabId] ?? null
+    : null;
 
   return (
     <div className="flex items-center justify-between h-12 px-3 py-2 shrink-0 bg-bg-secondary border-b border-border-primary gap-3">
@@ -356,6 +367,13 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
             modelValue={currentBackend === "pi" ? currentPiModelId : currentClaudeModel}
             modelOptions={currentBackend === "pi" ? piModelOptions : claudeModelOptions}
             onModelSelect={currentBackend === "pi" ? handlePiModelSelect : handleClaudeModelSelect}
+          />
+
+          <McpStatusPopover
+            configuredServers={appSettings?.mcp_servers ?? {}}
+            sessionServers={activeHeaderSession?.mcpServers ?? []}
+            disabled={!appSettings}
+            dropdownAlign="left"
           />
         </div>
 
@@ -670,6 +688,7 @@ function Tile({ tile }: { tile: TileTab }) {
           onPlanApprove={(updatedInput) => handleToolResponse("allow", { updatedInput })}
           onPlanRequestChanges={(feedback) => handleToolResponse("deny", { message: `Please revise the plan: ${feedback}` })}
           onPlanDeny={() => handleToolResponse("deny")}
+          worktreePath={cwd}
         />
       </div>
 
@@ -911,18 +930,22 @@ function TileControlsDropdown({
     const nextModelId = nextModels.find((candidate) => candidate.value === currentModelId)?.value
       ?? nextModels[0]?.value
       ?? currentModelId;
-    if (nextModelId) onModelChange(`${provider}/${nextModelId}`);
-    closeMenu();
-  }, [availableModels, closeMenu, currentModelId, onModelChange]);
+    if (!nextModelId) {
+      setPanel("main");
+      return;
+    }
+    const nextValue = `${provider}/${nextModelId}`;
+    if (nextValue !== model) onModelChange(nextValue);
+    setPanel("model");
+  }, [availableModels, currentModelId, model, onModelChange]);
 
   const handleModelSelect = useCallback((value: string) => {
-    if (isPiBackend && !value.includes("/")) {
-      onModelChange(`${currentPiProvider}/${value}`);
-    } else {
-      onModelChange(value);
-    }
-    closeMenu();
-  }, [closeMenu, currentPiProvider, isPiBackend, onModelChange]);
+    const nextValue = isPiBackend && !value.includes("/")
+      ? `${currentPiProvider}/${value}`
+      : value;
+    if (nextValue !== model) onModelChange(nextValue);
+    setPanel("main");
+  }, [currentPiProvider, isPiBackend, model, onModelChange]);
 
   const panelTitle = panel === "provider"
     ? "Provider"
@@ -1071,7 +1094,7 @@ function TileControlsDropdown({
                   effort={effort}
                   onEffortChange={(value) => {
                     onEffortChange(value);
-                    closeMenu();
+                    setPanel("main");
                   }}
                   isPiBackend={isPiBackend}
                   inline

@@ -9,9 +9,10 @@ export interface GroupedTool {
 
 interface Props {
   tools: GroupedTool[];
+  worktreePath?: string;
 }
 
-export const ToolGroup = memo(function ToolGroup({ tools }: Props) {
+export const ToolGroup = memo(function ToolGroup({ tools, worktreePath }: Props) {
   const anyActive = tools.some((t) => t.resultMsg === null);
   const anyError = tools.some((t) => t.resultMsg?.isError);
 
@@ -27,6 +28,7 @@ export const ToolGroup = memo(function ToolGroup({ tools }: Props) {
         toolOutput={t.resultMsg?.toolOutput || t.resultMsg?.content}
         isError={t.resultMsg?.isError}
         isActive={!t.resultMsg}
+        worktreePath={worktreePath}
       />
     );
   }
@@ -82,6 +84,7 @@ export const ToolGroup = memo(function ToolGroup({ tools }: Props) {
               toolOutput={t.resultMsg?.toolOutput || t.resultMsg?.content}
               isError={t.resultMsg?.isError}
               isActive={!t.resultMsg}
+              worktreePath={worktreePath}
             />
           ))}
         </div>

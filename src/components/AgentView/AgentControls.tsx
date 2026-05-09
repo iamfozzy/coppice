@@ -332,17 +332,26 @@ export function ModelPicker({
     }
   }, [inline, search, usePiGrouped, providerGroups]);
 
-  const closeMenu = () => {
-    setOpen(false);
-    setPanel("main");
+  const resetPickerState = () => {
     setCustomInput(false);
     setExpandedProvider(null);
     setSearch("");
   };
 
+  const closeMenu = () => {
+    setOpen(false);
+    setPanel("main");
+    resetPickerState();
+  };
+
+  const keepMenuOpen = (nextPanel: "main" | "provider" | "model" = "main") => {
+    setPanel(nextPanel);
+    resetPickerState();
+  };
+
   const handleSelect = (value: string) => {
     onModelChange(value);
-    if (!inline) closeMenu();
+    if (!inline) keepMenuOpen("main");
   };
 
   const handleProviderSelect = (provider: string) => {
@@ -350,10 +359,15 @@ export function ModelPicker({
     const nextModelId = provider === currentProvider
       ? currentModelId
       : providerModels.find((candidate) => candidate.value === currentModelId)?.value ?? providerModels[0]?.value ?? currentModelId;
-    if (nextModelId) {
-      handleSelect(`${provider}/${nextModelId}`);
-    } else {
+    if (!nextModelId) {
       closeMenu();
+      return;
+    }
+    const nextValue = `${provider}/${nextModelId}`;
+    if (nextValue !== model) onModelChange(nextValue);
+    if (!inline) {
+      keepMenuOpen("model");
+      return;
     }
   };
 

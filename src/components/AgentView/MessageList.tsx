@@ -1,6 +1,6 @@
 import { useRef, useEffect, useMemo } from "react";
 import type { AgentMessage, AgentStatus, AgentPendingPermission } from "../../lib/types";
-import { MessageBubble, MarkdownContent } from "./MessageBubble";
+import { MessageBubble } from "./MessageBubble";
 import { ToolGroup, type GroupedTool } from "./ToolGroup";
 import { PlanApprovalDialog } from "./PlanApprovalDialog";
 import { AnimatedRobotIcon, AnimatedToolIcon, useRotatingThinkingPhrase } from "./AgentStatusIcons";
@@ -17,6 +17,7 @@ interface Props {
   onPlanApprove?: (updatedInput: unknown) => void;
   onPlanRequestChanges?: (feedback: string) => void;
   onPlanDeny?: () => void;
+  worktreePath?: string;
 }
 
 interface ToolGroupItem {
@@ -77,7 +78,7 @@ function mergeMessages(messages: AgentMessage[]): { items: RenderItem[]; queued:
 
 export function MessageList({
   messages, streamingText, streamingThinkingText, status, stalled, onCancelQueued,
-  pendingPlan, onPlanApprove, onPlanRequestChanges, onPlanDeny,
+  pendingPlan, onPlanApprove, onPlanRequestChanges, onPlanDeny, worktreePath,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
@@ -126,9 +127,9 @@ export function MessageList({
 
       {items.map((item) => {
         if (item.kind === "tool_group") {
-          return <ToolGroup key={item.key} tools={item.tools} />;
+          return <ToolGroup key={item.key} tools={item.tools} worktreePath={worktreePath} />;
         }
-        return <MessageBubble key={item.msg.id} message={item.msg} />;
+        return <MessageBubble key={item.msg.id} message={item.msg} worktreePath={worktreePath} />;
       })}
 
       {/* Live streaming thinking — shown while thinking deltas arrive */}
@@ -147,10 +148,11 @@ export function MessageList({
         </div>
       )}
 
-      {/* Live streaming text — render with markdown */}
+      {/* Live streaming text — keep rendering cheap while deltas arrive.
+          The finalized assistant message is rendered with full markdown once. */}
       {streamingText && (
-        <div className="pr-8">
-          <MarkdownContent text={streamingText} />
+        <div className="pr-8 text-[13px] text-text-primary break-words leading-relaxed whitespace-pre-wrap">
+          {streamingText}
           <span className="inline-block w-1.5 h-3.5 bg-accent/50 animate-pulse rounded-sm ml-0.5 -mb-0.5" />
         </div>
       )}
@@ -162,6 +164,7 @@ export function MessageList({
           onApprove={onPlanApprove}
           onRequestChanges={onPlanRequestChanges}
           onDeny={onPlanDeny}
+          worktreePath={worktreePath}
         />
       )}
 
@@ -173,7 +176,7 @@ export function MessageList({
 
       {/* Queued messages — always at bottom until sent */}
       {queued.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} onCancel={onCancelQueued} />
+        <MessageBubble key={msg.id} message={msg} onCancel={onCancelQueued} worktreePath={worktreePath} />
       ))}
     </div>
   );

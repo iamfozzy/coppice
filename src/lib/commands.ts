@@ -441,6 +441,82 @@ export async function getProjectCommands(cwd: string): Promise<ProjectSlashComma
   return invoke("get_project_commands", { cwd });
 }
 
+// MCP catalog + OAuth
+
+export interface McpCatalogEntry {
+  id: string;
+  display_name: string;
+  description: string;
+  server_type: "stdio" | "sse" | "http";
+  url: string;
+  default_name: string;
+  /** "oauth": full discovery + PKCE flow.
+   *  "static-bearer": user supplies a bearer token, written into headers.
+   *  "none": no automatic auth handled by Coppice. */
+  auth: "oauth" | "static-bearer" | "none";
+  scopes: string[];
+  homepage: string;
+  /** For "static-bearer": deep link to the page where the user generates the token. */
+  token_url?: string;
+  /** For "static-bearer": short hint shown next to the token input. */
+  token_help?: string;
+}
+
+export interface McpAuthStatus {
+  name: string;
+  /** "connected" | "disconnected" | "expired" | "error" | "not_configured" */
+  status: string;
+  expires_at?: number;
+  message?: string;
+}
+
+export interface McpTestResult {
+  ok: boolean;
+  message: string;
+  status_code?: number;
+  needs_oauth: boolean;
+}
+
+/** List the curated MCP servers Coppice knows how to one-click install. */
+export async function mcpGetCatalog(): Promise<McpCatalogEntry[]> {
+  return invoke("mcp_get_catalog");
+}
+
+export interface InstalledMcpServer {
+  name: string;
+  entry: import("./types").McpServerEntry;
+}
+
+/** Insert a catalog entry into settings. For static-bearer entries, pass the
+ *  user-supplied token; it's written verbatim to the server's
+ *  `Authorization: Bearer …` header. */
+export async function mcpInstallCatalogEntry(
+  catalogId: string,
+  token?: string,
+): Promise<InstalledMcpServer> {
+  return invoke("mcp_install_catalog_entry", { catalogId, token });
+}
+
+/** Kick off the OAuth flow. Subscribe to `mcp-oauth-event` for progress. */
+export async function mcpOauthStart(name: string): Promise<void> {
+  return invoke("mcp_oauth_start", { name });
+}
+
+/** Drop tokens for a server (keeps server config). */
+export async function mcpOauthRevoke(name: string): Promise<void> {
+  return invoke("mcp_oauth_revoke", { name });
+}
+
+/** Live token-status snapshot for every configured server. */
+export async function mcpGetAuthStatus(): Promise<McpAuthStatus[]> {
+  return invoke("mcp_get_auth_status");
+}
+
+/** Probe a server's URL (or stdio command resolution). */
+export async function mcpTestConnection(name: string): Promise<McpTestResult> {
+  return invoke("mcp_test_connection", { name });
+}
+
 // Agent tab cache types
 export interface AgentTabCache {
   tab_id: string;

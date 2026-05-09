@@ -90,12 +90,31 @@ export interface AppSettings {
   pi_configured_providers: string[];
 }
 
+export interface McpOAuthState {
+  authorization_endpoint?: string;
+  token_endpoint?: string;
+  registration_endpoint?: string;
+  client_id?: string;
+  has_client_secret?: boolean;
+  scopes?: string[];
+  /** Whether a non-expired (or refreshable) token set is currently in the keychain. */
+  connected?: boolean;
+  /** Unix seconds — last successful auth/refresh. */
+  last_auth_at?: number;
+}
+
 export interface McpServerEntry {
   server_type: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
   url?: string;
   env?: Record<string, string>;
+  /** Static headers for http/sse — merged with OAuth bearer token at session start. */
+  headers?: Record<string, string>;
+  /** Present when this server authenticates via OAuth 2.1. */
+  oauth?: McpOAuthState;
+  /** Catalog ID this server was created from (e.g. "atlassian-rovo", "github"). */
+  catalog_id?: string;
 }
 
 // ── Image attachment type ──
@@ -117,6 +136,11 @@ export type EffortLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh
 export type PiThinkingLevel = Exclude<EffortLevel, "max">;
 export type AgentPermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions";
 
+export interface McpServerStatus {
+  name: string;
+  status: string;
+}
+
 export interface AgentMessage {
   id: string;
   type: "user" | "assistant" | "tool_call" | "tool_result" | "system" | "error" | "slash_output";
@@ -129,7 +153,7 @@ export interface AgentMessage {
   isQueued?: boolean;
   thinkingText?: string;
   /** MCP server status for system "session started" messages */
-  mcpServers?: Array<{ name: string; status: string }>;
+  mcpServers?: McpServerStatus[];
   timestamp: number;
 }
 
@@ -188,6 +212,8 @@ export interface AgentSessionState {
    *  More reliable than guessing from the model name string. */
   sdkContextWindow: number | null;
   sdkSessionId: string | null;
+  /** MCP server status from the most recent bridge init for this session. */
+  mcpServers: McpServerStatus[];
   pendingPermission: AgentPendingPermission | null;
   pendingQuestion: AgentPendingQuestion | null;
   streamingText: string;

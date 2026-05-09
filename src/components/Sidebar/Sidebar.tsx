@@ -9,7 +9,7 @@ import { SidebarRunners } from "./SidebarRunners";
 import { Tooltip } from "../ui/Tooltip";
 import { TileViewToggleButton } from "../ui/TileViewToggleButton";
 import { AppInfoButton, AppUpdateButton } from "../ui/AppInfoButton";
-import { ModelConfigPopover, formatPiProvider, getPiModelsForProvider, stripPiProviderPrefix, type HeaderOption } from "../ui/AgentHeaderControls";
+import { McpStatusPopover, ModelConfigPopover, formatPiProvider, getPiModelsForProvider, stripPiProviderPrefix, type HeaderOption } from "../ui/AgentHeaderControls";
 
 export function Sidebar() {
   const sidebarWidth = useAppStore((s) => s.sidebarWidth);
@@ -26,6 +26,10 @@ export function Sidebar() {
   const setAgentModel = useAppStore((s) => s.setAgentModel);
   const piAvailableModels = useAppStore((s) => s.piAvailableModels);
   const ensurePiModelsLoaded = useAppStore((s) => s.ensurePiModelsLoaded);
+  const selectedWorktreeId = useAppStore((s) => s.selectedWorktreeId);
+  const activeTabByWorktree = useAppStore((s) => s.activeTabByWorktree);
+  const tabsByWorktree = useAppStore((s) => s.tabsByWorktree);
+  const agentSessionByTab = useAppStore((s) => s.agentSessionByTab);
 
   const isResizing = useRef(false);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -220,6 +224,13 @@ export function Sidebar() {
   const modelTooltip = currentBackend === "pi"
     ? `${formatPiProvider(currentPiProvider)} · ${piModelLabel}`
     : claudeModelLabel;
+  const activeHeaderTabId = selectedWorktreeId ? activeTabByWorktree[selectedWorktreeId] ?? null : null;
+  const activeHeaderTab = selectedWorktreeId && activeHeaderTabId
+    ? tabsByWorktree[selectedWorktreeId]?.find((tab) => tab.id === activeHeaderTabId)
+    : null;
+  const activeHeaderSession = activeHeaderTab?.type === "agent" && activeHeaderTabId
+    ? agentSessionByTab[activeHeaderTabId] ?? null
+    : null;
 
   return (
     <aside
@@ -266,6 +277,13 @@ export function Sidebar() {
               modelValue={currentBackend === "pi" ? currentPiModelId : currentClaudeModel}
               modelOptions={currentBackend === "pi" ? piModelOptions : claudeModelOptions}
               onModelSelect={currentBackend === "pi" ? handlePiModelSelect : handleClaudeModelSelect}
+            />
+
+            <McpStatusPopover
+              configuredServers={appSettings?.mcp_servers ?? {}}
+              sessionServers={activeHeaderSession?.mcpServers ?? []}
+              disabled={!appSettings}
+              dropdownAlign="left"
             />
           </div>
 

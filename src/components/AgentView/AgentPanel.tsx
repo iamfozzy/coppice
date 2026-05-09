@@ -26,6 +26,17 @@ function nextMsgId() {
 function shouldSurfaceBridgeStderr(text: string, recentStructuredErrorMs: number) {
   if (!text.trim()) return false;
 
+  // Pure stack-frame lines (e.g. `[bridge]     at processTicksAndRejections
+  // (node:internal/process/task_queues:95:5)`) are useless to users without
+  // the message line above them, and they previously slipped through the
+  // node:internal keyword match below. Drop them outright.
+  if (/^\[(?:pi-)?bridge\]\s*\s+at\s/i.test(text)) return false;
+
+  // The bridge's catch blocks now log a single `mcp: failed <name>: <msg>`
+  // line plus a structured `mcp_error` stdout event — surface only the
+  // structured event, not the stderr breadcrumb.
+  if (/\[(?:pi-)?bridge\]\s*mcp:\s/i.test(text)) return false;
+
   if (/generated title:|generating title for/i.test(text)) return false;
   if (/Failed to enumerate models:/i.test(text)) return false;
 
@@ -38,7 +49,12 @@ function shouldSurfaceBridgeStderr(text: string, recentStructuredErrorMs: number
     return recentStructuredErrorMs >= 2000;
   }
 
-  return /cannot find module|cannot find package|ERR_MODULE_NOT_FOUND|SyntaxError|ReferenceError|TypeError|Unhandled|uncaught|ENOENT|EACCES|permission denied|node:internal|Failed to spawn|Failed to start|import error|bridge script .* not found/i.test(text);
+  // Real bridge-startup failures we still want to surface. We dropped
+  // `node:internal` deliberately — that keyword used to match isolated
+  // stack-frame lines (see the early return above) more often than real
+  // module-resolution failures. Module / import errors include enough
+  // self-describing text to match without it.
+  return /cannot find module|cannot find package|ERR_MODULE_NOT_FOUND|SyntaxError|ReferenceError|TypeError|Unhandled|uncaught|ENOENT|EACCES|permission denied|Failed to spawn|Failed to start|import error|bridge script .* not found/i.test(text);
 }
 
 export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
@@ -50,6 +66,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const clearStreamingThinking = useAppStore((s) => s.clearAgentStreamingThinking);
   const setStatus = useAppStore((s) => s.setAgentStatus);
   const setSdkSessionId = useAppStore((s) => s.setAgentSdkSessionId);
+  const setMcpServers = useAppStore((s) => s.setAgentMcpServers);
   const setPendingPermission = useAppStore((s) => s.setAgentPendingPermission);
   const setPendingQuestion = useAppStore((s) => s.setAgentPendingQuestion);
   const setModel = useAppStore((s) => s.setAgentModel);
@@ -329,8 +346,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           setSlashCommands(sessionId, merged);
         }
         // Only show "Session started" for the first init, not on resume
+        const mcpServers = msg.mcpServers as Array<{ name: string; status: string }> | undefined;
+        setMcpServers(sessionId, mcpServers?.length ? mcpServers : []);
         if (!msg.isResume) {
-          const mcpServers = msg.mcpServers as Array<{ name: string; status: string }> | undefined;
           appendMessage(sessionId, {
             id: nextMsgId(),
             type: "system",
@@ -594,6 +612,22 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
             timestamp: Date.now(),
           });
         }
+        break;
+      }
+
+      case "mcp_error": {
+        // Structured per-server error from the bridge — already user-friendly,
+        // already de-duplicated to one event per failed server. Mark it as a
+        // recent structured error so the stderr suppression window kicks in
+        // and we don't double-surface the same failure as a bridge log line.
+        lastStructuredErrorAtRef.current = Date.now();
+        const message = (msg.message as string) || "MCP server failed to connect.";
+        appendMessage(sessionId, {
+          id: nextMsgId(),
+          type: "error",
+          content: message,
+          timestamp: Date.now(),
+        });
         break;
       }
 
@@ -874,6 +908,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           })
         }
         onPlanDeny={() => handleToolResponse("deny")}
+        worktreePath={cwd}
       />
 
       {/* Permission dialog — non-plan permissions only (plans render inline in chat) */}
