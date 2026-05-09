@@ -274,7 +274,7 @@ export function Sidebar() {
           <Tooltip text="Add project" align="right">
             <button
               onClick={() => openProjectSettings("new")}
-              className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/40 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/25 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
@@ -294,7 +294,7 @@ export function Sidebar() {
           <Tooltip text="Settings" align="right">
             <button
               onClick={openAppSettings}
-              className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/40 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/25 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
