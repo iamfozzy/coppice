@@ -27,7 +27,7 @@ interface Props {
   onBackendToggle?: () => void;
 }
 
-const CLAUDE_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
+export const CLAUDE_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
   { value: "low", label: "low" },
   { value: "medium", label: "medium" },
   { value: "high", label: "high" },
@@ -35,7 +35,7 @@ const CLAUDE_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
   { value: "max", label: "max" },
 ];
 
-const PI_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
+export const PI_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
   { value: "off", label: "Off" },
   { value: "minimal", label: "Minimal" },
   { value: "low", label: "Low" },
@@ -90,7 +90,6 @@ export function AgentControls({
   onBackendToggle,
 }: Props) {
   const supports1M = !isPiBackend && modelSupports1MContext(model);
-  const effortLevels = isPiBackend ? PI_EFFORT_LEVELS : CLAUDE_EFFORT_LEVELS;
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 pb-0 pt-2 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
       {/* Backend badge — always visible, toggleable before session starts */}
@@ -134,26 +133,8 @@ export function AgentControls({
         </Tooltip>
       )}
 
-      {/* Effort selector */}
-      <div className="flex items-center rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
-        {effortLevels.map((level) => {
-          const isActive = effort === level.value || (isPiBackend && effort === "max" && level.value === "xhigh");
-          return (
-            <Tooltip key={level.value} text={`Set effort to ${level.label}`} side="top">
-              <button
-                className={`px-2 py-1 text-[11px] transition-colors ${
-                  isActive
-                    ? "bg-accent text-white"
-                    : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-                }`}
-                onClick={() => onEffortChange(level.value)}
-              >
-                {level.label}
-              </button>
-            </Tooltip>
-          );
-        })}
-      </div>
+      {/* Effort selector — custom dropdown */}
+      <EffortPicker effort={effort} onEffortChange={onEffortChange} isPiBackend={isPiBackend} />
 
       {/* Permission mode picker */}
       <PermissionModePicker
@@ -405,6 +386,86 @@ export function ModelPicker({
       </button>
       {open && (
         <div className="absolute bottom-full mb-1 left-0 min-w-[200px] max-h-[320px] overflow-y-auto bg-bg-secondary border border-border-primary rounded-md shadow-lg z-50">
+          {listContent}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function EffortPicker({
+  effort,
+  onEffortChange,
+  isPiBackend,
+  inline,
+}: {
+  effort: EffortLevel;
+  onEffortChange: (effort: EffortLevel) => void;
+  isPiBackend?: boolean;
+  /** Render the list directly without a trigger button / dropdown wrapper. */
+  inline?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const levels = isPiBackend ? PI_EFFORT_LEVELS : CLAUDE_EFFORT_LEVELS;
+  const selected = levels.find((level) =>
+    effort === level.value || (isPiBackend && effort === "max" && level.value === "xhigh")
+  ) ?? levels[0];
+
+  useEffect(() => {
+    if (!open || inline) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, inline]);
+
+  const handleSelect = (value: EffortLevel) => {
+    onEffortChange(value);
+    if (!inline) setOpen(false);
+  };
+
+  const listContent = levels.map((level) => {
+    const isActive = effort === level.value || (isPiBackend && effort === "max" && level.value === "xhigh");
+    return (
+      <button
+        key={level.value}
+        className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
+          isActive
+            ? "bg-accent/10 text-accent"
+            : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+        }`}
+        onClick={() => handleSelect(level.value)}
+      >
+        {level.label}
+      </button>
+    );
+  });
+
+  if (inline) {
+    return <div className="max-h-[240px] overflow-y-auto">{listContent}</div>;
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors text-[11px]"
+        onClick={() => setOpen(!open)}
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M8 2v2M8 12v2M3.8 3.8l1.4 1.4M10.8 10.8l1.4 1.4M2 8h2M12 8h2M3.8 12.2l1.4-1.4M10.8 5.2l1.4-1.4" />
+          <circle cx="8" cy="8" r="2.5" />
+        </svg>
+        {selected.label}
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${open ? "rotate-180" : ""}`}>
+          <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute bottom-full mb-1 left-0 min-w-[120px] bg-bg-secondary border border-border-primary rounded-md shadow-lg overflow-hidden z-50">
           {listContent}
         </div>
       )}

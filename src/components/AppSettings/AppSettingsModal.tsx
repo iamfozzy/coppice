@@ -5,6 +5,23 @@ import { SUPPORTED_MODELS } from "../../lib/supportedModels";
 import { GitHubAuthSection } from "./GitHubAuthSection";
 import { piGetModels, piOAuthLogin, piOAuthCheck } from "../../lib/commands";
 
+const CLAUDE_EFFORT_OPTIONS: Array<{ value: AppSettings["agent_default_effort"]; label: string }> = [
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+  { value: "xhigh", label: "xhigh" },
+  { value: "max", label: "max" },
+];
+
+const PI_THINKING_OPTIONS: Array<{ value: AppSettings["agent_default_effort"]; label: string }> = [
+  { value: "off", label: "Off" },
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Max" },
+];
+
 const defaultSettings: AppSettings = {
   editor_command: "",
   claude_command: "",
@@ -170,13 +187,13 @@ export function AppSettingsModal() {
             label="Notification sound"
             checked={form.notification_sound}
             onChange={(notification_sound) => setForm({ ...form, notification_sound })}
-            hint="Play a chime when Claude finishes and is waiting for input"
+            hint="Play a chime when an agent finishes and is waiting for input"
           />
           <Toggle
             label="OS notifications"
             checked={form.notification_popup}
             onChange={(notification_popup) => setForm({ ...form, notification_popup })}
-            hint="Show a system notification when Claude finishes (visible even when Coppice is minimized)"
+            hint="Show a system notification when an agent finishes (visible even when Coppice is minimized)"
           />
 
           {/* Agent mode selector — three top-level options */}
@@ -264,26 +281,13 @@ export function AppSettingsModal() {
                 hint="Pick a Claude preset or type a custom model (e.g. openai/gpt-4o for LiteLLM)."
                 placeholder="(SDK default)"
               />
-              <div>
-                <label className="block text-xs text-text-secondary mb-1">Default effort</label>
-                <div className="flex gap-1">
-                  {(["low", "medium", "high", "xhigh", "max"] as const).map((level) => (
-                    <button
-                      key={level}
-                      type="button"
-                      onClick={() => setForm({ ...form, agent_default_effort: level })}
-                      className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
-                        form.agent_default_effort === level
-                          ? "bg-accent text-white"
-                          : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
-                      }`}
-                    >
-                      {level}
-                    </button>
-                  ))}
-                </div>
-                <p className="mt-0.5 text-[10px] text-text-tertiary">Controls how much effort the agent puts into responses</p>
-              </div>
+              <SettingsEffortDropdown
+                label="Default effort"
+                value={form.agent_default_effort}
+                onChange={(agent_default_effort) => setForm({ ...form, agent_default_effort })}
+                options={CLAUDE_EFFORT_OPTIONS}
+                hint="Controls how much effort the agent puts into responses"
+              />
               <Field
                 label="Small/fast model override"
                 value={form.agent_small_fast_model}
@@ -790,38 +794,14 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
 
       {/* Thinking level */}
       <div className="pt-4 border-t border-border-primary">
-        <label className="block text-xs text-text-secondary mb-2">Thinking level</label>
-        <div className="flex flex-wrap gap-1.5">
-          {([
-            { value: "off", label: "Off" },
-            { value: "minimal", label: "Minimal" },
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High" },
-            { value: "xhigh", label: "Max" },
-          ] as const).map((level) => {
-            const current = form.agent_default_effort || "medium";
-            const isActive = current === level.value || (current === "max" && level.value === "xhigh");
-            return (
-              <button
-                key={level.value}
-                type="button"
-                onClick={() => setForm({ ...form, agent_default_effort: level.value as AppSettings["agent_default_effort"] })}
-                className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
-                  isActive
-                    ? "bg-purple-500 text-white"
-                    : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
-                }`}
-              >
-                {level.label}
-              </button>
-            );
-          })}
-        </div>
-        <p className="mt-1 text-[10px] text-text-tertiary">
-          Controls reasoning depth. "Off" disables extended thinking. Higher levels use more tokens but produce better results.
-          {selectedModel?.reasoning === false ? " Current model does not support extended thinking." : ""}
-        </p>
+        <SettingsEffortDropdown
+          label="Thinking level"
+          value={form.agent_default_effort || "medium"}
+          onChange={(agent_default_effort) => setForm({ ...form, agent_default_effort })}
+          options={PI_THINKING_OPTIONS}
+          hint={`Controls reasoning depth. "Off" disables extended thinking. Higher levels use more tokens but produce better results.${selectedModel?.reasoning === false ? " Current model does not support extended thinking." : ""}`}
+          purple
+        />
       </div>
 
       {/* Tools section */}
@@ -1142,6 +1122,99 @@ function Toggle({
         <span className="text-xs text-text-secondary">{label}</span>
       </label>
       {hint && <p className="mt-0.5 ml-10 text-[10px] text-text-tertiary">{hint}</p>}
+    </div>
+  );
+}
+
+function SettingsEffortDropdown({
+  label,
+  value,
+  onChange,
+  options,
+  hint,
+  purple,
+}: {
+  label: string;
+  value: AppSettings["agent_default_effort"];
+  onChange: (v: AppSettings["agent_default_effort"]) => void;
+  options: Array<{ value: AppSettings["agent_default_effort"]; label: string }>;
+  hint?: string;
+  purple?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const activeValue = purple && value === "max" ? "xhigh" : value;
+  const selected = options.find((opt) => opt.value === activeValue) ?? options[0];
+  const activeClass = purple ? "bg-purple-500/10 text-purple-400" : "bg-accent/15 text-text-primary";
+  const checkClass = purple ? "text-purple-400" : "text-accent";
+  const openBorder = purple ? "border-purple-500/50" : "border-accent";
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div>
+      <label className="block text-xs text-text-secondary mb-1">{label}</label>
+      <div className="relative" ref={wrapperRef}>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className={`w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm bg-bg-tertiary border rounded text-text-primary focus:outline-none transition-colors ${
+            open ? openBorder : "border-border-primary hover:border-border-secondary"
+          }`}
+        >
+          <span className="font-mono">{selected.label}</span>
+          <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${open ? "rotate-180" : ""}`}>
+            <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {open && (
+          <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-bg-secondary border border-border-primary rounded shadow-lg max-h-60 overflow-y-auto py-1">
+            {options.map((opt) => {
+              const isSelected = opt.value === activeValue;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    onChange(opt.value);
+                    setOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm font-mono text-left transition-colors ${
+                    isSelected
+                      ? activeClass
+                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  }`}
+                >
+                  <span>{opt.label}</span>
+                  {isSelected && (
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className={`${checkClass} shrink-0`}>
+                      <path d="M2 5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {hint && <p className="mt-0.5 text-[10px] text-text-tertiary">{hint}</p>}
     </div>
   );
 }

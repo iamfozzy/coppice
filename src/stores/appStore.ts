@@ -683,7 +683,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }));
     }
 
-    // Notify when the agent becomes idle and the user can't see the tab.
+    // Notify when the agent finishes responding and the user can't see the tab.
     // Only agent SDK tabs drive this path (CLI tabs don't set claude status).
     if (status === "idle" && (prev === "active" || prev === undefined) && !userIsWatching) {
       if (s.appSettings?.notification_sound) {
@@ -709,10 +709,10 @@ export const useAppStore = create<AppState>((set, get) => ({
             if (granted) {
               sendNotification({
                 id: (_notifIdCounter = (_notifIdCounter + 1) % 0x7FFF_FFFF),
-                title: "Claude is waiting",
+                title: "Agent finished",
                 body: worktreeName
                   ? `${tabLabel} in ${worktreeName}`
-                  : tabLabel || "A Claude tab needs attention",
+                  : tabLabel || "An agent tab has finished responding",
                 ...(tabLocation ? {
                   extra: {
                     projectId: tabLocation.projectId,
@@ -1206,7 +1206,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                   title: "Approval needed",
                   body: worktreeName
                     ? `${tabLabel} in ${worktreeName}`
-                    : tabLabel || "A Claude tab needs permission",
+                    : tabLabel || "An agent tab needs permission",
                   ...(tabLocation ? {
                     extra: {
                       projectId: tabLocation.projectId,

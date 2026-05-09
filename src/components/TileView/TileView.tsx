@@ -5,7 +5,7 @@ import { AgentInputBar } from "../AgentView/AgentInputBar";
 import { CreateWorktreeModal } from "../Sidebar/CreateWorktreeModal";
 import { Tooltip } from "../ui/Tooltip";
 import { modelSupports1MContext, type SupportedModel } from "../../lib/supportedModels";
-import { ModelPicker } from "../AgentView/AgentControls";
+import { EffortPicker, ModelPicker } from "../AgentView/AgentControls";
 import * as commands from "../../lib/commands";
 import type { ImageAttachment, EffortLevel, AgentPermissionMode, Project } from "../../lib/types";
 import { SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
@@ -571,21 +571,6 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
 
 // ── Compact controls dropdown for tile input bars ──
 
-const CLAUDE_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
-  { value: "low", label: "low" },
-  { value: "medium", label: "medium" },
-  { value: "high", label: "high" },
-  { value: "xhigh", label: "xhigh" },
-  { value: "max", label: "max" },
-];
-const PI_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
-  { value: "off", label: "Off" },
-  { value: "minimal", label: "Minimal" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "Max" },
-];
 const PERMISSION_MODES: { value: AgentPermissionMode; label: string }[] = [
   { value: "default", label: "Default" },
   { value: "acceptEdits", label: "Accept Edits" },
@@ -641,7 +626,6 @@ function TileControlsDropdown({
   }, [open]);
 
   const supports1M = !isPiBackend && modelSupports1MContext(model);
-  const effortLevels = isPiBackend ? PI_EFFORT_LEVELS : CLAUDE_EFFORT_LEVELS;
 
   return (
     <div className="relative self-stretch" ref={ref}>
@@ -712,24 +696,12 @@ function TileControlsDropdown({
           {/* Effort */}
           <div className="px-3 py-2 border-b border-border-primary">
             <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Effort</div>
-            <div className="flex rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
-              {effortLevels.map((level) => {
-                const isActive = effort === level.value || (isPiBackend && effort === "max" && level.value === "xhigh");
-                return (
-                  <button
-                    key={level.value}
-                    className={`flex-1 px-1.5 py-0.5 text-[10px] transition-colors ${
-                      isActive
-                        ? "bg-accent text-white"
-                        : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-                    }`}
-                    onClick={() => onEffortChange(level.value)}
-                  >
-                    {level.label}
-                  </button>
-                );
-              })}
-            </div>
+            <EffortPicker
+              effort={effort}
+              onEffortChange={(e) => { onEffortChange(e); setOpen(false); }}
+              isPiBackend={isPiBackend}
+              inline
+            />
           </div>
 
           {/* Permission mode */}

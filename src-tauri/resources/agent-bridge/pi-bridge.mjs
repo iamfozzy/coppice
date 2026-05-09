@@ -271,25 +271,6 @@ function buildCoppiceToolDefinitions() {
       execute: coppiceExecute("open_scratchpad"),
     }),
     defineTool({
-      name: "coppice_notify_user",
-      label: "Notify User",
-      description:
-        "Show a system notification to the user via the Coppice IDE. Use for important events like task completion or errors that need attention.",
-      promptSnippet: "Show a system notification to the user",
-      promptGuidelines: [
-        "Use coppice_notify_user for important events (task completion, errors needing attention) instead of just printing a message.",
-      ],
-      parameters: Type.Object({
-        message: Type.String({ description: "Notification body text" }),
-        title: Type.Optional(
-          Type.String({
-            description: "Notification title (defaults to 'Coppice')",
-          }),
-        ),
-      }),
-      execute: coppiceExecute("notify_user"),
-    }),
-    defineTool({
       name: "coppice_open_url",
       label: "Open URL",
       description:
@@ -378,7 +359,6 @@ async function runChildSession({ task, agent: roleName, childId, signal }) {
       "coppice_list_worktrees",
       "coppice_open_file",
       "coppice_open_scratchpad",
-      "coppice_notify_user",
       "coppice_open_url",
     ]);
     childCustomTools = childCustomTools.filter((t) =>
@@ -820,7 +800,6 @@ async function handlePermission(toolCall, args, permissionMode) {
     "coppice_list_worktrees",
     "coppice_open_file",
     "coppice_open_scratchpad",
-    "coppice_notify_user",
     "coppice_open_url",
   ];
   if (readOnlyTools.includes(toolName)) return undefined;

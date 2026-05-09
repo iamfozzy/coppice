@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { onAction, sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
+import { onAction } from "@tauri-apps/plugin-notification";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { WorktreeView } from "./components/WorktreeView/WorktreeView";
 import { ProjectSettingsModal } from "./components/ProjectSettings/ProjectSettingsModal";
@@ -12,7 +12,6 @@ import { TileView } from "./components/TileView/TileView";
 import { useAppStore, flushAllAgentTabCaches } from "./stores/appStore";
 import { SCRATCHPAD_WORKTREE_ID } from "./lib/types";
 import { setWindowFocused } from "./lib/windowFocus";
-import { playNotificationSound } from "./lib/sounds";
 import { applyTheme } from "./lib/theme";
 import * as commands from "./lib/commands";
 
@@ -246,8 +245,8 @@ function App() {
   }, []);
 
   // ── Coppice IDE tool actions ──
-  // The Rust backend emits "coppice-action" events when Claude calls a Coppice
-  // tool that requires frontend/UI work (spawning tabs, showing notifications).
+  // The Rust backend emits "coppice-action" events when an agent calls a Coppice
+  // tool that requires frontend/UI work (spawning tabs or opening files).
   useEffect(() => {
     const unlisten = listen<string>("coppice-action", (event) => {
       let action: Record<string, unknown>;
@@ -322,30 +321,6 @@ function App() {
           break;
         }
 
-        case "notify": {
-          const message = (action.message as string) || "";
-          const title = (action.title as string) || "Coppice";
-          // Play sound if enabled
-          if (store.appSettings?.notification_sound) {
-            playNotificationSound();
-          }
-          // Show OS notification if enabled
-          if (store.appSettings?.notification_popup) {
-            (async () => {
-              try {
-                let granted = await isPermissionGranted();
-                if (!granted) {
-                  const perm = await requestPermission();
-                  granted = perm === "granted";
-                }
-                if (granted) {
-                  sendNotification({ title, body: message });
-                }
-              } catch { /* ignore */ }
-            })();
-          }
-          break;
-        }
       }
     });
     return () => { unlisten.then((fn) => fn()); };
