@@ -33,6 +33,7 @@ const defaultSettings: AppSettings = {
   pi_default_provider: "anthropic",
   pi_default_model: "claude-sonnet-4-20250514",
   pi_enable_web_access: true,
+  pi_enable_subagent: true,
   pi_api_keys: {},
   pi_configured_providers: ["anthropic"],
 };
@@ -831,6 +832,12 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
           checked={form.pi_enable_web_access !== false}
           onChange={(pi_enable_web_access) => setForm({ ...form, pi_enable_web_access })}
           hint="Adds web_search and fetch_content tools via pi-web-access (supports Perplexity, Exa, Gemini)"
+        />
+        <Toggle
+          label="Subagent (delegate to child agents)"
+          checked={form.pi_enable_subagent !== false}
+          onChange={(pi_enable_subagent) => setForm({ ...form, pi_enable_subagent })}
+          hint="Allows the agent to spawn child sessions for parallel work, focused research, or code review"
         />
       </div>
     </div>

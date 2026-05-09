@@ -85,6 +85,7 @@ export interface AppSettings {
   pi_default_provider: string;
   pi_default_model: string;
   pi_enable_web_access: boolean;
+  pi_enable_subagent: boolean;
   pi_api_keys: Record<string, string>;
   pi_configured_providers: string[];
 }

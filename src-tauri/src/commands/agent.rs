@@ -286,6 +286,10 @@ pub fn agent_start(
             "enableWebAccess".into(),
             serde_json::Value::Bool(settings_snapshot.pi_enable_web_access),
         );
+        options.insert(
+            "enableSubagent".into(),
+            serde_json::Value::Bool(settings_snapshot.pi_enable_subagent),
+        );
         // Pass per-provider API keys so the bridge can set env vars
         if !settings_snapshot.pi_api_keys.is_empty() {
             let keys_obj: serde_json::Map<String, serde_json::Value> = settings_snapshot

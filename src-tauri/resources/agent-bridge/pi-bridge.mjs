@@ -105,6 +105,18 @@ const TOOL_FRUGALITY_INSTRUCTION = `Keep tool outputs small: they persist in con
 
 const COPPICE_TOOLS_INSTRUCTION = `You are running inside the Coppice desktop IDE. Prefer coppice_ prefixed tools over shell equivalents when IDE integration helps. Only use IDE tools when it genuinely helps, not for routine intermediate steps.`;
 
+const SUBAGENT_INSTRUCTION = `Use the subagent tool when:
+- You need to explore unfamiliar code before planning — delegate to a scout first to gather context without bloating your own window.
+- You have multiple independent tasks — run parallel workers instead of doing them sequentially.
+- A task would consume significant context (many file reads, large searches) that you won't need afterward — a subagent's context is discarded after it reports back.
+- You want a code review or second opinion on changes you've made — delegate to a reviewer.
+- You need a detailed implementation plan — delegate to a planner so the research stays in the child's context.
+
+Do NOT use subagent for:
+- Simple single-file reads, quick edits, or short bash commands — the overhead isn't worth it.
+- Tasks where you already have the context you need.
+- Anything that requires back-and-forth with the user — subagents run to completion without user interaction.`;
+
 // ── Coppice IDE tools (ToolDefinition format for AgentSession) ──
 
 /** Monotonically increasing call ID for coppice tool round-trips. */
@@ -292,6 +304,323 @@ function buildCoppiceToolDefinitions() {
       execute: coppiceExecute("open_url"),
     }),
   ];
+}
+
+// ── Subagent system ──
+
+/**
+ * Built-in agent roles. Each defines a system prompt append and default
+ * thinking level. Read-only roles have write tools blocked via beforeToolCall.
+ */
+const SUBAGENT_ROLES = {
+  scout: {
+    label: "Scout",
+    systemPromptAppend:
+      "You are a fast reconnaissance agent. Read files, search code, and gather context. Do NOT modify any files. Report findings concisely with file paths and line numbers.",
+    thinkingLevel: "low",
+    readOnly: true,
+  },
+  researcher: {
+    label: "Researcher",
+    systemPromptAppend:
+      "You are a thorough research agent. Explore the codebase, read documentation, trace code paths, and produce a comprehensive analysis. Do NOT modify files.",
+    thinkingLevel: "medium",
+    readOnly: true,
+  },
+  planner: {
+    label: "Planner",
+    systemPromptAppend:
+      "You are a planning agent. Analyze the codebase and produce a detailed, step-by-step implementation plan. Do NOT modify files. Focus on file paths, function signatures, and sequencing.",
+    thinkingLevel: "high",
+    readOnly: true,
+  },
+  worker: {
+    label: "Worker",
+    systemPromptAppend:
+      "You are an implementation agent. Execute the task you have been given. You have full tool access. Be thorough and verify your work.",
+    thinkingLevel: "medium",
+    readOnly: false,
+  },
+  reviewer: {
+    label: "Reviewer",
+    systemPromptAppend:
+      "You are a code review agent. Examine the specified code for bugs, style issues, security concerns, and correctness. Do NOT modify files. Report issues with file paths and line numbers.",
+    thinkingLevel: "medium",
+    readOnly: true,
+  },
+};
+
+let childIdCounter = 0;
+
+/**
+ * Spawn a child AgentSession, run it to completion, and return the final text.
+ * The child shares the parent's auth, model, and cwd but gets a scoped tool set
+ * with no subagent tool (prevents recursion).
+ */
+async function runChildSession({ task, agent: roleName, childId, signal }) {
+  const role = SUBAGENT_ROLES[roleName] || SUBAGENT_ROLES.worker;
+  const cid = childId || `child-${++childIdCounter}`;
+
+  log(`subagent[${cid}]: starting role=${roleName} task="${task.slice(0, 80)}"`);
+  emit({
+    type: "subagent_progress",
+    childId: cid,
+    role: roleName,
+    event: "start",
+    task: task.slice(0, 200),
+  });
+
+  // Build scoped tool set — Coppice IDE tools (read-only subset for read-only roles)
+  // but NO subagent tool (prevents recursion)
+  let childCustomTools = buildCoppiceToolDefinitions();
+  if (role.readOnly) {
+    const readOnlyNames = new Set([
+      "coppice_list_worktrees",
+      "coppice_open_file",
+      "coppice_open_scratchpad",
+      "coppice_notify_user",
+      "coppice_open_url",
+    ]);
+    childCustomTools = childCustomTools.filter((t) =>
+      readOnlyNames.has(t.name),
+    );
+  }
+
+  // Add web access tools if available
+  try {
+    const webTools = await getCachedWebAccessTools();
+    childCustomTools = [...childCustomTools, ...webTools];
+  } catch {}
+
+  // Use in-memory session manager — no persistence for ephemeral children
+  const childSessionManager = SessionManager.inMemory();
+  const childModel = session
+    ? session.model
+    : getModel("anthropic", "claude-sonnet-4-20250514");
+
+  const { session: childSession } = await createAgentSession({
+    cwd: currentCwd,
+    model: childModel,
+    thinkingLevel: role.thinkingLevel || "medium",
+    authStorage,
+    sessionManager: childSessionManager,
+    customTools: childCustomTools,
+  });
+
+  // Append role-specific system prompt
+  childSession.agent.state.systemPrompt +=
+    "\n\n---\n\n" +
+    role.systemPromptAppend +
+    "\n\n" +
+    TOOL_FRUGALITY_INSTRUCTION;
+
+  // For read-only roles, block write tools via beforeToolCall
+  if (role.readOnly) {
+    const origHook = childSession.agent.beforeToolCall;
+    childSession.agent.beforeToolCall = async (context, sig) => {
+      if (origHook) {
+        const result = await origHook(context, sig);
+        if (result?.block) return result;
+      }
+      const writeTools = ["edit", "write"];
+      if (writeTools.includes(context.toolCall.name)) {
+        return { block: true, reason: `${role.label} agent is read-only` };
+      }
+      if (context.toolCall.name === "bash") {
+        const cmd = (context.args.command || "").trim();
+        const writePat =
+          /\b(rm|mv|cp|mkdir|touch|chmod|chown|git\s+(add|commit|push|reset|checkout))\b|[>|]/;
+        if (writePat.test(cmd)) {
+          return { block: true, reason: `${role.label} agent is read-only` };
+        }
+      }
+      return undefined;
+    };
+  } else {
+    // Worker/non-read-only: bypass permissions (parent already approved delegation)
+    childSession.agent.beforeToolCall = async () => undefined;
+  }
+
+  // Forward child progress events to frontend
+  const unsub = childSession.subscribe((event) => {
+    if (event.type === "tool_execution_start") {
+      emit({
+        type: "subagent_progress",
+        childId: cid,
+        role: roleName,
+        event: "tool_start",
+        toolName: event.toolName,
+      });
+    } else if (event.type === "tool_execution_end") {
+      emit({
+        type: "subagent_progress",
+        childId: cid,
+        role: roleName,
+        event: "tool_end",
+        toolName: event.toolName,
+      });
+    }
+  });
+
+  // Handle cancellation via AbortSignal
+  const abortHandler = () => {
+    childSession.abort().catch(() => {});
+  };
+  signal?.addEventListener("abort", abortHandler);
+
+  try {
+    await childSession.prompt(task);
+
+    // Extract final assistant text
+    const messages = childSession.agent.state.messages;
+    const lastAssistant = [...messages]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    let resultText = "";
+    if (lastAssistant?.content) {
+      for (const block of lastAssistant.content) {
+        if (block.type === "text") resultText += block.text;
+      }
+    }
+
+    log(`subagent[${cid}]: completed (${resultText.length} chars)`);
+    emit({
+      type: "subagent_progress",
+      childId: cid,
+      role: roleName,
+      event: "done",
+    });
+    return resultText || "(No output from subagent)";
+  } catch (err) {
+    log(`subagent[${cid}]: error: ${err.message}`);
+    emit({
+      type: "subagent_progress",
+      childId: cid,
+      role: roleName,
+      event: "error",
+      error: err.message,
+    });
+    return `Subagent error: ${err.message}`;
+  } finally {
+    signal?.removeEventListener("abort", abortHandler);
+    unsub();
+    childSession.dispose();
+  }
+}
+
+/**
+ * Build the subagent tool definition.
+ * Kept separate so it can be conditionally included (not added to children).
+ */
+function buildSubagentToolDefinition() {
+  return defineTool({
+    name: "subagent",
+    label: "Subagent",
+    description:
+      "Delegate a task to a child agent that runs independently and returns its result. " +
+      "Use for parallel work, focused research, code review, or isolated implementation tasks. " +
+      "Single task: { agent, task }. Parallel: { tasks: [{ agent, task }, ...] }.",
+    promptSnippet: "Spawn child agents for parallel or focused work",
+    promptGuidelines: [
+      "Use subagent for tasks that benefit from isolation: parallel implementation, " +
+        "focused research, or review. Each child runs with its own context window.",
+      "Available roles: scout (fast read-only recon), researcher (thorough analysis), " +
+        "planner (implementation planning), worker (full implementation), reviewer (code review).",
+      "Prefer a single subagent call with a tasks array over sequential calls for parallelizable work.",
+      "The child agent's final response text is returned as the tool result.",
+    ],
+    parameters: Type.Object({
+      agent: Type.Optional(
+        Type.String({
+          description:
+            "Agent role: scout, researcher, planner, worker, reviewer. Default: worker",
+        }),
+      ),
+      task: Type.Optional(
+        Type.String({ description: "Task description for a single agent" }),
+      ),
+      tasks: Type.Optional(
+        Type.Array(
+          Type.Object({
+            agent: Type.Optional(
+              Type.String({ description: "Agent role" }),
+            ),
+            task: Type.String({ description: "Task description" }),
+          }),
+          { description: "Array of tasks for parallel execution" },
+        ),
+      ),
+    }),
+    executionMode: "sequential",
+    execute: async (_toolCallId, params, signal) => {
+      // Normalize: single task or parallel tasks array
+      let taskList;
+      if (params.tasks && params.tasks.length > 0) {
+        taskList = params.tasks;
+      } else if (params.task) {
+        taskList = [{ agent: params.agent || "worker", task: params.task }];
+      } else {
+        return {
+          content: [
+            { type: "text", text: "Error: provide either 'task' or 'tasks'" },
+          ],
+          details: {},
+        };
+      }
+
+      log(`subagent: dispatching ${taskList.length} task(s)`);
+
+      try {
+        if (taskList.length === 1) {
+          const t = taskList[0];
+          const result = await runChildSession({
+            task: t.task,
+            agent: t.agent || "worker",
+            signal,
+          });
+          return {
+            content: [{ type: "text", text: trimToolResult(result) }],
+            details: {},
+          };
+        }
+
+        // Parallel execution
+        const results = await Promise.allSettled(
+          taskList.map((t, i) =>
+            runChildSession({
+              task: t.task,
+              agent: t.agent || "worker",
+              childId: `child-${++childIdCounter}`,
+              signal,
+            }),
+          ),
+        );
+
+        const output = results
+          .map((r, i) => {
+            const role = taskList[i].agent || "worker";
+            const header = `## ${role} (task ${i + 1}/${taskList.length})`;
+            if (r.status === "fulfilled") {
+              return `${header}\n${r.value}`;
+            }
+            return `${header}\nERROR: ${r.reason?.message || r.reason}`;
+          })
+          .join("\n\n---\n\n");
+
+        return {
+          content: [{ type: "text", text: trimToolResult(output) }],
+          details: {},
+        };
+      } catch (err) {
+        return {
+          content: [
+            { type: "text", text: `Subagent error: ${err.message}` },
+          ],
+          details: {},
+        };
+      }
+    },
+  });
 }
 
 // ── Web access tool loading ──
@@ -1156,6 +1485,12 @@ async function startSession(msg) {
     }
   }
 
+  // Add subagent tool (only for the parent session, not children)
+  if (opts.enableSubagent !== false) {
+    log("step: adding subagent tool...");
+    customTools.push(buildSubagentToolDefinition());
+  }
+
   // Dispose previous session. The file-backed SessionManager has already
   // written all messages to disk via appendFileSync, so no data is lost.
   if (session) {
@@ -1244,6 +1579,9 @@ async function startSession(msg) {
       "",
       COPPICE_TOOLS_INSTRUCTION,
     ];
+    if (opts.enableSubagent !== false) {
+      coppiceAppend.push("", "---", "", SUBAGENT_INSTRUCTION);
+    }
     if (opts.conciseMode) {
       coppiceAppend.push("", "---", "", CONCISE_MODE_INSTRUCTION);
     }

@@ -201,6 +201,15 @@ export interface RunnerInfo {
   cwd: string;
 }
 
+export interface SubagentChild {
+  id: string;
+  role: string;
+  task: string;
+  lastTool: string;
+  status: "running" | "done" | "error";
+  error?: string;
+}
+
 interface AppState {
   // Data
   projects: Project[];
@@ -340,6 +349,11 @@ interface AppState {
   shiftQueuedMessage: (tabId: string) => void;
   promoteAllQueuedMessages: (tabId: string) => void;
 
+  // Actions — subagent progress (global — only one subagent tool runs at a time)
+  subagentChildren: SubagentChild[];
+  updateSubagentChild: (child: SubagentChild) => void;
+  clearSubagentChildren: () => void;
+
   // Actions — dropped images for agent input
   pushDroppedImages: (tabId: string, images: ImageAttachment[]) => void;
   consumeDroppedImages: (tabId: string) => ImageAttachment[];
@@ -380,6 +394,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   showTileView: false,
   pendingDroppedImages: {},
   prCommentsByProject: {},
+  subagentChildren: [],
   editingAppSettings: false,
 
   // ── Settings ──
@@ -1132,6 +1147,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setAgentStatus: (tabId, status) => {
+    const current = get().agentSessionByTab[tabId];
+    if (!current || current.status === status) return;
+
     set((s) => {
       const session = s.agentSessionByTab[tabId];
       if (!session) return s;
@@ -1544,6 +1562,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     });
   },
+  // ── Subagent progress ──
+
+  updateSubagentChild: (child) => {
+    set((s) => {
+      const idx = s.subagentChildren.findIndex((c) => c.id === child.id);
+      if (idx >= 0) {
+        const next = [...s.subagentChildren];
+        next[idx] = child;
+        return { subagentChildren: next };
+      }
+      return { subagentChildren: [...s.subagentChildren, child] };
+    });
+  },
+
+  clearSubagentChildren: () => {
+    set({ subagentChildren: [] });
+  },
+
   // ── Dropped images for agent input ──
 
   pushDroppedImages: (tabId, images) => {

@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from "react";
+import { memo, useMemo, useState, useCallback } from "react";
 import type { AgentMessage } from "../../lib/types";
 import { Tooltip } from "../ui/Tooltip";
 
@@ -7,7 +7,7 @@ interface Props {
   onCancel?: (messageId: string) => void;
 }
 
-export function MessageBubble({ message, onCancel }: Props) {
+export const MessageBubble = memo(function MessageBubble({ message, onCancel }: Props) {
   switch (message.type) {
     case "user":
       return (
@@ -93,7 +93,7 @@ export function MessageBubble({ message, onCancel }: Props) {
     default:
       return null;
   }
-}
+});
 
 // ---------------------------------------------------------------------------
 // MCP servers tooltip

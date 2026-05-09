@@ -48,6 +48,7 @@ pub struct AppSettings {
     pub pi_default_provider: String,
     pub pi_default_model: String,
     pub pi_enable_web_access: bool,
+    pub pi_enable_subagent: bool,
     pub pi_api_keys: HashMap<String, String>,
     pub pi_configured_providers: Vec<String>,
 }
@@ -83,6 +84,7 @@ impl Default for AppSettings {
             pi_default_provider: "anthropic".to_string(),
             pi_default_model: "claude-sonnet-4-20250514".to_string(),
             pi_enable_web_access: true,
+            pi_enable_subagent: true,
             pi_api_keys: HashMap::new(),
             pi_configured_providers: vec!["anthropic".to_string()],
         }

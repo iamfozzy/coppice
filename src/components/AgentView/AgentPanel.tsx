@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as commands from "../../lib/commands";
 import { useAppStore } from "../../stores/appStore";
@@ -84,6 +84,22 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const lastEventTimeRef = useRef(Date.now());
   const [stalled, setStalled] = useState(false);
 
+  // Buffer streaming text/thinking deltas and flush once per animation frame
+  const streamingTextBuf = useRef("");
+  const streamingThinkingBuf = useRef("");
+  const streamingRafId = useRef(0);
+  const flushStreamingBuffers = useCallback(() => {
+    streamingRafId.current = 0;
+    if (streamingTextBuf.current) {
+      updateStreaming(sessionId, streamingTextBuf.current);
+      streamingTextBuf.current = "";
+    }
+    if (streamingThinkingBuf.current) {
+      updateStreamingThinking(sessionId, streamingThinkingBuf.current);
+      streamingThinkingBuf.current = "";
+    }
+  }, [sessionId, updateStreaming, updateStreamingThinking]);
+
   useEffect(() => {
     if (session?.backend !== "pi" || piAvailableModels.length > 0) return;
     ensurePiModelsLoaded().catch(() => {});
@@ -167,6 +183,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
 
   // Subscribe to agent events from the Rust backend
   useEffect(() => {
+    let eventCount = 0;
+    let eventWindowStart = Date.now();
+    const EVENT_RATE_WINDOW_MS = 1000;
+    const EVENT_RATE_WARN_THRESHOLD = 500;
+
     const unlisten = listen<string>(`agent-event-${sessionId}`, (event) => {
       let msg: Record<string, unknown>;
       try {
@@ -174,13 +195,26 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       } catch {
         return;
       }
-      lastEventTimeRef.current = Date.now();
+
+      // Event rate tracking — detect bridge flooding
+      eventCount++;
+      const now = Date.now();
+      if (now - eventWindowStart >= EVENT_RATE_WINDOW_MS) {
+        if (eventCount > EVENT_RATE_WARN_THRESHOLD) {
+          console.warn(`[AgentPanel] high event rate: ${eventCount} events/sec from bridge (session ${sessionId})`);
+        }
+        eventCount = 0;
+        eventWindowStart = now;
+      }
+
+      lastEventTimeRef.current = now;
       if (stalled) setStalled(false);
       handleBridgeEvent(msg);
     });
 
     return () => {
       unlisten.then((fn) => fn());
+      if (streamingRafId.current) cancelAnimationFrame(streamingRafId.current);
     };
   }, [sessionId]);
 
@@ -309,7 +343,15 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       }
 
       case "assistant": {
-        // Flush any streaming text into a final message
+        // Flush buffered streaming deltas before clearing
+        if (streamingRafId.current) {
+          cancelAnimationFrame(streamingRafId.current);
+          streamingRafId.current = 0;
+        }
+        streamingTextBuf.current = "";
+        streamingThinkingBuf.current = "";
+
+        // Clear any streaming text
         const store = useAppStore.getState();
         const currentSession = store.agentSessionByTab[sessionId];
         if (currentSession?.streamingText) {
@@ -364,9 +406,12 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       case "partial": {
         const delta = msg.delta as { type: string; text?: string; thinking?: string } | undefined;
         if (delta?.type === "text" && delta.text) {
-          updateStreaming(sessionId, delta.text);
+          streamingTextBuf.current += delta.text;
         } else if (delta?.type === "thinking" && delta.text) {
-          updateStreamingThinking(sessionId, delta.text);
+          streamingThinkingBuf.current += delta.text;
+        }
+        if (!streamingRafId.current) {
+          streamingRafId.current = requestAnimationFrame(flushStreamingBuffers);
         }
         setStatus(sessionId, "thinking");
         break;
@@ -376,6 +421,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         const toolUseId = msg.toolUseId as string;
         const tool = activeToolsRef.current.get(toolUseId);
         activeToolsRef.current.delete(toolUseId);
+        // Clear subagent children when the subagent tool completes
+        if (tool?.name === "subagent") {
+          useAppStore.getState().clearSubagentChildren();
+        }
         appendMessage(sessionId, {
           id: nextMsgId(),
           type: "tool_result",
@@ -586,6 +635,41 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           });
         }
         setStatus(sessionId, "done");
+        break;
+      }
+
+      case "subagent_progress": {
+        const subEvt = msg.event as string;
+        const childId = msg.childId as string;
+        const subRole = msg.role as string;
+        const subTask = (msg.task as string) || "";
+        const store = useAppStore.getState();
+
+        if (subEvt === "start") {
+          store.updateSubagentChild({
+            id: childId, role: subRole, task: subTask,
+            lastTool: "", status: "running",
+          });
+        } else if (subEvt === "tool_start") {
+          const existing = store.subagentChildren.find((c) => c.id === childId);
+          if (existing) {
+            store.updateSubagentChild({ ...existing, lastTool: msg.toolName as string });
+          }
+        } else if (subEvt === "done") {
+          const existing = store.subagentChildren.find((c) => c.id === childId);
+          if (existing) {
+            store.updateSubagentChild({ ...existing, status: "done", lastTool: "" });
+          }
+        } else if (subEvt === "error") {
+          const existing = store.subagentChildren.find((c) => c.id === childId);
+          if (existing) {
+            store.updateSubagentChild({
+              ...existing, status: "error",
+              error: (msg.error as string) || "unknown", lastTool: "",
+            });
+          }
+        }
+        setStatus(sessionId, "tool_use");
         break;
       }
 
