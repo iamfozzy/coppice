@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
 import { DiffViewer } from "../DiffViewer/DiffViewer";
 import { Tooltip } from "../ui/Tooltip";
+import { useAgentTabCloseConfirmation } from "../ui/useAgentTabCloseConfirmation";
 import * as commands from "../../lib/commands";
 import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
 
@@ -13,7 +14,6 @@ export function WorktreeView() {
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree);
   const activeTabByWorktree = useAppStore((s) => s.activeTabByWorktree);
   const addTab = useAppStore((s) => s.addTab);
-  const closeTab = useAppStore((s) => s.closeTab);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const newTerminalTab = useAppStore((s) => s.newTerminalTab);
   const newClaudeTab = useAppStore((s) => s.newClaudeTab);
@@ -47,6 +47,7 @@ export function WorktreeView() {
 
   const [liveBranch, setLiveBranch] = useState<string | null>(null);
   const [lastBranchWtId, setLastBranchWtId] = useState<string | null>(null);
+  const { requestCloseTab, closeConfirmation } = useAgentTabCloseConfirmation();
 
   if (wtId && wtId !== lastBranchWtId) {
     setLiveBranch(null);
@@ -180,7 +181,7 @@ export function WorktreeView() {
               pinned={tab.pinned ?? false}
               claudeStatus={tab.type === "claude" || tab.type === "agent" ? claudeStatusByTab[tab.id] ?? null : null}
               onClick={() => setActiveTab(wtId, tab.id)}
-              onClose={() => closeTab(wtId, tab.id)}
+              onClose={(event) => requestCloseTab(wtId, tab.id, event)}
               onRename={(newLabel) => renameTab(wtId, tab.id, newLabel)}
               onTogglePin={tab.type === "agent" ? () => toggleTabPin(wtId, tab.id) : undefined}
             />
@@ -248,6 +249,7 @@ export function WorktreeView() {
           return null;
         })()}
       </div>
+      {closeConfirmation}
     </div>
   );
 }
@@ -269,7 +271,7 @@ function Tab({
   pinned: boolean;
   claudeStatus: ClaudeStatus | null;
   onClick: () => void;
-  onClose: () => void;
+  onClose: (event: React.MouseEvent) => void;
   onRename: (newLabel: string) => void;
   onTogglePin?: () => void;
 }) {
@@ -341,7 +343,7 @@ function Tab({
       onMouseDown={(e) => {
         if (e.button === 1) {
           e.preventDefault();
-          onClose();
+          onClose(e);
         }
       }}
       tabIndex={-1}
@@ -394,7 +396,7 @@ function Tab({
         className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded hover:bg-text-tertiary/20 transition-all shrink-0 -mr-1"
         onClick={(e) => {
           e.stopPropagation();
-          onClose();
+          onClose(e);
         }}
       >
         <svg width="8" height="8" viewBox="0 0 8 8" fill="none">

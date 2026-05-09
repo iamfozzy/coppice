@@ -4,6 +4,7 @@ import { MessageList } from "../AgentView/MessageList";
 import { AgentInputBar } from "../AgentView/AgentInputBar";
 import { CreateWorktreeModal } from "../Sidebar/CreateWorktreeModal";
 import { Tooltip } from "../ui/Tooltip";
+import { useAgentTabCloseConfirmation } from "../ui/useAgentTabCloseConfirmation";
 import { modelSupports1MContext, type SupportedModel } from "../../lib/supportedModels";
 import { EffortPicker, ModelPicker } from "../AgentView/AgentControls";
 import * as commands from "../../lib/commands";
@@ -230,7 +231,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const clearClaudeIdleStatus = useAppStore((s) => s.clearClaudeIdleStatus);
   const toggleTileView = useAppStore((s) => s.toggleTileView);
   const toggleTabPin = useAppStore((s) => s.toggleTabPin);
-  const closeTab = useAppStore((s) => s.closeTab);
+  const { requestCloseTab, closeConfirmation } = useAgentTabCloseConfirmation();
   const appendMessage = useAppStore((s) => s.appendAgentMessage);
   const setStatus = useAppStore((s) => s.setAgentStatus);
   const pushQueuedMessage = useAppStore((s) => s.pushAgentQueuedMessage);
@@ -492,7 +493,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
           <Tooltip text="Close tab" align="right">
             <button
               className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
-              onClick={() => closeTab(pinned.worktreeId, tab.id)}
+              onClick={(event) => requestCloseTab(pinned.worktreeId, tab.id, event)}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -524,6 +525,8 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
           onDeny={() => handleToolResponse("deny")}
         />
       )}
+
+      {closeConfirmation}
 
       {/* Ask user dialog */}
       {session.pendingQuestion && (
