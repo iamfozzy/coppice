@@ -90,12 +90,31 @@ export interface AppSettings {
   pi_configured_providers: string[];
 }
 
+export interface McpOAuthState {
+  authorization_endpoint?: string;
+  token_endpoint?: string;
+  registration_endpoint?: string;
+  client_id?: string;
+  has_client_secret?: boolean;
+  scopes?: string[];
+  /** Whether a non-expired (or refreshable) token set is currently in the keychain. */
+  connected?: boolean;
+  /** Unix seconds — last successful auth/refresh. */
+  last_auth_at?: number;
+}
+
 export interface McpServerEntry {
   server_type: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
   url?: string;
   env?: Record<string, string>;
+  /** Static headers for http/sse — merged with OAuth bearer token at session start. */
+  headers?: Record<string, string>;
+  /** Present when this server authenticates via OAuth 2.1. */
+  oauth?: McpOAuthState;
+  /** Catalog ID this server was created from (e.g. "atlassian-rovo", "github"). */
+  catalog_id?: string;
 }
 
 // ── Image attachment type ──

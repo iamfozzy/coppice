@@ -3,6 +3,36 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+/// Per-server OAuth metadata persisted in settings.toml. Only non-secret
+/// data lives here — access/refresh tokens are stored in the OS keychain.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct McpOAuthState {
+    /// Discovered authorization endpoint (RFC 8414).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub authorization_endpoint: String,
+    /// Discovered token endpoint.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub token_endpoint: String,
+    /// Optional dynamic-registration endpoint (RFC 7591).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_endpoint: Option<String>,
+    /// Client ID returned from dynamic registration (or pre-registered).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub client_id: String,
+    /// Whether a client secret is stored in the keychain (true=confidential client).
+    #[serde(default)]
+    pub has_client_secret: bool,
+    /// Requested scopes (space-separated value the AS will see).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    /// True when the keychain currently holds a non-expired (or refreshable) token set.
+    #[serde(default)]
+    pub connected: bool,
+    /// Unix timestamp of last successful auth/refresh — purely informational.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_auth_at: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerEntry {
     pub server_type: String,
@@ -14,6 +44,18 @@ pub struct McpServerEntry {
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env: HashMap<String, String>,
+    /// Static headers for http/sse transports (e.g. a fixed Authorization Bearer
+    /// supplied by the user). Merged with — and overridden by — the OAuth
+    /// access token when an OAuth flow has been completed.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
+    /// OAuth state for http/sse servers that authenticate via OAuth 2.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<McpOAuthState>,
+    /// Identifies which catalog entry this server was created from. Lets the
+    /// UI badge "Atlassian Rovo" instead of just the server name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

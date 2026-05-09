@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import type { AgentBackend, McpServerEntry, McpServerStatus } from "../../lib/types";
 import type { SupportedModel } from "../../lib/supportedModels";
+import { mcpGetAuthStatus, type McpAuthStatus } from "../../lib/commands";
 import { Tooltip } from "./Tooltip";
 
 export type HeaderOption = {
@@ -115,10 +117,15 @@ export function ModelConfigPopover({
   );
 }
 
-function getMcpConnectionState(status?: string): "configured" | "connected" | "error" | "pending" {
+function getMcpConnectionState(
+  status?: string,
+): "configured" | "connected" | "error" | "pending" | "disconnected" {
   if (!status) return "configured";
   if (status === "connected") return "connected";
-  if (/^error:/i.test(status)) return "error";
+  if (status === "disconnected") return "disconnected";
+  if (status === "expired") return "pending";
+  if (/^error/i.test(status)) return "error";
+  if (status === "not_configured") return "configured";
   return "pending";
 }
 
@@ -144,6 +151,7 @@ export function McpStatusPopover({
   dropdownAlign?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
+  const [authStatuses, setAuthStatuses] = useState<Record<string, McpAuthStatus>>({});
   const ref = useRef<HTMLDivElement>(null);
   const configuredEntries = Object.entries(configuredServers);
 
@@ -163,37 +171,129 @@ export function McpStatusPopover({
     };
   }, [open]);
 
+  // Poll OAuth auth status from the secret store so the toolbar can show
+  // connected/disconnected without waiting for an agent session to start.
+  // Cheap (one file read + a few HashMap lookups). Refresh on mcp-oauth
+  // events so the dot flips green the moment a flow finishes.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const list = await mcpGetAuthStatus();
+        if (cancelled) return;
+        const map: Record<string, McpAuthStatus> = {};
+        for (const s of list) map[s.name] = s;
+        setAuthStatuses(map);
+      } catch (err) {
+        // Silent — the store may be empty or transiently locked.
+        if (!cancelled) console.debug("mcpGetAuthStatus:", err);
+      }
+    };
+    refresh();
+    const id = setInterval(refresh, 30000);
+    let unlisten: (() => void) | undefined;
+    listen("mcp-oauth-event", () => {
+      void refresh();
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   if (configuredEntries.length === 0) return null;
 
-  const statusByName = new Map(sessionServers.map((server) => [server.name, server.status]));
-  const rows: Array<{ name: string; entry?: McpServerEntry; status?: string }> = configuredEntries.map(([name, entry]) => ({
-    name,
-    entry,
-    status: statusByName.get(name),
-  }));
+  // Live session status takes priority over the cached OAuth status —
+  // a session that fails the connect handshake is what the user actually
+  // cares about. Pre-session, fall back to the OAuth-flow status.
+  const sessionStatusByName = new Map(sessionServers.map((server) => [server.name, server.status]));
+  const hasLiveStatus = sessionServers.length > 0;
+
+  // Servers without an `oauth` field don't participate in the OAuth-status
+  // tally — they're either stdio or use static auth, neither of which we
+  // can inspect ahead of time. They still show in the popover with a
+  // neutral "configured" badge.
+  function preSessionStatus(name: string, entry: McpServerEntry): string | undefined {
+    const auth = authStatuses[name];
+    if (!auth) return undefined;
+    if (auth.status === "not_configured") {
+      // No OAuth — surface "configured" so the badge stays neutral instead
+      // of looking like an error.
+      return entry.server_type === "stdio" ? undefined : undefined;
+    }
+    return auth.status;
+  }
+
+  const rows: Array<{ name: string; entry?: McpServerEntry; status?: string; isOauth: boolean }> =
+    configuredEntries.map(([name, entry]) => ({
+      name,
+      entry,
+      status: sessionStatusByName.get(name) ?? preSessionStatus(name, entry),
+      isOauth: !!entry.oauth,
+    }));
   for (const server of sessionServers) {
     if (!(server.name in configuredServers)) {
-      rows.push({ name: server.name, entry: undefined, status: server.status });
+      rows.push({ name: server.name, entry: undefined, status: server.status, isOauth: false });
     }
   }
 
   const totalCount = rows.length;
-  const hasLiveStatus = sessionServers.length > 0;
+  const oauthRows = rows.filter((r) => r.isOauth);
   const connectedCount = rows.filter((row) => row.status === "connected").length;
   const errorCount = rows.filter((row) => getMcpConnectionState(row.status) === "error").length;
   const pendingCount = rows.filter((row) => getMcpConnectionState(row.status) === "pending").length;
+  const disconnectedCount = rows.filter(
+    (row) => getMcpConnectionState(row.status) === "disconnected",
+  ).length;
 
-  const toneClass = !hasLiveStatus
-    ? "border-border-primary/25 bg-bg-tertiary/40 text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-    : errorCount === 0 && connectedCount === totalCount
-      ? "border-green-500/20 bg-green-500/10 text-green-400 hover:bg-green-500/15"
-      : connectedCount > 0
-        ? "border-amber-500/20 bg-amber-500/10 text-amber-400 hover:bg-amber-500/15"
-        : "border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/15";
-
-  const summary = !hasLiveStatus
-    ? `${configuredEntries.length} MCP server${configuredEntries.length === 1 ? "" : "s"} configured`
-    : `${connectedCount}/${totalCount} MCP server${totalCount === 1 ? "" : "s"} connected`;
+  // Toolbar tone reflects the strongest signal available. With a live
+  // session: green if everything connected, red if all dead, amber mixed.
+  // Without a session: same logic but using OAuth status — and only count
+  // OAuth-enabled servers when deciding "all good", since a stdio-only
+  // setup has no fail state to surface.
+  let toneClass: string;
+  let badgeText: string;
+  let summary: string;
+  if (hasLiveStatus) {
+    if (errorCount === 0 && connectedCount === totalCount) {
+      toneClass = "border-green-500/20 bg-green-500/10 text-green-400 hover:bg-green-500/15";
+    } else if (connectedCount > 0) {
+      toneClass = "border-amber-500/20 bg-amber-500/10 text-amber-400 hover:bg-amber-500/15";
+    } else {
+      toneClass = "border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/15";
+    }
+    badgeText = `${connectedCount}/${totalCount}`;
+    summary = `${connectedCount}/${totalCount} MCP server${totalCount === 1 ? "" : "s"} connected`;
+  } else if (oauthRows.length > 0) {
+    const oauthConnected = oauthRows.filter((r) => r.status === "connected").length;
+    const oauthBroken = oauthRows.filter(
+      (r) =>
+        getMcpConnectionState(r.status) === "disconnected" ||
+        getMcpConnectionState(r.status) === "error",
+    ).length;
+    if (oauthBroken === 0 && oauthConnected === oauthRows.length) {
+      toneClass = "border-green-500/20 bg-green-500/10 text-green-400 hover:bg-green-500/15";
+    } else if (oauthConnected > 0) {
+      toneClass = "border-amber-500/20 bg-amber-500/10 text-amber-400 hover:bg-amber-500/15";
+    } else {
+      toneClass = "border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/15";
+    }
+    badgeText = `${oauthConnected}/${oauthRows.length}`;
+    summary = `${oauthConnected}/${oauthRows.length} OAuth MCP server${oauthRows.length === 1 ? "" : "s"} connected${
+      oauthRows.length < totalCount ? ` (${totalCount - oauthRows.length} other)` : ""
+    }`;
+  } else {
+    toneClass =
+      "border-border-primary/25 bg-bg-tertiary/40 text-text-secondary hover:bg-bg-hover hover:text-text-primary";
+    badgeText = `${configuredEntries.length}`;
+    summary = `${configuredEntries.length} MCP server${configuredEntries.length === 1 ? "" : "s"} configured`;
+  }
 
   const button = (
     <button
@@ -208,9 +308,7 @@ export function McpStatusPopover({
         <rect x="2.5" y="9.5" width="11" height="4" rx="1.2" />
         <path d="M5.5 4.5h.01M8 4.5h.01M5.5 11.5h.01M8 11.5h.01" />
       </svg>
-      <span className="text-[10px] font-medium tabular-nums leading-none">
-        {hasLiveStatus ? `${connectedCount}/${totalCount}` : `${configuredEntries.length}`}
-      </span>
+      <span className="text-[10px] font-medium tabular-nums leading-none">{badgeText}</span>
     </button>
   );
 
@@ -233,10 +331,13 @@ export function McpStatusPopover({
               <span>Connected {connectedCount}</span>
               {errorCount > 0 && <span>Errors {errorCount}</span>}
               {pendingCount > 0 && <span>Pending {pendingCount}</span>}
+              {disconnectedCount > 0 && <span>Need auth {disconnectedCount}</span>}
             </div>
             {!hasLiveStatus && (
               <div className="mt-1 text-[9px] text-text-tertiary">
-                Connection status appears after an agent session starts.
+                {oauthRows.length > 0
+                  ? "Showing OAuth status. Live session status appears once an agent starts."
+                  : "Connection status appears after an agent session starts."}
               </div>
             )}
           </div>
@@ -244,14 +345,17 @@ export function McpStatusPopover({
           <div className="max-h-72 overflow-y-auto space-y-1">
             {rows.map((row) => {
               const state = getMcpConnectionState(row.status);
-              const badgeClass = state === "connected"
-                ? "bg-green-500/10 text-green-400"
-                : state === "error"
-                  ? "bg-red-500/10 text-red-400"
-                  : state === "pending"
-                    ? "bg-amber-500/10 text-amber-400"
-                    : "bg-bg-tertiary text-text-secondary";
-              const statusLabel = row.status || "configured";
+              const badgeClass =
+                state === "connected"
+                  ? "bg-green-500/10 text-green-400"
+                  : state === "error"
+                    ? "bg-red-500/10 text-red-400"
+                    : state === "pending"
+                      ? "bg-amber-500/10 text-amber-400"
+                      : state === "disconnected"
+                        ? "bg-red-500/10 text-red-300"
+                        : "bg-bg-tertiary text-text-secondary";
+              const statusLabel = row.status || (row.isOauth ? "configured" : "configured");
               const transport = row.entry?.server_type || "unknown";
               const endpoint = formatMcpEndpoint(row.entry);
               return (

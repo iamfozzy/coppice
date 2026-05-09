@@ -1,9 +1,22 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../../stores/appStore";
 import type { AppSettings, McpServerEntry, ThemeMode } from "../../lib/types";
 import { SUPPORTED_MODELS } from "../../lib/supportedModels";
 import { GitHubAuthSection } from "./GitHubAuthSection";
-import { piGetModels, piOAuthLogin, piOAuthCheck } from "../../lib/commands";
+import {
+  piGetModels,
+  piOAuthLogin,
+  piOAuthCheck,
+  mcpGetCatalog,
+  mcpInstallCatalogEntry,
+  mcpOauthStart,
+  mcpOauthRevoke,
+  mcpGetAuthStatus,
+  mcpTestConnection,
+  type McpCatalogEntry,
+  type McpAuthStatus,
+} from "../../lib/commands";
 
 const CLAUDE_EFFORT_OPTIONS: Array<{ value: AppSettings["agent_default_effort"]; label: string }> = [
   { value: "low", label: "low" },
@@ -1349,6 +1362,28 @@ function parseMcpArgs(input: string): string[] {
   return args;
 }
 
+// ─── MCP server editor ─────────────────────────────────────────────────────
+//
+// Three things go on here:
+//   1. List installed servers with a live status badge + per-row actions
+//      (Connect / Reauthorize / Test / Remove).
+//   2. "Add" splits into two paths: a curated catalog (Rovo, GitHub
+//      — one click + browser-driven OAuth) or a custom form for any other
+//      stdio/sse/http server.
+//   3. While an OAuth flow is in flight we listen to the Rust-side
+//      `mcp-oauth-event` stream and surface progress inline.
+//
+// Catalog installs write to settings via Rust (so the OAuth flow has the
+// server config in settings.toml immediately); the form's local state is
+// then merged with the returned entry to keep the modal in sync.
+
+type OauthEvent = {
+  name: string;
+  kind: "auth" | "progress" | "success" | "error";
+  url?: string;
+  message?: string;
+};
+
 function McpServersEditor({
   servers,
   onChange,
@@ -1356,20 +1391,542 @@ function McpServersEditor({
   servers: Record<string, McpServerEntry>;
   onChange: (servers: Record<string, McpServerEntry>) => void;
 }) {
-  const [adding, setAdding] = useState(false);
+  const [mode, setMode] = useState<"none" | "catalog" | "custom">("none");
+  const [catalog, setCatalog] = useState<McpCatalogEntry[]>([]);
+  const [statuses, setStatuses] = useState<Record<string, McpAuthStatus>>({});
+  const [busy, setBusy] = useState<Record<string, string>>({});
+  const [testResults, setTestResults] = useState<Record<string, string>>({});
+  const [installError, setInstallError] = useState<string>("");
+
+  const refreshStatuses = useCallback(async () => {
+    try {
+      const list = await mcpGetAuthStatus();
+      const map: Record<string, McpAuthStatus> = {};
+      for (const s of list) map[s.name] = s;
+      setStatuses(map);
+    } catch (err) {
+      console.warn("mcpGetAuthStatus:", err);
+    }
+  }, []);
+
+  // Load catalog once + initial status snapshot.
+  useEffect(() => {
+    mcpGetCatalog().then(setCatalog).catch((e) => console.warn("mcpGetCatalog:", e));
+    refreshStatuses();
+  }, [refreshStatuses]);
+
+  // Re-poll status every 8s while modal is open. Cheap (just reads keychain
+  // entry expiry timestamps) and lets a token expiring during a flow tick
+  // its badge from connected → expired without the user reopening settings.
+  useEffect(() => {
+    const id = setInterval(refreshStatuses, 8000);
+    return () => clearInterval(id);
+  }, [refreshStatuses]);
+
+  // Refs so the long-lived event listener always sees the latest form state
+  // and onChange callback without resubscribing on every form keystroke.
+  const serversRef = useRef(servers);
+  const onChangeRef = useRef(onChange);
+  serversRef.current = servers;
+  onChangeRef.current = onChange;
+
+  // Listen for OAuth events from Rust. Updates per-server `busy` text and,
+  // on success, flips the local entry's `oauth.connected` to true so the
+  // badge updates without a save round-trip. Subscribed once for the life
+  // of the modal.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<OauthEvent>("mcp-oauth-event", (e) => {
+      const ev = e.payload;
+      setBusy((prev) => {
+        const next = { ...prev };
+        if (ev.kind === "success" || ev.kind === "error") {
+          delete next[ev.name];
+        } else {
+          next[ev.name] = ev.message || ev.kind;
+        }
+        return next;
+      });
+      if (ev.kind === "success") {
+        const curServers = serversRef.current;
+        const cur = curServers[ev.name];
+        if (cur) {
+          onChangeRef.current({
+            ...curServers,
+            [ev.name]: {
+              ...cur,
+              oauth: {
+                ...(cur.oauth || {}),
+                connected: true,
+                last_auth_at: Math.floor(Date.now() / 1000),
+              },
+            },
+          });
+        }
+        refreshStatuses();
+      } else if (ev.kind === "error") {
+        setTestResults((prev) => ({ ...prev, [ev.name]: `error: ${ev.message || "OAuth failed"}` }));
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    }).catch((err) => console.warn("mcp-oauth-event listen:", err));
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [refreshStatuses]);
+
+  const handleRemove = async (name: string) => {
+    const entry = servers[name];
+    if (entry?.oauth) {
+      try {
+        await mcpOauthRevoke(name);
+      } catch (e) {
+        console.warn("mcpOauthRevoke:", e);
+      }
+    }
+    const next = { ...servers };
+    delete next[name];
+    onChange(next);
+  };
+
+  const handleConnect = async (name: string) => {
+    setBusy((prev) => ({ ...prev, [name]: "Starting…" }));
+    setTestResults((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+    try {
+      await mcpOauthStart(name);
+    } catch (e) {
+      setBusy((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+      setTestResults((prev) => ({ ...prev, [name]: `error: ${String(e)}` }));
+    }
+  };
+
+  const handleTest = async (name: string) => {
+    setTestResults((prev) => ({ ...prev, [name]: "Testing…" }));
+    try {
+      const r = await mcpTestConnection(name);
+      setTestResults((prev) => ({
+        ...prev,
+        [name]: `${r.ok ? "ok" : "fail"}: ${r.message}`,
+      }));
+    } catch (e) {
+      setTestResults((prev) => ({ ...prev, [name]: `error: ${String(e)}` }));
+    }
+  };
+
+  const handleInstallCatalog = async (
+    entry: McpCatalogEntry,
+    opts: { autoConnect: boolean; token?: string },
+  ) => {
+    setInstallError("");
+    try {
+      const installed = await mcpInstallCatalogEntry(entry.id, opts.token);
+      onChange({ ...servers, [installed.name]: installed.entry });
+      setMode("none");
+      if (opts.autoConnect && entry.auth === "oauth") {
+        // Small delay so the new entry is in settings.toml before we read it.
+        setTimeout(() => handleConnect(installed.name), 50);
+      }
+      refreshStatuses();
+    } catch (e) {
+      setInstallError(String(e));
+    }
+  };
+
+  const handleAddCustom = (entry: McpServerEntry, name: string) => {
+    onChange({ ...servers, [name]: entry });
+    setMode("none");
+  };
+
+  const entries = Object.entries(servers);
+
+  return (
+    <div>
+      <label className="block text-xs text-text-secondary mb-1">MCP Servers</label>
+      <p className="text-[10px] text-text-tertiary mb-2">
+        Additional MCP servers available to Claude Agent and Pi Agent sessions. OAuth tokens are stored in your OS keychain.
+      </p>
+
+      {entries.length > 0 && (
+        <div className="space-y-1.5 mb-2">
+          {entries.map(([name, entry]) => (
+            <McpServerRow
+              key={name}
+              name={name}
+              entry={entry}
+              status={statuses[name]}
+              busy={busy[name]}
+              testResult={testResults[name]}
+              onConnect={() => handleConnect(name)}
+              onTest={() => handleTest(name)}
+              onRemove={() => handleRemove(name)}
+            />
+          ))}
+        </div>
+      )}
+
+      {mode === "catalog" && (
+        <McpCatalogPicker
+          catalog={catalog}
+          onInstall={handleInstallCatalog}
+          onCancel={() => {
+            setMode("none");
+            setInstallError("");
+          }}
+          error={installError}
+        />
+      )}
+      {mode === "custom" && (
+        <McpCustomForm
+          existingNames={new Set(Object.keys(servers))}
+          onAdd={handleAddCustom}
+          onCancel={() => setMode("none")}
+        />
+      )}
+
+      {mode === "none" && (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setMode("catalog")}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-accent/10 border border-accent/30 text-accent hover:bg-accent/15 transition-colors"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M5 1v8M1 5h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+            Add from catalog
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("custom")}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-bg-tertiary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          >
+            Add custom server
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Per-row status + actions ──────────────────────────────────────────────
+
+function statusDotClass(status?: string): string {
+  switch (status) {
+    case "connected":
+      return "bg-green-500";
+    case "expired":
+      return "bg-amber-500";
+    case "disconnected":
+      return "bg-text-tertiary";
+    case "error":
+      return "bg-red-500";
+    default:
+      return "bg-text-tertiary/50";
+  }
+}
+
+function statusLabel(entry: McpServerEntry, status?: McpAuthStatus): string {
+  if (!entry.oauth) return entry.server_type;
+  if (!status) return "loading";
+  return status.status;
+}
+
+function McpServerRow({
+  name,
+  entry,
+  status,
+  busy,
+  testResult,
+  onConnect,
+  onTest,
+  onRemove,
+}: {
+  name: string;
+  entry: McpServerEntry;
+  status?: McpAuthStatus;
+  busy?: string;
+  testResult?: string;
+  onConnect: () => void;
+  onTest: () => void;
+  onRemove: () => void;
+}) {
+  const isOauth = !!entry.oauth;
+  const isConnected = status?.status === "connected";
+  const isRemote = entry.server_type !== "stdio";
+  // Custom servers haven't been through OAuth yet but still get a Connect
+  // button — clicking it triggers discovery + dynamic registration on the
+  // fly. If the server doesn't support OAuth, we surface a clear error.
+  const showConnect = isRemote;
+  // A user-supplied static `Authorization` header signals intent to use
+  // their own bearer token, not OAuth. Skip the badge in that case to
+  // avoid implying the server isn't authenticated.
+  const hasManualAuth =
+    !isOauth &&
+    !!entry.headers &&
+    Object.keys(entry.headers).some((k) => k.toLowerCase() === "authorization");
+  const showStatus = isOauth;
+  const endpoint = entry.server_type === "stdio"
+    ? [entry.command, ...(entry.args || [])].filter(Boolean).join(" ")
+    : entry.url || "";
+  const subLabel = entry.catalog_id ? `${entry.catalog_id} · ${entry.server_type}` : entry.server_type;
+  const testTone = testResult?.startsWith("ok:")
+    ? "text-green-500"
+    : testResult?.startsWith("fail:") || testResult?.startsWith("error:")
+    ? "text-red-400"
+    : "text-text-tertiary";
+
+  return (
+    <div className="px-2.5 py-2 bg-bg-tertiary border border-border-primary rounded text-xs space-y-1.5">
+      <div className="flex items-center gap-2">
+        {showStatus && (
+          <span
+            className={`inline-block w-2 h-2 rounded-full shrink-0 ${statusDotClass(status?.status)}`}
+            title={statusLabel(entry, status)}
+          />
+        )}
+        <span className="font-mono font-medium text-text-primary">{name}</span>
+        <span className="px-1.5 py-0.5 rounded bg-bg-secondary border border-border-primary text-[10px] text-text-tertiary">
+          {subLabel}
+        </span>
+        {showStatus && (
+          <span className="text-[10px] text-text-tertiary">{statusLabel(entry, status)}</span>
+        )}
+        {hasManualAuth && (
+          <span className="text-[10px] text-text-tertiary" title="Static Authorization header configured">
+            manual auth
+          </span>
+        )}
+        <span className="text-text-tertiary truncate flex-1 text-[10px]" title={endpoint}>
+          {endpoint}
+        </span>
+        <button
+          type="button"
+          className="text-text-tertiary hover:text-error transition-colors shrink-0"
+          onClick={onRemove}
+          title={isOauth ? "Remove server (revokes OAuth tokens)" : "Remove server"}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path d="M2 2l6 6M8 2L2 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {showConnect && (
+          <button
+            type="button"
+            onClick={onConnect}
+            disabled={!!busy}
+            className={`px-2 py-0.5 text-[10px] rounded border transition-colors disabled:opacity-50 ${
+              isConnected
+                ? "bg-bg-primary border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                : "bg-accent/10 border-accent/40 text-accent hover:bg-accent/15"
+            }`}
+            title={isOauth
+              ? (isConnected ? "Re-run OAuth flow" : "Authorize via OAuth")
+              : "Try OAuth — Coppice will probe the server for its auth endpoints"}
+          >
+            {busy ? "…" : isConnected ? "Reauthorize" : "Connect"}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onTest}
+          className="px-2 py-0.5 text-[10px] rounded bg-bg-primary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+        >
+          Test
+        </button>
+        {busy && <span className="text-[10px] text-amber-400 ml-1">{busy}</span>}
+        {testResult && !busy && (
+          <span className={`text-[10px] ml-1 ${testTone} truncate max-w-[260px]`} title={testResult}>
+            {testResult}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Catalog picker ────────────────────────────────────────────────────────
+
+function McpCatalogPicker({
+  catalog,
+  onInstall,
+  onCancel,
+  error,
+}: {
+  catalog: McpCatalogEntry[];
+  onInstall: (entry: McpCatalogEntry, opts: { autoConnect: boolean; token?: string }) => void;
+  onCancel: () => void;
+  error?: string;
+}) {
+  return (
+    <div className="space-y-2 p-2.5 bg-bg-tertiary border border-border-primary rounded">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] uppercase tracking-wide text-text-tertiary">Curated MCP servers</div>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-text-tertiary hover:text-text-primary"
+          title="Cancel"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path d="M2 2l6 6M8 2L2 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+      {catalog.length === 0 && (
+        <div className="text-[10px] text-text-tertiary">Loading catalog…</div>
+      )}
+      <div className="space-y-1.5">
+        {catalog.map((entry) => (
+          <McpCatalogRow key={entry.id} entry={entry} onInstall={onInstall} />
+        ))}
+      </div>
+      {error && <div className="text-[10px] text-red-400">{error}</div>}
+    </div>
+  );
+}
+
+function McpCatalogRow({
+  entry,
+  onInstall,
+}: {
+  entry: McpCatalogEntry;
+  onInstall: (entry: McpCatalogEntry, opts: { autoConnect: boolean; token?: string }) => void;
+}) {
+  // For static-bearer entries we need a token before installing. Keep it
+  // local so other rows aren't re-rendered on each keystroke. The `Add &
+  // Connect` button stays disabled until the field has content.
+  const [token, setToken] = useState("");
+  const isStaticBearer = entry.auth === "static-bearer";
+  const isOauth = entry.auth === "oauth";
+  const trimmedToken = token.trim();
+  const canSubmit = isStaticBearer ? !!trimmedToken : true;
+
+  const submit = () => {
+    if (!canSubmit) return;
+    onInstall(entry, {
+      autoConnect: isOauth,
+      token: isStaticBearer ? trimmedToken : undefined,
+    });
+  };
+
+  const buttonLabel = isOauth ? "Add & Connect" : isStaticBearer ? "Add with token" : "Add";
+
+  return (
+    <div className="p-2 bg-bg-primary/40 border border-border-primary rounded space-y-1.5">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-text-primary">{entry.display_name}</span>
+            <span className="px-1 py-0.5 rounded bg-bg-secondary text-[9px] text-text-tertiary">
+              {entry.server_type}
+            </span>
+            {isOauth && <span className="px-1 py-0.5 rounded bg-accent/10 text-[9px] text-accent">OAuth</span>}
+            {isStaticBearer && (
+              <span className="px-1 py-0.5 rounded bg-amber-500/10 text-[9px] text-amber-400">Token</span>
+            )}
+          </div>
+          <div className="text-[10px] text-text-tertiary mt-0.5">{entry.description}</div>
+          <div
+            className="text-[9px] text-text-tertiary/70 mt-0.5 font-mono truncate"
+            title={entry.url}
+          >
+            {entry.url}
+          </div>
+        </div>
+        {!isStaticBearer && (
+          <button
+            type="button"
+            onClick={submit}
+            className="shrink-0 px-2 py-1 text-[10px] rounded bg-accent hover:bg-accent-hover text-white transition-colors"
+          >
+            {buttonLabel}
+          </button>
+        )}
+      </div>
+
+      {isStaticBearer && (
+        <div className="space-y-1.5">
+          {entry.token_help && (
+            <div className="text-[9px] text-text-tertiary">{entry.token_help}</div>
+          )}
+          <div className="flex gap-1.5">
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit();
+              }}
+              placeholder="Paste token here"
+              autoComplete="off"
+              spellCheck={false}
+              className="flex-1 px-2 py-1 text-[10px] bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+            />
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!canSubmit}
+              className="shrink-0 px-2 py-1 text-[10px] rounded bg-accent hover:bg-accent-hover disabled:opacity-40 text-white transition-colors"
+            >
+              {buttonLabel}
+            </button>
+          </div>
+          {entry.token_url && (
+            <a
+              href={entry.token_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] text-accent hover:underline"
+            >
+              <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
+                <path d="M5 7L11 1M11 1H7M11 1V5M9 7v3a1 1 0 01-1 1H2a1 1 0 01-1-1V4a1 1 0 011-1h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Generate token →
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Custom server form ────────────────────────────────────────────────────
+
+function McpCustomForm({
+  existingNames,
+  onAdd,
+  onCancel,
+}: {
+  existingNames: Set<string>;
+  onAdd: (entry: McpServerEntry, name: string) => void;
+  onCancel: () => void;
+}) {
   const [editName, setEditName] = useState("");
   const [editType, setEditType] = useState<"stdio" | "sse" | "http">("stdio");
   const [editCommand, setEditCommand] = useState("");
   const [editArgs, setEditArgs] = useState("");
   const [editUrl, setEditUrl] = useState("");
   const [editEnv, setEditEnv] = useState("");
+  const [editHeaders, setEditHeaders] = useState("");
 
-  const entries = Object.entries(servers);
-  const canAdd = !!editName.trim() && (editType === "stdio" ? !!editCommand.trim() : !!editUrl.trim());
+  const trimmedName = editName.trim();
+  const nameTaken = existingNames.has(trimmedName);
+  const canAdd =
+    !!trimmedName && !nameTaken && (editType === "stdio" ? !!editCommand.trim() : !!editUrl.trim());
 
   const handleAdd = () => {
-    const name = editName.trim();
-    if (!canAdd || !name) return;
+    if (!canAdd) return;
     const entry: McpServerEntry = { server_type: editType };
     if (editType === "stdio") {
       entry.command = editCommand.trim();
@@ -1380,159 +1937,117 @@ function McpServersEditor({
         entry.env = {};
         for (const line of envPairs.split("\n")) {
           const eq = line.indexOf("=");
-          if (eq > 0) {
-            entry.env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
-          }
+          if (eq > 0) entry.env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
         }
       }
     } else {
       entry.url = editUrl.trim() || undefined;
+      const headerPairs = editHeaders.trim();
+      if (headerPairs) {
+        entry.headers = {};
+        for (const line of headerPairs.split("\n")) {
+          const colon = line.indexOf(":");
+          if (colon > 0) entry.headers[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
+        }
+      }
     }
-    onChange({ ...servers, [name]: entry });
-    setAdding(false);
-    setEditName("");
-    setEditCommand("");
-    setEditArgs("");
-    setEditUrl("");
-    setEditEnv("");
-  };
-
-  const handleRemove = (name: string) => {
-    const next = { ...servers };
-    delete next[name];
-    onChange(next);
+    onAdd(entry, trimmedName);
   };
 
   return (
-    <div>
-      <label className="block text-xs text-text-secondary mb-1">MCP Servers</label>
-      <p className="text-[10px] text-text-tertiary mb-2">
-        Additional MCP servers available to Claude Agent and Pi Agent sessions.
-      </p>
-
-      {entries.length > 0 && (
-        <div className="space-y-1.5 mb-2">
-          {entries.map(([name, entry]) => (
-            <div
-              key={name}
-              className="flex items-center gap-2 px-2.5 py-1.5 bg-bg-tertiary border border-border-primary rounded text-xs"
+    <div className="space-y-2 p-2.5 bg-bg-tertiary border border-border-primary rounded">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={editName}
+          onChange={(e) => setEditName(e.target.value)}
+          placeholder="Server name"
+          className="flex-1 px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+        />
+        <div className="flex rounded overflow-hidden border border-border-primary">
+          {(["stdio", "sse", "http"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setEditType(t)}
+              className={`px-2 py-1 text-[10px] transition-colors ${
+                editType === t
+                  ? "bg-accent text-white"
+                  : "bg-bg-primary text-text-secondary hover:bg-bg-hover"
+              }`}
             >
-              <span className="font-mono font-medium text-text-primary">{name}</span>
-              <span className="px-1.5 py-0.5 rounded bg-bg-secondary border border-border-primary text-[10px] text-text-tertiary">
-                {entry.server_type}
-              </span>
-              <span className="text-text-tertiary truncate flex-1">
-                {entry.server_type === "stdio"
-                  ? [entry.command, ...(entry.args || [])].join(" ")
-                  : entry.url || ""}
-              </span>
-              <button
-                type="button"
-                className="text-text-tertiary hover:text-error transition-colors shrink-0"
-                onClick={() => handleRemove(name)}
-                title="Remove"
-              >
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <path d="M2 2l6 6M8 2L2 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                </svg>
-              </button>
-            </div>
+              {t}
+            </button>
           ))}
         </div>
+      </div>
+      {nameTaken && (
+        <div className="text-[10px] text-red-400">A server named "{trimmedName}" already exists.</div>
       )}
 
-      {adding ? (
-        <div className="space-y-2 p-2.5 bg-bg-tertiary border border-border-primary rounded">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              placeholder="Server name"
-              className="flex-1 px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
-            />
-            <div className="flex rounded overflow-hidden border border-border-primary">
-              {(["stdio", "sse", "http"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setEditType(t)}
-                  className={`px-2 py-1 text-[10px] transition-colors ${
-                    editType === t
-                      ? "bg-accent text-white"
-                      : "bg-bg-primary text-text-secondary hover:bg-bg-hover"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {editType === "stdio" ? (
-            <>
-              <input
-                type="text"
-                value={editCommand}
-                onChange={(e) => setEditCommand(e.target.value)}
-                placeholder="Command (e.g., npx)"
-                className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
-              />
-              <input
-                type="text"
-                value={editArgs}
-                onChange={(e) => setEditArgs(e.target.value)}
-                placeholder={'Arguments (quote values with spaces, e.g., -y @some/mcp-server "--flag=value with spaces")'}
-                className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
-              />
-              <textarea
-                value={editEnv}
-                onChange={(e) => setEditEnv(e.target.value)}
-                placeholder={"Environment variables (one per line):\nSLACK_TOKEN=xoxb-...\nOTHER_VAR=value"}
-                rows={2}
-                className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono resize-none"
-              />
-            </>
-          ) : (
-            <input
-              type="text"
-              value={editUrl}
-              onChange={(e) => setEditUrl(e.target.value)}
-              placeholder="URL (e.g., http://localhost:3001/sse)"
-              className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
-            />
-          )}
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={handleAdd}
-              disabled={!canAdd}
-              className="px-2.5 py-1 text-xs rounded bg-accent hover:bg-accent-hover disabled:opacity-40 text-white transition-colors"
-            >
-              Add
-            </button>
-            <button
-              type="button"
-              onClick={() => setAdding(false)}
-              className="px-2.5 py-1 text-xs rounded text-text-secondary hover:text-text-primary transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+      {editType === "stdio" ? (
+        <>
+          <input
+            type="text"
+            value={editCommand}
+            onChange={(e) => setEditCommand(e.target.value)}
+            placeholder="Command (e.g., npx)"
+            className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+          />
+          <input
+            type="text"
+            value={editArgs}
+            onChange={(e) => setEditArgs(e.target.value)}
+            placeholder={'Arguments (quote values with spaces, e.g., -y @some/mcp-server "--flag=value with spaces")'}
+            className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+          />
+          <textarea
+            value={editEnv}
+            onChange={(e) => setEditEnv(e.target.value)}
+            placeholder={"Environment variables (one per line):\nSLACK_TOKEN=xoxb-...\nOTHER_VAR=value"}
+            rows={2}
+            className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono resize-none"
+          />
+        </>
       ) : (
+        <>
+          <input
+            type="text"
+            value={editUrl}
+            onChange={(e) => setEditUrl(e.target.value)}
+            placeholder="URL (e.g., https://example.com/mcp/sse)"
+            className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+          />
+          <textarea
+            value={editHeaders}
+            onChange={(e) => setEditHeaders(e.target.value)}
+            placeholder={"Headers (one per line, name: value):\nAuthorization: Bearer your-static-token\nX-Org-Id: 1234"}
+            rows={2}
+            className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono resize-none"
+          />
+          <p className="text-[9px] text-text-tertiary">
+            For OAuth-protected servers, prefer "Add from catalog" — Coppice will run the OAuth flow and store tokens in your keychain.
+          </p>
+        </>
+      )}
+
+      <div className="flex gap-2">
         <button
           type="button"
-          onClick={() => setAdding(true)}
-          className="flex items-center gap-1 px-2.5 py-1 text-xs rounded bg-bg-tertiary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          onClick={handleAdd}
+          disabled={!canAdd}
+          className="px-2.5 py-1 text-xs rounded bg-accent hover:bg-accent-hover disabled:opacity-40 text-white transition-colors"
         >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-            <path d="M5 1v8M1 5h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-          </svg>
-          Add MCP Server
+          Add
         </button>
-      )}
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-2.5 py-1 text-xs rounded text-text-secondary hover:text-text-primary transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

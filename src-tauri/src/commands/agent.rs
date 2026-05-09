@@ -213,7 +213,12 @@ pub fn agent_start(
         }
     }
 
-    // Pass MCP servers from settings
+    // Pass MCP servers from settings.
+    //
+    // For http/sse servers we merge: user-supplied static headers + a Bearer
+    // token loaded from the OS keychain when the server has completed an
+    // OAuth flow. The keychain lookup also refreshes the token if it's about
+    // to expire — this is the single point where MCP auth is materialized.
     {
         if !settings_snapshot.mcp_servers.is_empty() {
             let mut servers = serde_json::Map::new();
@@ -246,6 +251,37 @@ pub fn agent_start(
                     );
                     if let Some(ref url) = entry.url {
                         obj.insert("url".into(), serde_json::Value::String(url.clone()));
+                    }
+
+                    // Build headers: start with user-supplied static headers,
+                    // then overlay the OAuth Bearer token (keychain-backed,
+                    // auto-refreshed) if the server has completed OAuth.
+                    let mut headers_map: serde_json::Map<String, serde_json::Value> = entry
+                        .headers
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect();
+                    if entry.oauth.is_some() {
+                        match crate::services::mcp_oauth::access_token_for_session(name, entry) {
+                            Ok(Some(token)) => {
+                                headers_map.insert(
+                                    "Authorization".into(),
+                                    serde_json::Value::String(format!("Bearer {}", token)),
+                                );
+                            }
+                            Ok(None) => {
+                                eprintln!(
+                                    "[mcp] {}: no OAuth token available — server will start unauthenticated",
+                                    name
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("[mcp] {}: failed to load OAuth token: {}", name, e);
+                            }
+                        }
+                    }
+                    if !headers_map.is_empty() {
+                        obj.insert("headers".into(), serde_json::Value::Object(headers_map));
                     }
                 }
                 servers.insert(name.clone(), serde_json::Value::Object(obj));

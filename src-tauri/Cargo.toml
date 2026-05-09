@@ -29,3 +29,13 @@ toml = "0.8"
 portable-pty = "0.8"
 tauri-plugin-notification = "2"
 base64 = "0.22"
+
+# MCP OAuth: blocking HTTP client for discovery/token endpoints, PKCE
+# primitives, and a machine-bound AES-GCM file store for tokens (avoids
+# keychain prompts).
+ureq = { version = "2", features = ["json"] }
+sha2 = "0.10"
+rand = "0.8"
+urlencoding = "2"
+aes-gcm = "0.10"
+hkdf = "0.12"

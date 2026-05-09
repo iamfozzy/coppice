@@ -27,6 +27,64 @@ function log(...args) {
 }
 
 /**
+ * Translate a raw MCP transport error string ("error: non-200 status code:
+ * 401", "error: ENOTFOUND", etc.) into a short, user-actionable description.
+ * Mirrors the implementation in pi-bridge.mjs — kept duplicated rather than
+ * shared so both bridges remain self-contained.
+ */
+function describeMcpError(raw) {
+  if (!raw) return "connection failed";
+  const text = String(raw).replace(/^error:\s*/i, "");
+  const firstLine = text.split(/\r?\n/).map((s) => s.trim()).find(Boolean) || text;
+
+  const httpMatch = firstLine.match(/non-200 status code:\s*(\d+)|HTTP\s+(\d+)|status[:\s]+(\d+)/i);
+  const httpCode = httpMatch ? Number(httpMatch[1] || httpMatch[2] || httpMatch[3]) : undefined;
+  if (httpCode === 401) return "not authorized (HTTP 401) — open Settings → MCP Servers and click Connect";
+  if (httpCode === 403) return "forbidden (HTTP 403) — your token may be missing the required scopes";
+  if (httpCode === 404) return "endpoint not found (HTTP 404) — check the server URL";
+  if (typeof httpCode === "number" && httpCode >= 500) return `server error (HTTP ${httpCode}) — try again shortly`;
+  if (typeof httpCode === "number") return `server returned HTTP ${httpCode}`;
+
+  const netMatch = firstLine.match(/\b(ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|ENETUNREACH|EAI_AGAIN)\b/);
+  const netCode = netMatch?.[1];
+  if (netCode === "ENOTFOUND" || netCode === "EAI_AGAIN") return "DNS lookup failed — check the server URL or your connection";
+  if (netCode === "ECONNREFUSED") return "connection refused — is the server running and reachable?";
+  if (netCode === "ETIMEDOUT" || /timeout/i.test(firstLine)) return "connection timed out";
+  if (netCode === "ECONNRESET") return "connection reset by the server";
+  if (netCode === "ENETUNREACH") return "network unreachable";
+
+  return firstLine.replace(/^Error:\s*/i, "").slice(0, 200) || "connection failed";
+}
+
+/**
+ * Walk an SDK-reported `mcp_servers` array, rewriting any `error: …` status
+ * to a friendlier description and emitting one structured `mcp_error` event
+ * per failed server. Returns the rewritten array so the existing init event
+ * still surfaces clean status badges.
+ */
+function normalizeMcpServerStatuses(servers) {
+  if (!Array.isArray(servers)) return [];
+  const out = [];
+  for (const s of servers) {
+    if (!s || typeof s !== "object") continue;
+    const name = s.name || "";
+    const status = String(s.status || "");
+    if (/^error/i.test(status)) {
+      const description = describeMcpError(status);
+      emit({
+        type: "mcp_error",
+        serverName: name,
+        message: name ? `${name}: ${description}` : description,
+      });
+      out.push({ name, status: `error: ${description}` });
+    } else {
+      out.push({ name, status });
+    }
+  }
+  return out;
+}
+
+/**
  * Trim large tool result text for frontend display/storage.
  *
  * The SDK still sees the full output for its own context window management;
@@ -1012,7 +1070,9 @@ function processMessage(message) {
           tools: message.tools || [],
           model: message.model || "",
           permissionMode: message.permissionMode || "",
-          mcpServers: message.mcp_servers || [],
+          // Rewrites raw "error: <stack>" statuses into friendly descriptions
+          // and emits one mcp_error event per failed server.
+          mcpServers: normalizeMcpServerStatuses(message.mcp_servers || []),
           slashCommands: [
             ...(message.slash_commands || []),
             ...(message.skills || []),

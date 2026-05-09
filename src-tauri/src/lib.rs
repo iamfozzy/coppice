@@ -103,6 +103,13 @@ pub fn run() {
             commands::agent_tab_cache::delete_agent_tab_cache,
             commands::agent_tab_cache::delete_agent_tab_cache_for_worktree,
             commands::agent_tab_cache::purge_old_agent_tab_cache,
+            // MCP catalog + OAuth
+            commands::mcp::mcp_get_catalog,
+            commands::mcp::mcp_install_catalog_entry,
+            commands::mcp::mcp_oauth_start,
+            commands::mcp::mcp_oauth_revoke,
+            commands::mcp::mcp_get_auth_status,
+            commands::mcp::mcp_test_connection,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
