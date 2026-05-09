@@ -316,10 +316,6 @@ export function AppSettingsModal() {
                 placeholder="30000"
                 hint="Max characters of Task (subagent) output returned to parent context (SDK default: 30000)."
               />
-              <McpServersEditor
-                servers={form.mcp_servers}
-                onChange={(mcp_servers) => setForm({ ...form, mcp_servers })}
-              />
             </div>
           )}
 
@@ -327,12 +323,16 @@ export function AppSettingsModal() {
           {form.default_claude_mode === "agent" && form.agent_backend === "pi" && (
             <div className="space-y-5 rounded-lg border border-purple-400/20 bg-purple-500/[0.04] p-4">
               <PiSettingsSection form={form} setForm={setForm} />
-              <McpServersEditor
-                servers={form.mcp_servers}
-                onChange={(mcp_servers) => setForm({ ...form, mcp_servers })}
-              />
             </div>
           )}
+
+          {/* MCP settings */}
+          <div className="space-y-4 rounded-lg border border-border-primary bg-bg-primary/30 p-4">
+            <McpServersEditor
+              servers={form.mcp_servers}
+              onChange={(mcp_servers) => setForm({ ...form, mcp_servers })}
+            />
+          </div>
 
         </div>
 
@@ -1328,6 +1328,30 @@ function ModelCombobox({
   );
 }
 
+function parseMcpArgs(input: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+
+  for (const ch of input.trim()) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else current += ch;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+    } else if (/\s/.test(ch)) {
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+    } else {
+      current += ch;
+    }
+  }
+  if (current) args.push(current);
+  return args;
+}
+
 function McpServersEditor({
   servers,
   onChange,
@@ -1344,15 +1368,16 @@ function McpServersEditor({
   const [editEnv, setEditEnv] = useState("");
 
   const entries = Object.entries(servers);
+  const canAdd = !!editName.trim() && (editType === "stdio" ? !!editCommand.trim() : !!editUrl.trim());
 
   const handleAdd = () => {
     const name = editName.trim();
-    if (!name) return;
+    if (!canAdd || !name) return;
     const entry: McpServerEntry = { server_type: editType };
     if (editType === "stdio") {
-      entry.command = editCommand.trim() || undefined;
+      entry.command = editCommand.trim();
       const args = editArgs.trim();
-      if (args) entry.args = args.split(/\s+/);
+      if (args) entry.args = parseMcpArgs(args);
       const envPairs = editEnv.trim();
       if (envPairs) {
         entry.env = {};
@@ -1385,7 +1410,7 @@ function McpServersEditor({
     <div>
       <label className="block text-xs text-text-secondary mb-1">MCP Servers</label>
       <p className="text-[10px] text-text-tertiary mb-2">
-        Additional MCP servers available to agent sessions. These are merged with servers from Claude Code settings.
+        Additional MCP servers available to Claude Agent and Pi Agent sessions.
       </p>
 
       {entries.length > 0 && (
@@ -1460,7 +1485,7 @@ function McpServersEditor({
                 type="text"
                 value={editArgs}
                 onChange={(e) => setEditArgs(e.target.value)}
-                placeholder="Arguments (space-separated, e.g., -y @some/mcp-server)"
+                placeholder={'Arguments (quote values with spaces, e.g., -y @some/mcp-server "--flag=value with spaces")'}
                 className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
               />
               <textarea
@@ -1485,7 +1510,7 @@ function McpServersEditor({
             <button
               type="button"
               onClick={handleAdd}
-              disabled={!editName.trim()}
+              disabled={!canAdd}
               className="px-2.5 py-1 text-xs rounded bg-accent hover:bg-accent-hover disabled:opacity-40 text-white transition-colors"
             >
               Add

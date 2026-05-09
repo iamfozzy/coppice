@@ -296,12 +296,11 @@ function Tab({
   // Show pin icon when hovering the dot area on pinnable tabs
   const showPin = canPin && dotHovered;
 
-  // Build the status dot (rendered inside a fixed-size container)
+  // Build the status dot (rendered inside a fixed-size container).
+  // Pinned tabs are already visually distinct via their tab background, so the
+  // dot is reserved for active/idle agent status and the normal tab marker.
   let dotInner: React.ReactNode;
-  if (pinned && !showPin) {
-    // Pinned: accent-colored dot matching the bottom bar
-    dotInner = <span className="w-2 h-2 rounded-full bg-accent shrink-0" />;
-  } else if (agentActive) {
+  if (agentActive) {
     dotInner = (
       <span className="relative flex h-2 w-2 shrink-0">
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />

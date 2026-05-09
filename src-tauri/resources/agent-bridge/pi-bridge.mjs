@@ -22,6 +22,11 @@ import {
   defineTool,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createInterface } from "readline";
 import { readFile, readdir, access } from "node:fs/promises";
 import { join } from "node:path";
@@ -371,6 +376,15 @@ async function runChildSession({ task, agent: roleName, childId, signal }) {
     const webTools = await getCachedWebAccessTools();
     childCustomTools = [...childCustomTools, ...webTools];
   } catch {}
+
+  // Add MCP tools from the parent session. Read-only child roles only receive
+  // MCP tools that advertise readOnlyHint.
+  if (currentMcpToolDefinitions.length > 0) {
+    const mcpTools = role.readOnly
+      ? currentMcpToolDefinitions.filter((t) => currentMcpReadOnlyToolNames.has(t.name))
+      : currentMcpToolDefinitions;
+    childCustomTools = [...childCustomTools, ...mcpTools];
+  }
 
   // Use in-memory session manager — no persistence for ephemeral children
   const childSessionManager = SessionManager.inMemory();
@@ -774,6 +788,186 @@ async function getCachedWebAccessTools() {
   return cachedWebAccessToolsPromise;
 }
 
+// ── MCP server support ──
+
+/** Active MCP client connections for the current Pi session. */
+let mcpConnections = [];
+let currentMcpToolDefinitions = [];
+let currentMcpStatuses = [];
+let currentMcpReadOnlyToolNames = new Set();
+
+function sanitizeMcpName(name) {
+  const sanitized = String(name || "mcp")
+    .replace(/[^a-zA-Z0-9_]/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return sanitized || "mcp";
+}
+
+function makeMcpToolName(serverName, toolName, usedNames) {
+  const base = `mcp__${sanitizeMcpName(serverName)}__${sanitizeMcpName(toolName)}`;
+  let candidate = base;
+  let i = 2;
+  while (usedNames.has(candidate)) {
+    candidate = `${base}_${i++}`;
+  }
+  usedNames.add(candidate);
+  return candidate;
+}
+
+function mcpResultToText(result) {
+  if (!result) return "";
+  if ("toolResult" in result) {
+    return typeof result.toolResult === "string"
+      ? result.toolResult
+      : JSON.stringify(result.toolResult, null, 2);
+  }
+
+  const parts = [];
+  for (const block of result.content || []) {
+    if (block.type === "text") {
+      parts.push(block.text || "");
+    } else if (block.type === "resource") {
+      const res = block.resource || {};
+      if (typeof res.text === "string") {
+        parts.push(`Resource ${res.uri || ""}:\n${res.text}`.trim());
+      } else {
+        parts.push(`Resource ${res.uri || ""}: ${JSON.stringify(res)}`.trim());
+      }
+    } else if (block.type === "resource_link") {
+      parts.push(`Resource link: ${block.title || block.name || block.uri}${block.uri ? ` (${block.uri})` : ""}`);
+    } else {
+      parts.push(JSON.stringify(block));
+    }
+  }
+
+  if (result.structuredContent) {
+    parts.push(`Structured content:\n${JSON.stringify(result.structuredContent, null, 2)}`);
+  }
+
+  return parts.join("\n\n") || JSON.stringify(result, null, 2);
+}
+
+function buildMcpTransport(serverName, entry) {
+  const type = entry.type || entry.server_type || (entry.command ? "stdio" : "http");
+  if (type === "stdio") {
+    if (!entry.command) throw new Error("stdio MCP server requires a command");
+    return new StdioClientTransport({
+      command: entry.command,
+      args: Array.isArray(entry.args) ? entry.args : [],
+      env: entry.env && typeof entry.env === "object" ? entry.env : undefined,
+      cwd: currentCwd,
+      stderr: "pipe",
+    });
+  }
+  if (!entry.url) throw new Error(`${type} MCP server requires a URL`);
+  const url = new URL(entry.url);
+  if (type === "sse") return new SSEClientTransport(url);
+  if (type === "http" || type === "streamable_http" || type === "streamable-http") {
+    return new StreamableHTTPClientTransport(url);
+  }
+  throw new Error(`Unsupported MCP server type: ${type}`);
+}
+
+async function closeMcpConnections() {
+  const connections = mcpConnections;
+  mcpConnections = [];
+  currentMcpToolDefinitions = [];
+  currentMcpStatuses = [];
+  currentMcpReadOnlyToolNames = new Set();
+  await Promise.allSettled(
+    connections.map(async ({ client, name }) => {
+      try {
+        await client.close();
+        log(`mcp: closed ${name}`);
+      } catch (err) {
+        log(`mcp: close failed for ${name}: ${err.message}`);
+      }
+    }),
+  );
+}
+
+async function loadMcpToolDefinitions(mcpServers) {
+  await closeMcpConnections();
+
+  if (!mcpServers || typeof mcpServers !== "object" || Object.keys(mcpServers).length === 0) {
+    return { tools: [], statuses: [] };
+  }
+
+  const tools = [];
+  const statuses = [];
+  const usedNames = new Set(tools.map((t) => t.name));
+
+  for (const [serverName, entry] of Object.entries(mcpServers)) {
+    const client = new McpClient({ name: "coppice-pi-agent", version: "0.1.0" }, { capabilities: {} });
+    let transport;
+    try {
+      log(`mcp: connecting ${serverName}...`);
+      transport = buildMcpTransport(serverName, entry || {});
+      if (transport.stderr) {
+        transport.stderr.on("data", (chunk) => {
+          const text = String(chunk).trim();
+          if (text) log(`mcp:${serverName}: ${text.slice(0, 500)}`);
+        });
+      }
+      await client.connect(transport, { timeout: 30_000 });
+      const listed = await client.listTools(undefined, { timeout: 30_000 });
+      const serverTools = listed.tools || [];
+      statuses.push({ name: serverName, status: "connected" });
+      mcpConnections.push({ name: serverName, client });
+      log(`mcp: connected ${serverName} (${serverTools.length} tools)`);
+
+      for (const tool of serverTools) {
+        const piToolName = makeMcpToolName(serverName, tool.name, usedNames);
+        const readOnly = tool.annotations?.readOnlyHint === true;
+        if (readOnly) currentMcpReadOnlyToolNames.add(piToolName);
+        tools.push(
+          defineTool({
+            name: piToolName,
+            label: tool.annotations?.title || tool.name,
+            description:
+              `MCP tool from server '${serverName}' (original tool: '${tool.name}').\n` +
+              (tool.description || ""),
+            promptSnippet: `MCP ${serverName}: ${tool.name}`,
+            promptGuidelines: [
+              `Use ${piToolName} when the user asks for capabilities provided by the '${serverName}' MCP server.`,
+            ],
+            parameters: Type.Unsafe(tool.inputSchema || { type: "object", properties: {} }),
+            executionMode: "parallel",
+            execute: async (_toolCallId, params, signal) => {
+              if (signal?.aborted) throw new Error("MCP tool call cancelled");
+              const result = await client.callTool(
+                { name: tool.name, arguments: params || {} },
+                CallToolResultSchema,
+                { timeout: 120_000, resetTimeoutOnProgress: true, signal },
+              );
+              const text = trimToolResult(mcpResultToText(result));
+              if (result.isError) {
+                throw new Error(text || "MCP tool returned an error");
+              }
+              return {
+                content: [{ type: "text", text }],
+                details: { server: serverName, tool: tool.name },
+              };
+            },
+          }),
+        );
+      }
+    } catch (err) {
+      statuses.push({ name: serverName, status: `error: ${err.message}` });
+      log(`mcp: failed ${serverName}: ${err.stack || err.message}`);
+      try {
+        await client.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  currentMcpToolDefinitions = tools;
+  currentMcpStatuses = statuses;
+  return { tools, statuses };
+}
+
 // ── Permission system ──
 
 /**
@@ -807,6 +1001,9 @@ async function handlePermission(toolCall, args, permissionMode) {
   // Pi's read-only tools — always allow
   const piReadOnly = ["read", "grep", "find", "ls"];
   if (piReadOnly.includes(toolName)) return undefined;
+
+  // MCP tools that advertise readOnlyHint are safe to auto-allow.
+  if (currentMcpReadOnlyToolNames.has(toolName)) return undefined;
 
   // Bypass mode — auto-allow everything
   if (permissionMode === "bypassPermissions") return undefined;
@@ -1448,10 +1645,19 @@ async function startSession(msg) {
     log(`auth storage: failed to init (${err.message}), falling back to env vars`);
   }
 
-  // Build custom tools (Coppice IDE tools + web access)
+  // Build custom tools (Coppice IDE tools + MCP + web access)
   log("step: building custom tools...");
   const coppiceTools = buildCoppiceToolDefinitions();
   let customTools = [...coppiceTools];
+
+  if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
+    log("step: loading MCP servers...");
+    const { tools: mcpTools, statuses } = await loadMcpToolDefinitions(opts.mcpServers);
+    log(`step: MCP servers done (${mcpTools.length} tools, ${statuses.length} servers)`);
+    customTools = [...customTools, ...mcpTools];
+  } else {
+    await closeMcpConnections();
+  }
 
   if (opts.enableWebAccess !== false) {
     log("step: loading web access tools...");
@@ -1588,7 +1794,7 @@ async function startSession(msg) {
     tools: activeToolNames,
     model: `${provider}/${modelId}`,
     permissionMode: currentPermissionMode,
-    mcpServers: [],
+    mcpServers: currentMcpStatuses,
     slashCommands: ["compact", "model", "session"],
     isResume: !!opts.resume,
   });
@@ -1848,6 +2054,7 @@ function cleanup() {
       /* ignore */
     }
   }
+  closeMcpConnections().catch(() => {});
 }
 
 process.on("SIGTERM", () => {

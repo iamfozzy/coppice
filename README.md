@@ -206,6 +206,49 @@ Pi Agent tabs use the same Coppice UI as Claude tabs, including permission promp
 - **Subagents** — delegate focused research, implementation, or review work to isolated child agents.
 - **Provider-scoped models** — model selections use `provider/model` names (for example `openai/gpt-4o` or `google/gemini-2.5-pro`).
 
+### Pi Agent subagents
+
+When **App Settings → Pi Agent → Tools → Subagent** is enabled, the Pi Agent can call a `subagent` tool to spawn short-lived child agent sessions. Each child shares the parent session's provider/model and worktree, runs independently, and returns only its final answer to the parent, keeping exploratory context out of the main conversation. Child agents cannot recursively spawn more subagents.
+
+Supported subagent roles:
+
+| Role | Access | Best for |
+|------|--------|----------|
+| `scout` | Read-only, low thinking | Fast codebase reconnaissance, file/path discovery, concise context gathering |
+| `researcher` | Read-only, medium thinking | Deeper investigation, tracing code paths, documentation/code analysis |
+| `planner` | Read-only, high thinking | Producing detailed implementation plans before edits begin |
+| `worker` | Read/write, medium thinking | Isolated implementation tasks and verification |
+| `reviewer` | Read-only, medium thinking | Reviewing changes for bugs, correctness, style, and security concerns |
+
+You normally use subagents by asking the Pi Agent to delegate work in natural language, for example:
+
+```text
+Use a scout subagent to find where terminal sessions are created, then update the implementation yourself.
+```
+
+```text
+Run these in parallel: a researcher to inspect the Rust agent bridge flow, and a reviewer to check the current frontend changes.
+```
+
+For prompts or custom tools that need the exact shape, the tool accepts either a single task:
+
+```json
+{ "agent": "reviewer", "task": "Review the changes in src/components/AgentView for regressions." }
+```
+
+or multiple parallel tasks:
+
+```json
+{
+  "tasks": [
+    { "agent": "scout", "task": "Find all settings related to Pi Agent tools." },
+    { "agent": "planner", "task": "Plan the README update for Pi subagents." }
+  ]
+}
+```
+
+Use subagents for independent or context-heavy work; avoid them for quick single-file reads, small edits, or tasks that need back-and-forth with the user.
+
 ## Using Non-Claude Models via LiteLLM
 
 Coppice can route custom model selections (e.g. GPT-4o, Gemini) through a [LiteLLM](https://docs.litellm.ai/) proxy while keeping Claude models on the direct Anthropic API.
