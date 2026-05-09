@@ -126,12 +126,15 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
     return () => cancelAnimationFrame(raf);
   }, [autoFocus, disabled]);
 
-  // Auto-resize textarea
+  // Auto-resize textarea, but keep it scrollable once it hits max height.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 150) + "px";
+    const maxHeight = 150;
+    const nextHeight = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = nextHeight + "px";
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [text]);
 
   const query = parseLeadingSlash(text);
@@ -385,7 +388,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
         </Tooltip>
         <textarea
           ref={textareaRef}
-          className="flex-1 min-w-0 resize-none overflow-hidden bg-transparent border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-0 transition-colors font-mono leading-relaxed"
+          className="flex-1 min-w-0 resize-none overflow-x-hidden bg-transparent border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-0 transition-colors font-mono leading-relaxed"
           rows={1}
           value={text}
           onChange={(e) => setText(e.target.value)}

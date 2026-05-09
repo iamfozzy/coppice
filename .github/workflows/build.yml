@@ -5,13 +5,24 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to publish (for example v0.1.64)
+        required: false
+        type: string
+      release_ref:
+        description: Git ref to build (for example refs/tags/v0.1.64)
+        required: false
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: github.event_name != 'workflow_dispatch' || inputs.release_ref != ''
     strategy:
       fail-fast: false
       matrix:
@@ -35,7 +46,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          # For pull_request runs, checkout the head commit instead of the
+          # ephemeral refs/pull/*/merge ref. That merge ref can disappear if the
+          # PR is merged while a queued matrix job is still starting.
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          # workflow_dispatch is used by auto-release after it creates and pushes
+          # the release tag with GITHUB_TOKEN. That token push does not trigger
+          # a separate push workflow, so we explicitly dispatch this workflow and
+          # build the pushed tag ref here.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref }}
           fetch-depth: 0
 
       - name: Install system dependencies (Linux)
@@ -142,14 +161,20 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && startsWith(inputs.release_tag, 'v'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Determine version tag
         id: version
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

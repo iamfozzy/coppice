@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,3 +74,12 @@ jobs:
           git tag "v${{ steps.bump.outputs.version }}"
           git push origin main
           git push origin "v${{ steps.bump.outputs.version }}"
+
+      - name: Trigger release build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run build.yml \
+            --ref main \
+            -f release_tag="${{ steps.bump.outputs.tag }}" \
+            -f release_ref="refs/tags/${{ steps.bump.outputs.tag }}"
