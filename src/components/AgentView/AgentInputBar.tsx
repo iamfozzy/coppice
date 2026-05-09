@@ -305,7 +305,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
               key={cmd.name}
               ref={i === activeIndex ? activeItemRef : undefined}
               type="button"
-              className={`w-full text-left px-3 py-1.5 text-[12px] font-mono flex items-center gap-2 ${
+              className={`w-full text-left px-3 py-1.5 text-[length:var(--app-font-12)] font-mono flex items-center gap-2 ${
                 i === activeIndex
                   ? "bg-accent/20 text-text-primary"
                   : "text-text-secondary hover:bg-bg-tertiary"
@@ -343,13 +343,13 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
               />
               <button
                 type="button"
-                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-[length:var(--app-font-10)] opacity-0 group-hover:opacity-100 transition-opacity"
                 onClick={() => removeImage(i)}
                 title="Remove image"
               >
                 ×
               </button>
-              <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[9px] px-1 truncate rounded-b-md">
+              <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[length:var(--app-font-9)] px-1 truncate rounded-b-md">
                 {img.fileName}
               </span>
             </div>
@@ -388,7 +388,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
         </Tooltip>
         <textarea
           ref={textareaRef}
-          className="flex-1 min-w-0 resize-none overflow-x-hidden bg-transparent border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-0 transition-colors font-mono leading-relaxed"
+          className="flex-1 min-w-0 resize-none overflow-x-hidden bg-transparent border border-border-primary rounded-lg px-3 py-2 text-[length:var(--app-font-13)] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-0 transition-colors font-mono leading-relaxed"
           rows={1}
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -426,7 +426,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
                   <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.2" />
                   <path d="M6 3v3.5l2 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
                 </svg>
-                <span className="text-[11px] font-medium">Queue</span>
+                <span className="text-[length:var(--app-font-11)] font-medium">Queue</span>
               </>
             ) : (
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">

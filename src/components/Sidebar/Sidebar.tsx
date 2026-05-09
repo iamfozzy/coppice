@@ -257,7 +257,7 @@ export function Sidebar() {
                 type="button"
                 onClick={() => void handleBackendToggle()}
                 disabled={!appSettings || switchingBackend}
-                className={`h-7 min-w-8 px-2.5 flex items-center justify-center rounded-md text-[11px] font-semibold uppercase border transition-colors ${currentBackend === "pi" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"} ${appSettings && !switchingBackend ? "hover:brightness-125" : ""} disabled:opacity-50`}
+                className={`h-7 min-w-8 px-2.5 flex items-center justify-center rounded-md text-[length:var(--app-font-11)] font-semibold uppercase border transition-colors ${currentBackend === "pi" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"} ${appSettings && !switchingBackend ? "hover:brightness-125" : ""} disabled:opacity-50`}
               >
                 {currentBackend === "pi" ? "Pi" : "Cl"}
               </button>

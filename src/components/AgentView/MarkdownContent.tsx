@@ -43,7 +43,7 @@ export function MarkdownContent({ text, worktreePath }: MarkdownContentProps) {
   if (!text.trim()) return null;
 
   return (
-    <div className="text-[13px] text-text-primary break-words leading-relaxed space-y-2.5">
+    <div className="text-[length:var(--app-font-13)] text-text-primary break-words leading-relaxed space-y-2.5">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={rehypePlugins}
@@ -59,32 +59,32 @@ export function MarkdownContent({ text, worktreePath }: MarkdownContentProps) {
 function createMarkdownComponents(worktreePath?: string): Components {
   return {
     h1: ({ children }) => (
-      <h3 className="text-[15px] font-bold text-text-primary pt-1">
+      <h3 className="text-[length:var(--app-font-15)] font-bold text-text-primary pt-1">
         {linkifyChildren(children, worktreePath)}
       </h3>
     ),
     h2: ({ children }) => (
-      <h4 className="text-[14px] font-semibold text-text-primary pt-0.5">
+      <h4 className="text-[length:var(--app-font-14)] font-semibold text-text-primary pt-0.5">
         {linkifyChildren(children, worktreePath)}
       </h4>
     ),
     h3: ({ children }) => (
-      <h5 className="text-[13px] font-semibold text-text-secondary">
+      <h5 className="text-[length:var(--app-font-13)] font-semibold text-text-secondary">
         {linkifyChildren(children, worktreePath)}
       </h5>
     ),
     h4: ({ children }) => (
-      <h5 className="text-[13px] font-semibold text-text-secondary">
+      <h5 className="text-[length:var(--app-font-13)] font-semibold text-text-secondary">
         {linkifyChildren(children, worktreePath)}
       </h5>
     ),
     h5: ({ children }) => (
-      <h5 className="text-[12px] font-semibold text-text-secondary">
+      <h5 className="text-[length:var(--app-font-12)] font-semibold text-text-secondary">
         {linkifyChildren(children, worktreePath)}
       </h5>
     ),
     h6: ({ children }) => (
-      <h6 className="text-[12px] font-semibold text-text-tertiary uppercase tracking-wide">
+      <h6 className="text-[length:var(--app-font-12)] font-semibold text-text-tertiary uppercase tracking-wide">
         {linkifyChildren(children, worktreePath)}
       </h6>
     ),
@@ -114,7 +114,7 @@ function createMarkdownComponents(worktreePath?: string): Components {
       );
     },
     ol: ({ start, children }) => (
-      <ol start={start} className="pl-5 list-decimal marker:text-text-tertiary marker:font-mono marker:text-[12px] space-y-0.5">
+      <ol start={start} className="pl-5 list-decimal marker:text-text-tertiary marker:font-mono marker:text-[length:var(--app-font-12)] space-y-0.5">
         {children}
       </ol>
     ),
@@ -143,7 +143,7 @@ function createMarkdownComponents(worktreePath?: string): Components {
     hr: () => <hr className="border-border-primary my-1" />,
     table: ({ children }) => (
       <div className="overflow-x-auto rounded-lg border border-border-primary">
-        <table className="w-full text-[12px] border-collapse">{children}</table>
+        <table className="w-full text-[length:var(--app-font-12)] border-collapse">{children}</table>
       </div>
     ),
     thead: ({ children }) => <thead className="bg-bg-secondary/60">{children}</thead>,
@@ -182,7 +182,7 @@ function toTextAlign(align: string | undefined) {
 
 function InlineCode({ children }: { children: ReactNode }) {
   return (
-    <code className="bg-bg-tertiary text-accent/90 border border-border-primary rounded px-1 py-px text-[12px] font-mono">
+    <code className="bg-bg-tertiary text-accent/90 border border-border-primary rounded px-1 py-px text-[length:var(--app-font-12)] font-mono">
       {children}
     </code>
   );
@@ -201,14 +201,14 @@ function CodeBlock({ lang, content }: { lang: string; content: string }) {
   return (
     <div className="rounded-lg border border-border-primary bg-bg-tertiary overflow-hidden">
       <div className="flex items-center justify-between px-3 py-1 bg-bg-secondary/60 border-b border-border-primary">
-        <span className="text-[10px] text-text-tertiary font-mono uppercase tracking-wider">
+        <span className="text-[length:var(--app-font-10)] text-text-tertiary font-mono uppercase tracking-wider">
           {lang || "text"}
         </span>
         <Tooltip text="Copy to clipboard" side="top" align="right">
           <button
             type="button"
             onClick={handleCopy}
-            className="text-[10px] text-text-tertiary hover:text-text-secondary transition-colors flex items-center gap-1"
+            className="text-[length:var(--app-font-10)] text-text-tertiary hover:text-text-secondary transition-colors flex items-center gap-1"
           >
             {copied ? (
               <>
@@ -229,7 +229,7 @@ function CodeBlock({ lang, content }: { lang: string; content: string }) {
           </button>
         </Tooltip>
       </div>
-      <pre className="px-3 py-2.5 text-[12px] font-mono text-text-secondary overflow-x-auto leading-relaxed whitespace-pre">
+      <pre className="px-3 py-2.5 text-[length:var(--app-font-12)] font-mono text-text-secondary overflow-x-auto leading-relaxed whitespace-pre">
         {content}
       </pre>
     </div>

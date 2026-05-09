@@ -240,7 +240,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
         {hasLocalChanges && (
           <Tooltip text={uncommittedFiles.length > 0 ? "Commit all changes and push to origin" : `Push ${unpushedCount} unpushed commit${unpushedCount !== 1 ? "s" : ""} to origin`} side="top" align="right">
             <button
-              className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
+              className="ml-auto px-1.5 py-0.5 text-[length:var(--app-font-10)] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
               onClick={handlePush}
             >
               {uncommittedFiles.length > 0 ? "Commit & Push" : `Push (${unpushedCount})`}
@@ -333,7 +333,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
             onContextMenu={(event) => event.preventDefault()}
           >
             <button
-              className="w-full px-3 py-2 text-left text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+              className="w-full px-3 py-2 text-left text-[length:var(--app-font-11)] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
               onClick={() => {
                 openDiffTab(worktree.id, contextMenu.file, worktree.path, "uncommitted");
                 setContextMenu(null);
@@ -342,7 +342,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
               Open diff
             </button>
             <button
-              className="w-full px-3 py-2 text-left text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+              className="w-full px-3 py-2 text-left text-[length:var(--app-font-11)] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
               onClick={() => {
                 void handleOpenInEditor(contextMenu.file);
                 setContextMenu(null);
@@ -351,7 +351,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
               Open in editor
             </button>
             <button
-              className="w-full px-3 py-2 text-left text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-error"
+              className="w-full px-3 py-2 text-left text-[length:var(--app-font-11)] text-text-secondary transition-colors hover:bg-bg-hover hover:text-error"
               onClick={() => {
                 setContextMenu(null);
                 void handleRevert(contextMenu.file, contextMenu.status);
@@ -369,7 +369,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
 function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
-      className={`px-2 py-0.5 text-[11px] rounded-t transition-colors whitespace-nowrap truncate ${
+      className={`px-2 py-0.5 text-[length:var(--app-font-11)] rounded-t transition-colors whitespace-nowrap truncate ${
         active ? "text-text-primary bg-bg-secondary" : "text-text-tertiary hover:text-text-secondary"
       }`}
       onClick={onClick}
@@ -389,14 +389,14 @@ function FileList({ files, loading, emptyMessage, worktreePath, onFileClick, onF
   onRevert?: (file: string, status: string) => void;
   revertingFile?: string | null;
 }) {
-  if (loading && files.length === 0) return <div className="px-3 py-2 text-[11px] text-text-tertiary">Loading...</div>;
-  if (files.length === 0) return <div className="px-3 py-2 text-[11px] text-text-tertiary">{emptyMessage}</div>;
+  if (loading && files.length === 0) return <div className="px-3 py-2 text-[length:var(--app-font-11)] text-text-tertiary">Loading...</div>;
+  if (files.length === 0) return <div className="px-3 py-2 text-[length:var(--app-font-11)] text-text-tertiary">{emptyMessage}</div>;
   return (
     <div className="py-0.5">
       {files.map((f) => (
         <div
           key={f.file}
-          className="group w-full flex items-center gap-2 px-3 py-0.5 text-[11px] hover:bg-bg-hover transition-colors"
+          className="group w-full flex items-center gap-2 px-3 py-0.5 text-[length:var(--app-font-11)] hover:bg-bg-hover transition-colors"
           onContextMenu={onFileContextMenu ? (event) => onFileContextMenu(event, f.file, f.status) : undefined}
         >
           <button
@@ -410,7 +410,7 @@ function FileList({ files, loading, emptyMessage, worktreePath, onFileClick, onF
           {onRevert && (
             <Tooltip text="Revert changes" side="top" align="right">
               <button
-                className="opacity-0 group-hover:opacity-100 shrink-0 px-1 py-0.5 text-[10px] text-text-tertiary hover:text-error transition-all"
+                className="opacity-0 group-hover:opacity-100 shrink-0 px-1 py-0.5 text-[length:var(--app-font-10)] text-text-tertiary hover:text-error transition-all"
                 disabled={revertingFile === f.file}
                 onClick={(e) => {
                   e.stopPropagation();

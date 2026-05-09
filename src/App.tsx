@@ -13,6 +13,7 @@ import { useAppStore, flushAllAgentTabCaches } from "./stores/appStore";
 import { SCRATCHPAD_WORKTREE_ID } from "./lib/types";
 import { setWindowFocused } from "./lib/windowFocus";
 import { applyTheme } from "./lib/theme";
+import { DEFAULT_APP_FONT_SIZE, applyAppFontSize, getScaledFontSize } from "./lib/fontScale";
 import * as commands from "./lib/commands";
 
 function App() {
@@ -86,6 +87,11 @@ function App() {
     }
   }, [appSettings?.window_decorations]);
 
+  // Apply app-wide font scaling.
+  useEffect(() => {
+    applyAppFontSize(appSettings?.app_font_size ?? DEFAULT_APP_FONT_SIZE);
+  }, [appSettings?.app_font_size]);
+
   // Apply theme setting and listen for OS preference changes in "system" mode
   useEffect(() => {
     const mode = appSettings?.theme ?? "dim";
@@ -101,8 +107,12 @@ function App() {
   // On macOS with overlay titlebar, push content below the traffic lights.
   // In fullscreen or when decorations are off, the inset is 0.
 
+  const appFontSize = appSettings?.app_font_size ?? DEFAULT_APP_FONT_SIZE;
   const termFontFamily = appSettings?.terminal_font_family || undefined;
-  const termFontSize = appSettings?.terminal_font_size || undefined;
+  const termFontSize = appSettings?.terminal_font_size || getScaledFontSize(13, appFontSize);
+  const runnerTermFontSize = appSettings?.terminal_font_size
+    ? Math.max(8, appSettings.terminal_font_size - 3)
+    : getScaledFontSize(10, appFontSize);
 
   // Track window focus + clear idle on focus-regain. Two things happen here:
   //   1. setWindowFocused() keeps the shared flag in sync so the store's
@@ -445,7 +455,7 @@ function App() {
       <div id="runner-terminal-pool" style={{ position: "fixed", left: -9999, top: -9999, width: 400, height: 9999 }}>
         {allRunners.map((r) => (
           <div key={r.id} id={`runner-term-${r.id}`} style={{ width: "100%", height: 150 }}>
-            <TerminalPanel sessionId={r.id} cwd={r.cwd} command={r.command} fontSize={termFontSize ? Math.max(8, termFontSize - 3) : 10} fontFamily={termFontFamily} keepAlive />
+            <TerminalPanel sessionId={r.id} cwd={r.cwd} command={r.command} fontSize={runnerTermFontSize} fontFamily={termFontFamily} keepAlive />
           </div>
         ))}
       </div>

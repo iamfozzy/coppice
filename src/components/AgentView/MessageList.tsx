@@ -136,7 +136,7 @@ export function MessageList({
       {streamingThinkingText && (
         <div className="pr-8">
           <div className="mb-2">
-            <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary mb-1.5">
+            <div className="flex items-center gap-1.5 text-[length:var(--app-font-11)] text-text-tertiary mb-1.5">
               <AnimatedRobotIcon size={12} className="text-accent" />
               <span>Thinking...</span>
             </div>
@@ -151,7 +151,7 @@ export function MessageList({
       {/* Live streaming text — keep rendering cheap while deltas arrive.
           The finalized assistant message is rendered with full markdown once. */}
       {streamingText && (
-        <div className="pr-8 text-[13px] text-text-primary break-words leading-relaxed whitespace-pre-wrap">
+        <div className="pr-8 text-[length:var(--app-font-13)] text-text-primary break-words leading-relaxed whitespace-pre-wrap">
           {streamingText}
           <span className="inline-block w-1.5 h-3.5 bg-accent/50 animate-pulse rounded-sm ml-0.5 -mb-0.5" />
         </div>
@@ -192,7 +192,7 @@ function StatusIndicator({ status, stalled }: { status: "thinking" | "tool_use" 
     return (
       <div className="flex items-center gap-2 py-1">
         <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
-        <span className="text-[11px] text-warning">Waiting for approval...</span>
+        <span className="text-[length:var(--app-font-11)] text-warning">Waiting for approval...</span>
       </div>
     );
   }
@@ -201,7 +201,7 @@ function StatusIndicator({ status, stalled }: { status: "thinking" | "tool_use" 
     return (
       <div className="flex items-center gap-2 py-1">
         <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-        <span className="text-[11px] text-text-tertiary">Waiting for your response...</span>
+        <span className="text-[length:var(--app-font-11)] text-text-tertiary">Waiting for your response...</span>
       </div>
     );
   }
@@ -214,14 +214,14 @@ function StatusIndicator({ status, stalled }: { status: "thinking" | "tool_use" 
         ) : (
           <AnimatedRobotIcon size={14} className="text-accent" />
         )}
-        <span className="text-[11px] text-text-tertiary">
+        <span className="text-[length:var(--app-font-11)] text-text-tertiary">
           {status === "tool_use" ? "Running tool..." : thinkingPhrase}
         </span>
       </div>
       {stalled && (
         <div className="flex items-center gap-2 ml-0.5">
           <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
-          <span className="text-[11px] text-warning">
+          <span className="text-[length:var(--app-font-11)] text-warning">
             No response from API — check your network connection
           </span>
         </div>

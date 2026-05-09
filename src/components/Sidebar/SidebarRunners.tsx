@@ -71,7 +71,7 @@ export const SidebarRunners = memo(function SidebarRunners() {
             {/* Header */}
             <div className="flex items-center justify-between px-3 h-7 bg-bg-tertiary">
               <button
-                className="flex items-center gap-1.5 text-[11px] text-text-secondary hover:text-text-primary transition-colors"
+                className="flex items-center gap-1.5 text-[length:var(--app-font-11)] text-text-secondary hover:text-text-primary transition-colors"
                 onClick={() => {
                   if (!runner) {
                     expandRunner(wtId, key, command, worktree!.path);
@@ -96,7 +96,7 @@ export const SidebarRunners = memo(function SidebarRunners() {
                   <Tooltip text={`Run ${label.toLowerCase()}`} side="top" align="right">
                     <button
                       onClick={() => openOrRestartRunner(wtId, key, command, worktree!.path)}
-                      className="px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors"
+                      className="px-1.5 py-0.5 text-[length:var(--app-font-10)] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors"
                     >
                       {label}
                     </button>
@@ -109,7 +109,7 @@ export const SidebarRunners = memo(function SidebarRunners() {
                         await commands.terminalKill(runner.id).catch(() => {});
                         setRunnerStatus(wtId, key, "stopped");
                       }}
-                      className="px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-error/70 hover:text-error hover:bg-bg-active transition-colors"
+                      className="px-1.5 py-0.5 text-[length:var(--app-font-10)] rounded bg-bg-hover text-error/70 hover:text-error hover:bg-bg-active transition-colors"
                     >
                       Stop
                     </button>

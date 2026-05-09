@@ -38,7 +38,7 @@ export function ScratchpadNode() {
   return (
     <>
       <div
-        className={`flex items-center gap-2 px-3 py-1.5 text-[11px] cursor-pointer transition-colors ${
+        className={`flex items-center gap-2 px-3 py-1.5 text-[length:var(--app-font-11)] cursor-pointer transition-colors ${
           isSelected
             ? "bg-accent-muted text-accent-hover"
             : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
@@ -51,7 +51,7 @@ export function ScratchpadNode() {
         </svg>
         <span className="flex-1 min-w-0 truncate font-medium">Scratchpad</span>
         {tabCount >= 1 && (
-          <span className="shrink-0 text-[9px] leading-none text-text-tertiary" title={`${tabCount} tabs open`}>
+          <span className="shrink-0 text-[length:var(--app-font-9)] leading-none text-text-tertiary" title={`${tabCount} tabs open`}>
             {tabCount}
           </span>
         )}

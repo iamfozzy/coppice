@@ -85,7 +85,7 @@ export function Tooltip({ text, children, align = "center", side = "bottom", del
           <div
             ref={tipRef}
             role="tooltip"
-            className="fixed z-[9999] px-2 py-1 text-[11px] text-text-primary bg-bg-tertiary border border-border-secondary rounded shadow-lg whitespace-nowrap pointer-events-none"
+            className="fixed z-[9999] px-2 py-1 text-[length:var(--app-font-11)] text-text-primary bg-bg-tertiary border border-border-secondary rounded shadow-lg whitespace-nowrap pointer-events-none"
             style={{
               top: pos?.top ?? -9999,
               left: pos?.left ?? -9999,

@@ -207,7 +207,7 @@ function CostTooltip({
     <div
       ref={tooltipRef}
       role="tooltip"
-      className="fixed z-[9999] w-[380px] rounded-md border border-border-primary bg-bg-primary shadow-xl text-text-primary text-[11px] leading-relaxed p-3 pointer-events-none"
+      className="fixed z-[9999] w-[380px] rounded-md border border-border-primary bg-bg-primary shadow-xl text-text-primary text-[length:var(--app-font-11)] leading-relaxed p-3 pointer-events-none"
       style={{
         top: pos?.top ?? -9999,
         left: pos?.left ?? -9999,
@@ -239,7 +239,7 @@ function CostTooltip({
               style={{ width: `${contextPct}%` }}
             />
           </div>
-          <div className="mt-1 text-text-tertiary font-mono text-[10px]">
+          <div className="mt-1 text-text-tertiary font-mono text-[length:var(--app-font-10)]">
             fresh {fmt(lastTurnCost.inputTokens)} · cache read {fmt(lastTurnCost.cacheReadTokens)} · cache write {fmt(lastTurnCost.cacheWriteTokens)} · out {fmt(lastTurnCost.outputTokens)}
           </div>
         </div>
@@ -252,7 +252,7 @@ function CostTooltip({
       {/* Session totals */}
       <div className="border-t border-border-primary pt-2 mb-3">
         <div className="text-text-secondary font-medium mb-1">Session totals</div>
-        <div className="grid grid-cols-[auto_1fr_auto] gap-x-2 font-mono text-[11px]">
+        <div className="grid grid-cols-[auto_1fr_auto] gap-x-2 font-mono text-[length:var(--app-font-11)]">
           <span className="text-text-tertiary">input total</span>
           <span className="text-right">{fmt(sessionInput)}</span>
           <span className="text-text-tertiary">100%</span>

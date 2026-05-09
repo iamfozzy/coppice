@@ -347,7 +347,7 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
               type="button"
               onClick={() => void handleBackendToggle()}
               disabled={!appSettings || switchingBackend}
-              className={`h-7 min-w-8 px-2.5 flex items-center justify-center rounded-md text-[11px] font-semibold uppercase border transition-colors ${currentBackend === "pi" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"} ${appSettings && !switchingBackend ? "hover:brightness-125" : ""} disabled:opacity-50`}
+              className={`h-7 min-w-8 px-2.5 flex items-center justify-center rounded-md text-[length:var(--app-font-11)] font-semibold uppercase border transition-colors ${currentBackend === "pi" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"} ${appSettings && !switchingBackend ? "hover:brightness-125" : ""} disabled:opacity-50`}
             >
               {currentBackend === "pi" ? "Pi" : "Cl"}
             </button>
@@ -645,7 +645,7 @@ function Tile({ tile }: { tile: TileTab }) {
         <span className="w-4 h-4 flex items-center justify-center shrink-0">
           {dotInner}
         </span>
-        <span className="text-[11px] text-text-secondary truncate min-w-0">
+        <span className="text-[length:var(--app-font-11)] text-text-secondary truncate min-w-0">
           {projectName}
           <span className="text-text-tertiary mx-1">/</span>
           {worktreeName}
@@ -784,7 +784,7 @@ function TileBackendToggle({
     >
       <button
         type="button"
-        className={`shrink-0 self-stretch flex items-center justify-center min-w-8 px-2 rounded-lg border text-[10px] font-semibold uppercase transition-colors ${
+        className={`shrink-0 self-stretch flex items-center justify-center min-w-8 px-2 rounded-lg border text-[length:var(--app-font-10)] font-semibold uppercase transition-colors ${
           isPi
             ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
             : "bg-orange-500/10 text-orange-400 border-orange-500/20"
@@ -814,8 +814,8 @@ function TileSettingsRow({
       onClick={onClick}
     >
       <div className="min-w-0 flex-1">
-        <div className="text-[9px] uppercase tracking-wide text-text-tertiary">{label}</div>
-        <div className="truncate text-[11px] text-text-primary">{value}</div>
+        <div className="text-[length:var(--app-font-9)] uppercase tracking-wide text-text-tertiary">{label}</div>
+        <div className="truncate text-[length:var(--app-font-11)] text-text-primary">{value}</div>
       </div>
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="shrink-0 text-text-tertiary">
         <path d="M3.5 2l3 3-3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
@@ -1007,7 +1007,7 @@ function TileControlsDropdown({
                 {supports1M && (
                   <button
                     type="button"
-                    className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                    className={`px-2 py-0.5 rounded text-[length:var(--app-font-11)] transition-colors ${
                       extendedContext
                         ? "bg-accent/15 text-accent"
                         : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -1019,7 +1019,7 @@ function TileControlsDropdown({
                 )}
                 <button
                   type="button"
-                  className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                  className={`px-2 py-0.5 rounded text-[length:var(--app-font-11)] transition-colors ${
                     conciseMode
                       ? "bg-accent/15 text-accent"
                       : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -1030,7 +1030,7 @@ function TileControlsDropdown({
                 </button>
                 <button
                   type="button"
-                  className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                  className={`px-2 py-0.5 rounded text-[length:var(--app-font-11)] transition-colors ${
                     chatMode
                       ? "bg-accent/15 text-accent"
                       : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -1054,9 +1054,9 @@ function TileControlsDropdown({
                     <path d="M6.5 2L3.5 5l3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </button>
-                <div className="min-w-0 flex-1 text-[11px] font-medium text-text-primary">{panelTitle}</div>
+                <div className="min-w-0 flex-1 text-[length:var(--app-font-11)] font-medium text-text-primary">{panelTitle}</div>
                 {panel === "model" && isPiBackend && (
-                  <div className="max-w-[96px] truncate text-[10px] text-text-tertiary">
+                  <div className="max-w-[96px] truncate text-[length:var(--app-font-10)] text-text-tertiary">
                     {formatPiProvider(currentPiProvider)}
                   </div>
                 )}
@@ -1070,7 +1070,7 @@ function TileControlsDropdown({
                       <button
                         key={provider}
                         type="button"
-                        className={`w-full rounded-md px-2.5 py-2 text-left text-[11px] transition-colors ${
+                        className={`w-full rounded-md px-2.5 py-2 text-left text-[length:var(--app-font-11)] transition-colors ${
                           active
                             ? "bg-accent/10 text-accent"
                             : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -1107,7 +1107,7 @@ function TileControlsDropdown({
                       <button
                         key={mode.value}
                         type="button"
-                        className={`w-full rounded-md px-2.5 py-2 text-left text-[11px] transition-colors ${
+                        className={`w-full rounded-md px-2.5 py-2 text-left text-[length:var(--app-font-11)] transition-colors ${
                           active
                             ? "bg-accent/10 text-accent"
                             : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -1185,7 +1185,7 @@ function TileRunnerButtons({ worktreeId }: { worktreeId: string }) {
                     setRunnerStatus(worktreeId, key, "stopped");
                   }
                 }}
-                className="px-1.5 py-0.5 text-[10px] rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
+                className="px-1.5 py-0.5 text-[length:var(--app-font-10)] rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
               >
                 Stop
               </button>
@@ -1200,7 +1200,7 @@ function TileRunnerButtons({ worktreeId }: { worktreeId: string }) {
                 e.stopPropagation();
                 openOrRestartRunner(worktreeId, key, command, worktreePath);
               }}
-              className="px-1.5 py-0.5 text-[10px] rounded text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              className="px-1.5 py-0.5 text-[length:var(--app-font-10)] rounded text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
             >
               {label}
             </button>
@@ -1246,7 +1246,7 @@ function TilePickerDropdown({
           <rect x="2" y="1" width="12" height="14" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
           <path d="M5 5h6M5 8h6M5 11h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
         </svg>
-        <span className="text-[12px] font-medium">Scratchpad</span>
+        <span className="text-[length:var(--app-font-12)] font-medium">Scratchpad</span>
       </button>
     )}
     {projects.map((project) => {
@@ -1273,7 +1273,7 @@ function TilePickerDropdown({
             >
               <path d="M2 1l4 3-4 3" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />
             </svg>
-            <span className="text-[12px] font-medium truncate">{project.name}</span>
+            <span className="text-[length:var(--app-font-12)] font-medium truncate">{project.name}</span>
           </button>
           {/* Submenu */}
           {expanded && (
@@ -1286,7 +1286,7 @@ function TilePickerDropdown({
                 <svg width="10" height="10" viewBox="0 0 12 12" fill="none" className="shrink-0">
                   <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
                 </svg>
-                <span className="text-[12px]">New worktree…</span>
+                <span className="text-[length:var(--app-font-12)]">New worktree…</span>
               </button>
               {/* Existing worktrees */}
               {worktrees.map((wt) => (
@@ -1296,7 +1296,7 @@ function TilePickerDropdown({
                   onClick={() => onAddExisting(wt.id, wt.path)}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
-                  <span className="text-[12px] text-text-primary font-mono truncate">
+                  <span className="text-[length:var(--app-font-12)] text-text-primary font-mono truncate">
                     {wt.branch}
                   </span>
                 </button>

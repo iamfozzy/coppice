@@ -197,7 +197,7 @@ export function WorktreeView() {
           </Tooltip>
           <Tooltip text="New Claude CLI terminal" side="bottom" align="right">
             <button
-              className="flex items-center justify-center gap-1 px-2 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none text-[11px]"
+              className="flex items-center justify-center gap-1 px-2 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none text-[length:var(--app-font-11)]"
               onClick={() => newClaudeTab(wtId)}
             >
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -451,9 +451,9 @@ function TargetBranchPicker({
   if (editing) {
     return (
       <div className="flex items-center gap-1">
-        <span className="text-[10px] text-text-tertiary">&rarr;</span>
+        <span className="text-[length:var(--app-font-10)] text-text-tertiary">&rarr;</span>
         <input
-          className="px-1.5 py-0.5 text-[11px] bg-bg-tertiary border border-accent rounded text-text-primary font-mono focus:outline-none w-24"
+          className="px-1.5 py-0.5 text-[length:var(--app-font-11)] bg-bg-tertiary border border-accent rounded text-text-primary font-mono focus:outline-none w-24"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
@@ -482,7 +482,7 @@ function TargetBranchPicker({
   return (
     <div className="flex items-center gap-0.5">
       <button
-        className="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+        className="flex items-center gap-1 text-[length:var(--app-font-10)] text-text-tertiary hover:text-text-secondary transition-colors"
         onClick={() => {
           setValue(currentTarget);
           setEditing(true);

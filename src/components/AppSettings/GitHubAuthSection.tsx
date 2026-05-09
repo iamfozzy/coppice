@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import * as commands from "../../lib/commands";
 import type { GithubAuthStatus } from "../../lib/commands";
 import { TerminalPanel } from "../Terminal/TerminalPanel";
+import { useAppStore } from "../../stores/appStore";
+import { DEFAULT_APP_FONT_SIZE, getScaledFontSize } from "../../lib/fontScale";
 
 /// Inline GitHub sign-in using the bundled `gh` CLI.
 ///
@@ -14,6 +16,7 @@ import { TerminalPanel } from "../Terminal/TerminalPanel";
 export function GitHubAuthSection() {
   const [status, setStatus] = useState<GithubAuthStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const appFontSize = useAppStore((s) => s.appSettings?.app_font_size ?? DEFAULT_APP_FONT_SIZE);
   const [authSessionId, setAuthSessionId] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
 
@@ -80,10 +83,10 @@ export function GitHubAuthSection() {
 
   return (
     <div className="space-y-2">
-      <div className="text-[11px] font-medium text-text-secondary">GitHub</div>
+      <div className="text-[length:var(--app-font-11)] font-medium text-text-secondary">GitHub</div>
       {status?.logged_in ? (
         <div className="flex items-center justify-between gap-2">
-          <div className="text-[12px] text-text-primary">
+          <div className="text-[length:var(--app-font-12)] text-text-primary">
             Signed in
             {status.user ? (
               <span className="text-text-tertiary"> as {status.user}</span>
@@ -91,35 +94,35 @@ export function GitHubAuthSection() {
           </div>
           <button
             onClick={logout}
-            className="text-[11px] px-2 py-1 border border-border-primary rounded hover:bg-bg-tertiary"
+            className="text-[length:var(--app-font-11)] px-2 py-1 border border-border-primary rounded hover:bg-bg-tertiary"
           >
             Sign out
           </button>
         </div>
       ) : authSessionId ? (
         <div className="space-y-2">
-          <div className="text-[11px] text-text-tertiary">
+          <div className="text-[length:var(--app-font-11)] text-text-tertiary">
             Copy the code shown below, then press Enter to open github.com. This
             window will update when sign-in completes.
           </div>
           <div className="relative h-48 border border-border-primary rounded overflow-hidden">
-            <TerminalPanel sessionId={authSessionId} cwd="." fontSize={12} />
+            <TerminalPanel sessionId={authSessionId} cwd="." fontSize={getScaledFontSize(12, appFontSize)} />
           </div>
           <button
             onClick={cancelLogin}
-            className="text-[11px] px-2 py-1 border border-border-primary rounded hover:bg-bg-tertiary"
+            className="text-[length:var(--app-font-11)] px-2 py-1 border border-border-primary rounded hover:bg-bg-tertiary"
           >
             Cancel
           </button>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-2">
-          <div className="text-[11px] text-text-tertiary">
+          <div className="text-[length:var(--app-font-11)] text-text-tertiary">
             Sign in so Coppice can fetch PRs, check runs, and comments.
           </div>
           <button
             onClick={startLogin}
-            className="text-[11px] px-2 py-1 bg-accent-primary text-white rounded hover:opacity-90"
+            className="text-[length:var(--app-font-11)] px-2 py-1 bg-accent-primary text-white rounded hover:opacity-90"
           >
             Sign in with GitHub
           </button>
