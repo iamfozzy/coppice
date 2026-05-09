@@ -170,33 +170,62 @@ function InlineOptionList({
   onSelect: (value: string) => void | Promise<void>;
   emptyLabel?: string;
 }) {
+  const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const showSearch = true;
+
+  const filtered = search
+    ? options.filter((o) => {
+        const q = search.toLowerCase();
+        return o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q) || o.hint?.toLowerCase().includes(q);
+      })
+    : options;
+
   const toneActiveClass = tone === "pi"
     ? "bg-purple-500/10 text-purple-400"
     : "bg-orange-500/10 text-orange-400";
 
+  useEffect(() => {
+    if (showSearch && searchRef.current) searchRef.current.focus();
+  }, [showSearch]);
+
   return (
     <div>
       <label className="mb-1 block px-1 text-[9px] uppercase tracking-wide text-text-tertiary">{label}</label>
-      <div className="max-h-48 overflow-y-auto rounded-md border border-border-primary bg-bg-tertiary/40 py-0.5">
-        {options.length > 0 ? options.map((option) => {
-          const active = option.value === selectedValue;
-          return (
-            <button
-              key={option.value || "__empty__"}
-              type="button"
-              title={option.hint ? `${option.label} — ${option.hint}` : option.label}
-              onClick={() => { void onSelect(option.value); }}
-              className={`w-full px-2.5 py-1 text-left transition-colors ${active ? toneActiveClass : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
-            >
-              <div className="truncate text-[10px] font-medium">{option.label || emptyLabel || "Select"}</div>
-              {option.hint && (
-                <div className="truncate text-[9px] text-text-tertiary">{option.hint}</div>
-              )}
-            </button>
-          );
-        }) : (
-          <div className="px-2.5 py-1.5 text-[10px] text-text-tertiary">{emptyLabel || "No options"}</div>
+      <div className="rounded-md border border-border-primary bg-bg-tertiary/40">
+        {showSearch && (
+          <div className="px-1.5 pt-1.5 pb-1">
+            <input
+              ref={searchRef}
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search models..."
+              className="w-full px-2 py-1 text-[10px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+            />
+          </div>
         )}
+        <div className="max-h-48 overflow-y-auto py-0.5">
+          {filtered.length > 0 ? filtered.map((option) => {
+            const active = option.value === selectedValue;
+            return (
+              <button
+                key={option.value || "__empty__"}
+                type="button"
+                title={option.hint ? `${option.label} — ${option.hint}` : option.label}
+                onClick={() => { void onSelect(option.value); }}
+                className={`w-full px-2.5 py-1 text-left transition-colors ${active ? toneActiveClass : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
+              >
+                <div className="truncate text-[10px] font-medium">{option.label || emptyLabel || "Select"}</div>
+                {option.hint && (
+                  <div className="truncate text-[9px] text-text-tertiary">{option.hint}</div>
+                )}
+              </button>
+            );
+          }) : (
+            <div className="px-2.5 py-1.5 text-[10px] text-text-tertiary">{search ? "No matches" : (emptyLabel || "No options")}</div>
+          )}
+        </div>
       </div>
     </div>
   );
