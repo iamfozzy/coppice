@@ -14,7 +14,7 @@
  * auto-retry, model management, and session statistics.
  */
 
-import { getModel, getProviders, getModels } from "@earendil-works/pi-ai";
+import { getModel, getProviders, getModels, completeSimple } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   SessionManager,
@@ -646,6 +646,55 @@ let sessionTotalsSeeded = false;
 /** Last per-turn usage for context window display. */
 let lastTurnUsage = null;
 
+/** Whether we've already kicked off title generation for this bridge. */
+let titleGenerated = false;
+
+/**
+ * Generate a short tab title using the user's current Pi model.
+ * Fire-and-forget — failures are silently logged.
+ */
+async function generateTitle(prompt, provider, modelId) {
+  log("Generating title for prompt:", prompt.slice(0, 80));
+  try {
+    // Ensure the provider's API key env var is set — completeSimple runs
+    // outside AgentSession and doesn't have access to authStorage directly.
+    if (authStorage) {
+      const envVar = PROVIDER_ENV_VARS[provider];
+      if (envVar && !process.env[envVar]) {
+        const key = await authStorage.getApiKey(provider);
+        if (key) {
+          process.env[envVar] = key;
+          log("Title: set", envVar, "from authStorage");
+        }
+      }
+    }
+
+    const model = getModel(provider, modelId);
+    const result = await completeSimple(model, {
+      systemPrompt:
+        "Generate a very short tab title (2-5 words) summarizing this task. Respond with ONLY the title, no quotes or punctuation.",
+      messages: [
+        {
+          role: "user",
+          content: `Task: ${prompt.slice(0, 500)}`,
+          timestamp: Date.now(),
+        },
+      ],
+    }, {
+      maxTokens: 100,
+    });
+    let title = (result.content || [])
+      .filter((b) => b.type === "text" && b.text)
+      .map((b) => b.text)
+      .join("");
+    title = title.trim().replace(/^["']|["']$/g, "").replace(/[.!?]+$/, "");
+    log("Generated title:", title);
+    if (title) emit({ type: "title", title });
+  } catch (err) {
+    log("Title generation failed:", err.message);
+  }
+}
+
 // ── Event subscription ──
 
 /**
@@ -1253,6 +1302,12 @@ async function startSession(msg) {
     emit({ type: "pi_models", models: allModels });
   } catch (err) {
     log("Failed to enumerate models:", err.message);
+  }
+
+  // Generate a short tab title from the first prompt (fire-and-forget)
+  if (!titleGenerated && msg.prompt) {
+    titleGenerated = true;
+    generateTitle(msg.prompt, provider, modelId);
   }
 
   // Heartbeat for network stall detection

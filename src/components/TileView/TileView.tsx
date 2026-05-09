@@ -358,6 +358,17 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
     setExtendedContext(sessionId, enabled);
   }, [sessionId, setExtendedContext]);
 
+  const handleBackendToggle = useCallback(() => {
+    if (!session || session.status !== "idle") return;
+    const newBackend = session.backend === "pi" ? "claude" as const : "pi" as const;
+    const settings = useAppStore.getState().appSettings;
+    const defaultModel = newBackend === "pi"
+      ? settings?.pi_default_model || ""
+      : settings?.agent_default_model || "";
+    setAgentBackend(sessionId, newBackend, defaultModel);
+    if (newBackend === "pi") ensurePiModelsLoaded().catch(() => {});
+  }, [session, sessionId, setAgentBackend, ensurePiModelsLoaded]);
+
   const handleInterrupt = useCallback(() => {
     commands.agentInterrupt(sessionId).catch(() => {});
   }, [sessionId]);
@@ -548,6 +559,8 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
               onExtendedContextChange={handleExtendedContextChange}
               availableModels={session.backend === "pi" ? piAvailableModels : undefined}
               isPiBackend={session.backend === "pi"}
+              canToggleBackend={session.status === "idle"}
+              onBackendToggle={handleBackendToggle}
             />
           }
         />
@@ -595,6 +608,8 @@ function TileControlsDropdown({
   onExtendedContextChange,
   availableModels,
   isPiBackend,
+  canToggleBackend,
+  onBackendToggle,
 }: {
   model: string;
   effort: EffortLevel;
@@ -610,6 +625,8 @@ function TileControlsDropdown({
   onExtendedContextChange: (v: boolean) => void;
   availableModels?: SupportedModel[];
   isPiBackend?: boolean;
+  canToggleBackend?: boolean;
+  onBackendToggle?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -647,6 +664,39 @@ function TileControlsDropdown({
 
       {open && (
         <div className="absolute bottom-full mb-1 left-0 min-w-[200px] bg-bg-secondary border border-border-primary rounded-lg shadow-lg overflow-hidden z-50">
+          {/* Backend toggle */}
+          <div className="px-3 py-2 border-b border-border-primary">
+            <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Backend</div>
+            <div className="flex rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
+              {(["claude", "pi"] as const).map((b) => {
+                const isActive = isPiBackend ? b === "pi" : b === "claude";
+                return (
+                  <button
+                    key={b}
+                    disabled={!canToggleBackend}
+                    className={`flex-1 px-2 py-0.5 text-[10px] font-semibold uppercase transition-colors ${
+                      isActive
+                        ? b === "pi"
+                          ? "bg-purple-500/20 text-purple-400"
+                          : "bg-sky-500/20 text-sky-400"
+                        : canToggleBackend
+                          ? "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                          : "text-text-tertiary opacity-50"
+                    } ${!canToggleBackend ? "cursor-default" : "cursor-pointer"}`}
+                    onClick={() => {
+                      if (!isActive && canToggleBackend && onBackendToggle) {
+                        onBackendToggle();
+                        setOpen(false);
+                      }
+                    }}
+                  >
+                    {b === "claude" ? "Cl" : "Pi"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Model */}
           <div className="px-3 py-2 border-b border-border-primary">
             <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Model</div>
