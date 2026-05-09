@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment, QueuedMessage, AgentBackend } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment, QueuedMessage, AgentBackend, McpServerStatus } from "../lib/types";
 import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID } from "../lib/types";
 import { getDefaultSlashCommands } from "../lib/slashCommandDefaults";
 import * as commands from "../lib/commands";
@@ -61,6 +61,31 @@ function clearIdleClaudeStatus(
 // ── Agent tab cache persistence ──
 
 const _persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const _streamPersistLast = new Map<string, number>();
+
+function messagesWithStreamingSnapshot(tabId: string, session: AgentSessionState): AgentMessage[] {
+  if (!session.streamingText && !session.streamingThinkingText) return session.messages;
+  return [
+    ...session.messages,
+    {
+      id: `streaming-snapshot-${tabId}`,
+      type: "assistant",
+      content: session.streamingText,
+      thinkingText: session.streamingThinkingText || undefined,
+      timestamp: Date.now(),
+    },
+  ];
+}
+
+/** Persist in-flight streaming text periodically so a renderer hang/restart does
+ * not lose the partial assistant response that was already visible. */
+function persistAgentStreamingSnapshot(tabId: string) {
+  const now = Date.now();
+  const last = _streamPersistLast.get(tabId) ?? 0;
+  if (now - last < 2000) return;
+  _streamPersistLast.set(tabId, now);
+  persistAgentTabDebounced(tabId, true);
+}
 
 /** Debounced save of a single agent tab's state to the DB cache. */
 function persistAgentTabDebounced(tabId: string, immediate = false) {
@@ -103,7 +128,7 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
       permission_mode: session.permissionMode,
       status: session.status,
       cost_json: session.cost ? JSON.stringify(session.cost) : null,
-      messages_json: JSON.stringify(session.messages),
+      messages_json: JSON.stringify(messagesWithStreamingSnapshot(tabId, session)),
       tab_order: tabOrder,
       extended_context: session.extendedContext,
       concise_mode: session.conciseMode,
@@ -157,7 +182,7 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         permission_mode: session.permissionMode,
         status: session.status,
         cost_json: session.cost ? JSON.stringify(session.cost) : null,
-        messages_json: JSON.stringify(session.messages),
+        messages_json: JSON.stringify(messagesWithStreamingSnapshot(tab.id, session)),
         tab_order: i,
         extended_context: session.extendedContext,
         concise_mode: session.conciseMode,
@@ -335,6 +360,7 @@ interface AppState {
   resetQueryOutput: (tabId: string) => void;
   setAgentSdkContextWindow: (tabId: string, contextWindow: number) => void;
   setAgentSdkSessionId: (tabId: string, id: string | null) => void;
+  setAgentMcpServers: (tabId: string, servers: McpServerStatus[]) => void;
   setAgentPendingPermission: (tabId: string, pending: AgentPendingPermission | null) => void;
   setAgentPendingQuestion: (tabId: string, pending: AgentPendingQuestion | null) => void;
   setAgentSlashCommands: (tabId: string, commands: SlashCommand[]) => void;
@@ -770,6 +796,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           queryOutputTokens: 0,
           sdkContextWindow: cached.sdk_context_window ?? null,
           sdkSessionId: cached.sdk_session_id,
+          mcpServers: [],
           pendingPermission: null,
           pendingQuestion: null,
           streamingText: "",
@@ -994,6 +1021,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       queryOutputTokens: 0,
       sdkContextWindow: null,
       sdkSessionId: null,
+      mcpServers: [],
       pendingPermission: null,
       pendingQuestion: null,
       streamingText: "",
@@ -1050,7 +1078,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       return {
         agentSessionByTab: {
           ...s.agentSessionByTab,
-          [tabId]: { ...session, messages: [...session.messages, message] },
+          [tabId]: {
+            ...session,
+            messages: [...session.messages, message],
+            mcpServers: message.mcpServers?.length ? message.mcpServers : session.mcpServers,
+          },
         },
       };
     });
@@ -1068,6 +1100,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentStreamingSnapshot(tabId);
   },
 
   clearAgentStreamingText: (tabId) => {
@@ -1094,6 +1127,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentStreamingSnapshot(tabId);
   },
 
   clearAgentStreamingThinking: (tabId) => {
@@ -1365,6 +1399,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     // Flush immediately — the SDK session ID is critical for resume.
     persistAgentTabDebounced(tabId, true);
+  },
+
+  setAgentMcpServers: (tabId, servers) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, mcpServers: servers },
+        },
+      };
+    });
   },
 
   setAgentPendingPermission: (tabId, pending) => {

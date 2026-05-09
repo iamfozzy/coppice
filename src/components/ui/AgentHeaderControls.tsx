@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentBackend } from "../../lib/types";
+import type { AgentBackend, McpServerEntry, McpServerStatus } from "../../lib/types";
 import type { SupportedModel } from "../../lib/supportedModels";
 import { Tooltip } from "./Tooltip";
 
@@ -109,6 +109,167 @@ export function ModelConfigPopover({
             }}
             emptyLabel={backend === "pi" ? "No models available" : "SDK default"}
           />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getMcpConnectionState(status?: string): "configured" | "connected" | "error" | "pending" {
+  if (!status) return "configured";
+  if (status === "connected") return "connected";
+  if (/^error:/i.test(status)) return "error";
+  return "pending";
+}
+
+function formatMcpEndpoint(entry?: McpServerEntry): string {
+  if (!entry) return "Session-reported server";
+  if (entry.server_type === "stdio") {
+    const command = entry.command || "<command>";
+    const args = entry.args?.join(" ") || "";
+    return [command, args].filter(Boolean).join(" ");
+  }
+  return entry.url || "<url>";
+}
+
+export function McpStatusPopover({
+  configuredServers,
+  sessionServers = [],
+  disabled,
+  dropdownAlign = "right",
+}: {
+  configuredServers: Record<string, McpServerEntry>;
+  sessionServers?: McpServerStatus[];
+  disabled?: boolean;
+  dropdownAlign?: "left" | "right";
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const configuredEntries = Object.entries(configuredServers);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  if (configuredEntries.length === 0) return null;
+
+  const statusByName = new Map(sessionServers.map((server) => [server.name, server.status]));
+  const rows: Array<{ name: string; entry?: McpServerEntry; status?: string }> = configuredEntries.map(([name, entry]) => ({
+    name,
+    entry,
+    status: statusByName.get(name),
+  }));
+  for (const server of sessionServers) {
+    if (!(server.name in configuredServers)) {
+      rows.push({ name: server.name, entry: undefined, status: server.status });
+    }
+  }
+
+  const totalCount = rows.length;
+  const hasLiveStatus = sessionServers.length > 0;
+  const connectedCount = rows.filter((row) => row.status === "connected").length;
+  const errorCount = rows.filter((row) => getMcpConnectionState(row.status) === "error").length;
+  const pendingCount = rows.filter((row) => getMcpConnectionState(row.status) === "pending").length;
+
+  const toneClass = !hasLiveStatus
+    ? "border-border-primary/25 bg-bg-tertiary/40 text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+    : errorCount === 0 && connectedCount === totalCount
+      ? "border-green-500/20 bg-green-500/10 text-green-400 hover:bg-green-500/15"
+      : connectedCount > 0
+        ? "border-amber-500/20 bg-amber-500/10 text-amber-400 hover:bg-amber-500/15"
+        : "border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/15";
+
+  const summary = !hasLiveStatus
+    ? `${configuredEntries.length} MCP server${configuredEntries.length === 1 ? "" : "s"} configured`
+    : `${connectedCount}/${totalCount} MCP server${totalCount === 1 ? "" : "s"} connected`;
+
+  const button = (
+    <button
+      type="button"
+      onClick={() => setOpen((value) => !value)}
+      disabled={disabled}
+      className={`h-7 min-w-8 px-2 flex items-center justify-center gap-1.5 rounded-md border transition-colors ${toneClass} ${disabled ? "opacity-50" : ""}`}
+      aria-label={summary}
+    >
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2.5" y="2.5" width="11" height="4" rx="1.2" />
+        <rect x="2.5" y="9.5" width="11" height="4" rx="1.2" />
+        <path d="M5.5 4.5h.01M8 4.5h.01M5.5 11.5h.01M8 11.5h.01" />
+      </svg>
+      <span className="text-[10px] font-medium tabular-nums leading-none">
+        {hasLiveStatus ? `${connectedCount}/${totalCount}` : `${configuredEntries.length}`}
+      </span>
+    </button>
+  );
+
+  return (
+    <div className="relative" ref={ref}>
+      <Tooltip text={summary}>{button}</Tooltip>
+      {open && (
+        <div className={`absolute top-8 z-20 w-72 rounded-md border border-border-primary bg-bg-secondary shadow-xl p-1.5 ${dropdownAlign === "left" ? "left-0" : "right-0"}`}>
+          <div className="mb-2 rounded-md border border-border-primary/60 bg-bg-primary/40 px-2 py-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] font-medium text-text-primary">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-text-tertiary">
+                <rect x="2.5" y="2.5" width="11" height="4" rx="1.2" />
+                <rect x="2.5" y="9.5" width="11" height="4" rx="1.2" />
+                <path d="M5.5 4.5h.01M8 4.5h.01M5.5 11.5h.01M8 11.5h.01" />
+              </svg>
+              <span className="truncate">MCP servers</span>
+            </div>
+            <div className="mt-1 flex items-center gap-3 text-[9px] text-text-tertiary">
+              <span>Configured {configuredEntries.length}</span>
+              <span>Connected {connectedCount}</span>
+              {errorCount > 0 && <span>Errors {errorCount}</span>}
+              {pendingCount > 0 && <span>Pending {pendingCount}</span>}
+            </div>
+            {!hasLiveStatus && (
+              <div className="mt-1 text-[9px] text-text-tertiary">
+                Connection status appears after an agent session starts.
+              </div>
+            )}
+          </div>
+
+          <div className="max-h-72 overflow-y-auto space-y-1">
+            {rows.map((row) => {
+              const state = getMcpConnectionState(row.status);
+              const badgeClass = state === "connected"
+                ? "bg-green-500/10 text-green-400"
+                : state === "error"
+                  ? "bg-red-500/10 text-red-400"
+                  : state === "pending"
+                    ? "bg-amber-500/10 text-amber-400"
+                    : "bg-bg-tertiary text-text-secondary";
+              const statusLabel = row.status || "configured";
+              const transport = row.entry?.server_type || "unknown";
+              const endpoint = formatMcpEndpoint(row.entry);
+              return (
+                <div key={row.name} className="rounded-md border border-border-primary/60 bg-bg-primary/20 px-2 py-1.5">
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[10px] font-medium text-text-primary">{row.name}</div>
+                      <div className="mt-0.5 text-[9px] text-text-tertiary">{transport}</div>
+                      <div className="truncate text-[9px] text-text-tertiary" title={endpoint}>{endpoint}</div>
+                    </div>
+                    <div className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium ${badgeClass}`} title={statusLabel}>
+                      {statusLabel}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

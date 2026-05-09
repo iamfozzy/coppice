@@ -1220,6 +1220,58 @@ async function generateTitle(prompt, provider, modelId) {
 
 // ── Event subscription ──
 
+// Streaming updates can arrive token-by-token. If we forward every delta (and
+// especially every debug log) over Tauri IPC, WebKit's Web Content process can
+// get buried under thousands of tiny events. Batch adjacent deltas in the
+// bridge, then the frontend still does its own requestAnimationFrame flush.
+const PARTIAL_FLUSH_MS = 40;
+let partialFlushTimer = null;
+let partialTextBuffer = "";
+let partialThinkingBuffer = "";
+
+function flushPartialBuffers() {
+  if (partialFlushTimer) {
+    clearTimeout(partialFlushTimer);
+    partialFlushTimer = null;
+  }
+  if (partialThinkingBuffer) {
+    emit({ type: "partial", delta: { type: "thinking", text: partialThinkingBuffer } });
+    partialThinkingBuffer = "";
+  }
+  if (partialTextBuffer) {
+    emit({ type: "partial", delta: { type: "text", text: partialTextBuffer } });
+    partialTextBuffer = "";
+  }
+}
+
+function queuePartialDelta(kind, text) {
+  if (!text) return;
+  if (kind === "thinking") {
+    partialThinkingBuffer += text;
+  } else {
+    partialTextBuffer += text;
+  }
+
+  // Flush immediately if the buffer is getting large; otherwise coalesce over
+  // a short interval. This caps IPC event rate without making streaming feel
+  // laggy.
+  if (partialTextBuffer.length + partialThinkingBuffer.length >= 8192) {
+    flushPartialBuffers();
+    return;
+  }
+
+  if (!partialFlushTimer) {
+    partialFlushTimer = setTimeout(flushPartialBuffers, PARTIAL_FLUSH_MS);
+  }
+}
+
+/** Log only low-volume event breadcrumbs. High-volume message/tool updates and
+ * large payload events would otherwise be forwarded to the WebView on stderr. */
+function logSessionEvent(event) {
+  if (event.type === "message_update" || event.type === "tool_execution_update") return;
+  log(`event: ${event.type}`);
+}
+
 /**
  * Subscribe to AgentSession events and emit them in Coppice's event format.
  * AgentSession emits the same core Agent events (message_start, message_end,
@@ -1233,7 +1285,7 @@ function subscribeToSessionEvents(agentSession) {
   }
 
   sessionUnsubscribe = agentSession.subscribe((event) => {
-    log(`event: ${event.type}${event.type === "message_update" ? "" : " " + JSON.stringify(event).slice(0, 120)}`);
+    logSessionEvent(event);
     switch (event.type) {
       case "message_start":
         if (event.message?.role === "assistant") {
@@ -1245,12 +1297,9 @@ function subscribeToSessionEvents(agentSession) {
         const aEvent = event.assistantMessageEvent;
         if (!aEvent) break;
         if (aEvent.type === "text_delta") {
-          emit({ type: "partial", delta: { type: "text", text: aEvent.delta } });
+          queuePartialDelta("text", aEvent.delta);
         } else if (aEvent.type === "thinking_delta") {
-          emit({
-            type: "partial",
-            delta: { type: "thinking", text: aEvent.delta },
-          });
+          queuePartialDelta("thinking", aEvent.delta);
         } else if (aEvent.type === "text_start" || aEvent.type === "thinking_start") {
           emit({ type: "status", status: "thinking" });
         }
@@ -1258,6 +1307,11 @@ function subscribeToSessionEvents(agentSession) {
       }
 
       case "message_end": {
+        // Ensure no delayed partial event can arrive after the final assistant
+        // message (which would leave duplicate live text under the completed
+        // response in the frontend).
+        flushPartialBuffers();
+
         const msg = event.message;
         if (!msg || msg.role !== "assistant") break;
 
@@ -1343,6 +1397,8 @@ function subscribeToSessionEvents(agentSession) {
       }
 
       case "agent_end": {
+        flushPartialBuffers();
+
         const lastAssistant = [...(event.messages || [])]
           .reverse()
           .find((m) => m.role === "assistant");
@@ -2037,6 +2093,7 @@ function parseImages(images) {
 // ── Cleanup ──
 
 function cleanup() {
+  flushPartialBuffers();
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;

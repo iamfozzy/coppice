@@ -1,6 +1,6 @@
 import { useRef, useEffect, useMemo } from "react";
 import type { AgentMessage, AgentStatus, AgentPendingPermission } from "../../lib/types";
-import { MessageBubble, MarkdownContent } from "./MessageBubble";
+import { MessageBubble } from "./MessageBubble";
 import { ToolGroup, type GroupedTool } from "./ToolGroup";
 import { PlanApprovalDialog } from "./PlanApprovalDialog";
 import { AnimatedRobotIcon, AnimatedToolIcon, useRotatingThinkingPhrase } from "./AgentStatusIcons";
@@ -147,10 +147,11 @@ export function MessageList({
         </div>
       )}
 
-      {/* Live streaming text — render with markdown */}
+      {/* Live streaming text — keep rendering cheap while deltas arrive.
+          The finalized assistant message is rendered with full markdown once. */}
       {streamingText && (
-        <div className="pr-8">
-          <MarkdownContent text={streamingText} />
+        <div className="pr-8 text-[13px] text-text-primary break-words leading-relaxed whitespace-pre-wrap">
+          {streamingText}
           <span className="inline-block w-1.5 h-3.5 bg-accent/50 animate-pulse rounded-sm ml-0.5 -mb-0.5" />
         </div>
       )}

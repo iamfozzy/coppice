@@ -50,6 +50,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const clearStreamingThinking = useAppStore((s) => s.clearAgentStreamingThinking);
   const setStatus = useAppStore((s) => s.setAgentStatus);
   const setSdkSessionId = useAppStore((s) => s.setAgentSdkSessionId);
+  const setMcpServers = useAppStore((s) => s.setAgentMcpServers);
   const setPendingPermission = useAppStore((s) => s.setAgentPendingPermission);
   const setPendingQuestion = useAppStore((s) => s.setAgentPendingQuestion);
   const setModel = useAppStore((s) => s.setAgentModel);
@@ -329,8 +330,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           setSlashCommands(sessionId, merged);
         }
         // Only show "Session started" for the first init, not on resume
+        const mcpServers = msg.mcpServers as Array<{ name: string; status: string }> | undefined;
+        setMcpServers(sessionId, mcpServers?.length ? mcpServers : []);
         if (!msg.isResume) {
-          const mcpServers = msg.mcpServers as Array<{ name: string; status: string }> | undefined;
           appendMessage(sessionId, {
             id: nextMsgId(),
             type: "system",

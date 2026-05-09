@@ -117,6 +117,11 @@ export type EffortLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh
 export type PiThinkingLevel = Exclude<EffortLevel, "max">;
 export type AgentPermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions";
 
+export interface McpServerStatus {
+  name: string;
+  status: string;
+}
+
 export interface AgentMessage {
   id: string;
   type: "user" | "assistant" | "tool_call" | "tool_result" | "system" | "error" | "slash_output";
@@ -129,7 +134,7 @@ export interface AgentMessage {
   isQueued?: boolean;
   thinkingText?: string;
   /** MCP server status for system "session started" messages */
-  mcpServers?: Array<{ name: string; status: string }>;
+  mcpServers?: McpServerStatus[];
   timestamp: number;
 }
 
@@ -188,6 +193,8 @@ export interface AgentSessionState {
    *  More reliable than guessing from the model name string. */
   sdkContextWindow: number | null;
   sdkSessionId: string | null;
+  /** MCP server status from the most recent bridge init for this session. */
+  mcpServers: McpServerStatus[];
   pendingPermission: AgentPendingPermission | null;
   pendingQuestion: AgentPendingQuestion | null;
   streamingText: string;
