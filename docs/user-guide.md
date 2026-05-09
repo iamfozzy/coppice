@@ -1,6 +1,6 @@
 # Coppice User Guide
 
-Coppice is a desktop application for managing Git worktrees, terminals, and AI-powered development workflows. It integrates with Claude Code to provide an all-in-one workspace for branching, building, reviewing PRs, and iterating on code.
+Coppice is a desktop app for working across multiple Git worktrees, terminals, and AI-assisted coding sessions in one place. It combines project/worktree management, diffing, GitHub PR workflows, runners, and agent tabs in a single window.
 
 ![Coppice screenshot](screenshot.png)
 
@@ -9,459 +9,625 @@ Coppice is a desktop application for managing Git worktrees, terminals, and AI-p
 ## Table of Contents
 
 - [Overview](#overview)
+- [Quick start](#quick-start)
 - [Layout](#layout)
 - [Sidebar](#sidebar)
-  - [Sidebar Header](#sidebar-header)
-  - [Project Tree](#project-tree)
-  - [Changes Panel](#changes-panel)
-  - [Runners Panel](#runners-panel)
-- [Main Area](#main-area)
-  - [Worktree Header](#worktree-header)
-  - [Tab Bar](#tab-bar)
-  - [Terminal View](#terminal-view)
-  - [Diff Viewer](#diff-viewer)
-- [Modals & Dialogs](#modals--dialogs)
+  - [Sidebar header](#sidebar-header)
+  - [Scratchpad and project list](#scratchpad-and-project-list)
+  - [Changes panel](#changes-panel)
+  - [Runners panel](#runners-panel)
+- [Main area](#main-area)
+  - [Worktree header](#worktree-header)
+  - [Tab bar](#tab-bar)
+  - [Agent sessions](#agent-sessions)
+  - [Terminal tabs](#terminal-tabs)
+  - [Diff viewer](#diff-viewer)
+- [Tile view](#tile-view)
+- [Dialogs and settings](#dialogs-and-settings)
   - [App Settings](#app-settings)
   - [Project Settings](#project-settings)
   - [Create Worktree](#create-worktree)
-- [Keyboard Shortcuts](#keyboard-shortcuts)
-- [Status Indicators](#status-indicators)
-- [Drag & Drop](#drag--drop)
+  - [Delete Worktree](#delete-worktree)
+- [Keyboard shortcuts and interactions](#keyboard-shortcuts-and-interactions)
+- [Status indicators](#status-indicators)
+- [Tips](#tips)
 
 ---
 
 ## Overview
 
-Coppice organises your work around **projects** and **worktrees**. A project points at a Git repository. Worktrees are checked-out branches that live in separate directories, so you can work on multiple branches simultaneously without stashing or switching.
+Coppice organises your work around:
 
-Each worktree gets its own set of terminal tabs (including Claude Code sessions), its own build/run runners, and its own PR status view.
+- **Projects** — Git repositories you add to Coppice.
+- **Worktrees** — separate checkouts of branches for the same repo.
+- **Tabs** — per-worktree sessions such as agent tabs, Claude CLI terminals, shell terminals, and diffs.
+- **Runners** — project-defined Setup, Build, and Run commands.
+- **Scratchpad** — a lightweight home workspace for notes, plans, and agent-only work that is not tied to a normal project worktree.
+
+Each worktree keeps its own tabs, branch target, PR context, and runner state.
+
+---
+
+## Quick start
+
+1. Click **+** in the sidebar header to add a project.
+2. Create or select a worktree from that project.
+3. Open a tab:
+   - **Agent** for a built-in coding agent session
+   - **CLI** for a Claude Code terminal tab
+   - **Terminal** for a normal shell
+4. Use the **Uncommitted**, **Files**, and **PR** panels in the sidebar to inspect changes and review status.
+5. Run **Setup**, **Build**, or **Run** commands from the runner panel.
+6. Use **Tile view** when you want several agent sessions visible at once.
 
 ---
 
 ## Layout
 
-The interface is split into two main regions:
+Coppice has two main regions:
 
-```
-┌──────────────────────┬──────────────────────────────────────┐
-│                      │                                      │
-│      SIDEBAR         │           MAIN AREA                  │
-│   (310–500px)        │         (flexible)                   │
-│                      │                                      │
-│  ┌────────────────┐  │  ┌────────────────────────────────┐  │
-│  │ Sidebar Header │  │  │ Worktree Header                │  │
-│  ├────────────────┤  │  ├────────────────────────────────┤  │
-│  │                │  │  │ Tab Bar                        │  │
-│  │ Project Tree   │  │  ├────────────────────────────────┤  │
-│  │                │  │  │                                │  │
-│  │                │  │  │                                │  │
-│  ├────────────────┤  │  │  Terminal / Diff Viewer        │  │
-│  │ Changes Panel  │  │  │                                │  │
-│  │ (tabs)         │  │  │                                │  │
-│  ├────────────────┤  │  │                                │  │
-│  │ Runners        │  │  │                                │  │
-│  └────────────────┘  │  └────────────────────────────────┘  │
-└──────────────────────┴──────────────────────────────────────┘
-```
+- **Sidebar** — navigation, project/worktree list, change lists, and runners
+- **Main area** — worktree header, tabs, agent/terminal/diff content
 
-The sidebar is **resizable** — drag its right edge to adjust width between 310px and 500px.
+The sidebar is resizable by dragging its right edge. Its width is clamped between roughly **310px and 500px**.
 
 ---
 
 ## Sidebar
 
-### Sidebar Header
+### Sidebar header
 
-```
-┌──────────────────────────────┐
-│  🌿 Coppice        ⚙   +    │
-└──────────────────────────────┘
-```
+The sidebar header no longer just contains app branding and settings. It now acts as a compact control strip for the whole app.
 
-| Element | Description |
-|---------|-------------|
-| **Coppice logo & name** | App branding in the top-left corner. |
-| **⚙ Gear icon** | Opens [App Settings](#app-settings). Tooltip: *"App settings"*. |
-| **+ Plus icon** | Opens the [Project Settings](#project-settings) dialog to add a new project. Tooltip: *"Add project"*. |
+| Control | Description |
+|---|---|
+| **Tile view button** | Opens or closes the multi-tile agent grid view. |
+| **`Cl` / `Pi` backend button** | Switches the default agent backend between Claude Agent and Pi Agent. |
+| **Model picker** | Chooses the default model. For Pi Agent, this also exposes provider/model selection. |
+| **+ button** | Opens **New Project**. |
+| **About button** | Opens the **About Coppice** modal with app/version info. |
+| **Settings button** | Opens **App Settings**. |
 
----
-
-### Project Tree
-
-The project tree is the main navigation panel. It lists all your projects, each containing its worktrees.
-
-```
-┌──────────────────────────────┐
-│ ▶ Coppice                + ⋮ │  ← Project row
-│   ┌──────────────────────┐   │
-│   │ fix-readme-screenshot│←  │  ← Selected worktree
-│   │  fix/readme-screenshot   │  ← Branch name
-│   ├──────────────────────┤   │
-│   │ fix-key-value-tabind │   │  ← Another worktree
-│   │  fix/key-value-tabindex  │
-│   └──────────────────────┘   │
-└──────────────────────────────┘
-```
-
-#### Project Row
-
-| Element | Description |
-|---------|-------------|
-| **▶ / ▼ Chevron** | Click to expand or collapse the project's worktree list. |
-| **Project name** | The name you gave the project (e.g. "Coppice"). Click to expand/collapse. |
-| **+ Button** | Opens the [Create Worktree](#create-worktree) dialog for this project. Tooltip: *"Add worktree"*. |
-| **⋮ Button** | Opens [Project Settings](#project-settings) for this project. Tooltip: *"Project settings"*. |
-
-#### Worktree Row
-
-| Element | Description |
-|---------|-------------|
-| **Worktree name** | Display name of the worktree directory. **Double-click** to rename it inline. Press Enter to confirm or Escape to cancel. |
-| **Branch name** | The Git branch checked out in this worktree, shown in monospace below the name. |
-| **PR badge** | If a pull request exists for this branch, the PR number (e.g. `#9`) is shown next to the branch name. |
-| **Agent indicator** | A coloured dot showing agent status. See [Status Indicators](#status-indicators). |
-| **Run indicator** | A green animated dot if the worktree's Run command is active. |
-| **✕ Delete button** | Appears on hover. Deletes the worktree and removes the directory from disk. A confirmation dialog appears first. Tooltip: *"Delete worktree"*. |
+These controls affect newly created agent tabs, and in some cases also update an empty idle agent tab.
 
 ---
 
-### Changes Panel
+### Scratchpad and project list
 
-The changes panel sits below the project tree and has three tabs:
+At the top of the navigation list is a **Scratchpad** entry.
 
-```
-┌──────────────────────────────┐
-│  Changes  │  Files (5)  │ PR │   ← Tab bar
-├──────────────────────────────┤
-│                              │
-│  (content for active tab)    │
-│                              │
-└──────────────────────────────┘
-```
+#### Scratchpad
 
-#### Changes Tab
+Scratchpad is a small built-in workspace for free-form agent sessions.
 
-Shows **uncommitted files** in the selected worktree (staged + unstaged).
+- Good for plans, notes, prompts, and temporary work
+- Shows a tab count like normal worktrees
+- Shows the same agent activity indicators as normal worktrees
+- Does **not** show the Changes or Runners panels
 
-| Element | Description |
-|---------|-------------|
-| **File list** | Each row shows a filename and a status badge. |
-| **Status badge** | Colour-coded letter: **M** (modified, yellow), **A** (added, green), **D** (deleted, red), **R** (renamed, blue), **??** (untracked, gray). |
-| **↵ Revert button** | Appears on hover over a file row. Reverts the file to its last committed state (tracked files) or deletes it (untracked files). A confirmation dialog appears first. |
-| **Commit & Push button** | Shown at the top when there are uncommitted changes. Sends a commit instruction to a Claude Code tab. |
-| **Push (N) button** | Shown when there are unpushed commits. The number indicates how many commits will be pushed. Sends a push instruction to Claude Code. |
+#### Project rows
 
-Clicking a file opens its diff in the [Diff Viewer](#diff-viewer).
-
-#### Files Tab
-
-Shows **all files changed** compared to the target/base branch — the PR-level diff.
+Each project row can be expanded or collapsed.
 
 | Element | Description |
-|---------|-------------|
-| **File count** | Shown in the tab label, e.g. "Files (5)". |
-| **File list** | Same format as Changes tab but compares against the base branch rather than uncommitted changes. |
+|---|---|
+| **Chevron** | Expand/collapse the project’s worktrees. |
+| **Project name** | Main label for the project. |
+| **Search/filter button** | Filters the worktree list by branch name. |
+| **+ button** | Opens **Create Worktree** for that project. |
+| **⋯ button** | Opens **Project Settings**. |
 
-Clicking a file opens its PR-level diff in the Diff Viewer.
+You can also right-click a project header to open project settings.
 
-#### PR Tab
+#### Worktree rows
 
-Shows the **pull request status** for the current worktree's branch.
+The current worktree row layout is compact. Rows primarily show the **branch name** rather than a separate “worktree title over branch subtitle” layout.
 
 | Element | Description |
-|---------|-------------|
-| **PR state badge** | Coloured label showing the PR state: **OPEN** (green), **DRAFT** (gray), **MERGED** (purple), **CLOSED** (red). |
-| **PR title & number** | Clickable — opens the PR on GitHub in your browser. |
-| **🔄 Refresh button** | Manually re-fetches PR status, checks, and comments. Tooltip: *"Refresh"*. |
-| **Merge conflict warning** | A yellow banner if the PR has merge conflicts. Includes a **"Resolve with Claude"** button that sends merge resolution instructions to Claude Code. |
-| **Check runs list** | CI/CD check results. Each shows an icon and name: |
-| | ✅ **Green checkmark** — passed |
-| | ❌ **Red X** — failed (click **"Fix with Claude"** to send failure logs to Claude) |
-| | ⏳ **Gray circle** — pending or queued |
-| | 🔄 **Spinning icon** — in progress |
-| **PR comments** | Review comments from GitHub, each showing: |
-| | **Author** — who wrote the comment |
-| | **File & line** — where in the code the comment applies |
-| | **Body** — the comment text (long comments are truncated with a "Show more" toggle) |
-| | **Resolved badge** — green indicator if resolved |
-| | **Checkbox** — select unresolved comments for bulk fixing |
-| | **"Fix with Claude" button** — sends this specific comment to Claude Code to address |
-| | **"Resolve / Unresolve" button** — toggles the comment's resolution status on GitHub |
-| **Bulk actions** | At the top of the comments section: |
-| | **"Select all"** — checks all unresolved comments |
-| | **"Deselect"** — unchecks all |
-| | **"Fix N with Claude"** — sends all selected comments to Claude Code at once |
+|---|---|
+| **Branch label** | Primary label shown for the worktree row. |
+| **PR number** | Shown inline when the worktree is associated with a PR. |
+| **Tab count** | Small number showing how many tabs are open for that worktree. |
+| **Agent status dot** | Shows whether an agent tab in that worktree is active or waiting. |
+| **Run indicator** | Shows whether the Run runner is active. |
+| **Delete button** | Appears on hover and opens the delete confirmation dialog. |
+
+**Note:** the current UI does **not** support inline renaming of worktrees from the project tree.
 
 ---
 
-### Runners Panel
+### Changes panel
 
-Below the changes panel are three configurable command runners:
+The changes area below the project tree has three tabs:
 
-```
-┌──────────────────────────────┐
-│  ▶ Setup                 Run │
-│  ▶ Build                 Run │
-│  ▶ Run                   Run │
-└──────────────────────────────┘
-```
+- **Uncommitted**
+- **Files**
+- **PR**
 
-Each runner corresponds to a command configured in [Project Settings](#project-settings).
+It is shown only for normal worktrees, not Scratchpad.
 
-| Element | Description |
-|---------|-------------|
-| **Runner label** | "Setup", "Build", or "Run". Click to expand/collapse the runner's embedded terminal. |
-| **▶ Chevron** | Indicates expand/collapse state. |
-| **Status dot** | Hidden when idle. **Green animated dot** when running. **Gray dot** when stopped/exited. |
-| **Run button** | Starts (or restarts) the runner's command. |
-| **Stop button** | Appears only while the command is running. Kills the process. |
-| **Embedded terminal** | When expanded, a 150px-tall terminal shows the runner's output in real time. |
+#### Uncommitted
 
-**Setup** runs the setup scripts defined in project settings (e.g. `npm install`).
-**Build** runs the build command (e.g. `npm run build`).
-**Run** runs the run command (e.g. `npm run dev`).
-
----
-
-## Main Area
-
-### Worktree Header
-
-The header bar at the top of the main area shows context for the selected worktree.
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  Coppice / fix-readme-screenshot   fix/readme-screenshot │
-│                                  → main  🔄   📝 💻 📂  │
-└──────────────────────────────────────────────────────────┘
-```
-
-| Element | Description |
-|---------|-------------|
-| **Project / Worktree name** | Shows which project and worktree is selected. |
-| **Branch name** | The live Git branch name. Polled every 3 seconds, so it reflects the actual branch even if changed externally. |
-| **Target branch (→ main)** | The base branch for PR comparisons. Click to change it. Tooltip: *"Target branch for PR comparisons (click to change)"*. |
-| **🔄 Sync button** | Fetches the target branch from origin. Tooltip: *"Fetch {branch} from origin"*. |
-| **📝 Open in Editor** | Opens the worktree directory in your configured editor (VS Code, Cursor, etc.). Tooltip: *"Open in editor"*. |
-| **💻 Open in Terminal** | Opens the worktree directory in your configured terminal emulator. Tooltip: *"Open terminal"*. |
-| **📂 Open in Finder** | Opens the worktree directory in your system file manager. Tooltip: *"Open in Finder"*. |
-
----
-
-### Tab Bar
-
-Below the header is a tab bar for managing terminal and diff sessions.
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  Claude #1  │  Claude #2  │           [>_]  [🤖]        │
-└──────────────────────────────────────────────────────────┘
-```
-
-| Element | Description |
-|---------|-------------|
-| **Tab** | Click to switch to that terminal or diff view. Each tab shows its name and a close button (✕) on hover. |
-| **Tab types** | Tabs can be: **Claude** (Claude Code session), **Terminal** (plain shell), or **Diff** (file diff viewer). |
-| **Agent status dot** | Agent tabs show a coloured dot indicating whether the agent is active or idle. |
-| **✕ Close button** | Appears on hover. Closes the tab and kills the associated terminal session. |
-| **[>_] New Terminal** | Creates a new plain terminal tab. Tooltip: *"New terminal (Ctrl+T)"*. |
-| **[🤖] New Claude** | Creates a new Claude Code session tab. Tooltip: *"New Claude session (Ctrl+Shift+T)"*. |
-
-Tabs are scrollable horizontally if there are too many to fit.
-
----
-
-### Terminal View
-
-The terminal view renders a full-featured terminal emulator powered by xterm.js.
+Shows the current worktree’s local Git status.
 
 | Feature | Description |
-|---------|-------------|
-| **Full terminal emulation** | Supports colours, cursor movement, box-drawing characters (Unicode 11), and all standard terminal features. |
-| **Clickable links** | URLs in terminal output are clickable and open in your browser. |
-| **Copy with Ctrl+C** | When text is selected, Ctrl+C copies it (with smart newline handling for wrapped lines). When nothing is selected, Ctrl+C sends the interrupt signal as normal. |
-| **Scrollback** | 10,000 lines of scrollback buffer. Scroll with your mouse wheel or trackpad. |
-| **Font** | Uses JetBrains Mono by default. Configurable in [App Settings](#app-settings). |
-| **Theme** | Dark theme matching the app's colour scheme. |
-| **Exit message** | When a terminal process exits, a message is displayed showing the exit status. |
+|---|---|
+| **Changed file list** | Includes tracked and untracked files. |
+| **Status badge** | `M`, `A`, `D`, `R`, or `??`. |
+| **Click a file** | Opens an uncommitted diff tab. |
+| **Right-click a file** | Opens a context menu with **Open diff**, **Open in editor**, and **Revert changes**. |
+| **Commit & Push / Push** | Sends a commit-and-push or push instruction to your current automation flow. |
 
-#### Claude Code Sessions
+If there are uncommitted files, the action button reads **Commit & Push**. If the worktree is clean but ahead of origin, it reads **Push (N)**.
 
-Claude tabs launch Claude Code in the worktree directory. They have additional behaviours:
+#### Files
+
+Shows the PR-level diff for the current worktree relative to its target branch.
 
 | Feature | Description |
-|---------|-------------|
-| **Auto-creation** | When you select a worktree that has no Claude tabs, one is automatically created. |
-| **Idle detection** | After an agent finishes working and is waiting for input, the tab shows an "idle" indicator (see [Status Indicators](#status-indicators)). |
-| **Notification sound** | Optionally plays a two-tone chime when an agent becomes idle in a background tab. Enable in [App Settings](#app-settings). |
-| **Command injection** | Features like "Fix with Claude" and "Commit & Push" send instructions directly to the active Claude session. |
+|---|---|
+| **File count in tab title** | Indicates how many files differ from the target/base branch. |
+| **Click a file** | Opens a PR-mode diff tab. |
+| **Target branch aware** | Uses the worktree target branch if set, otherwise the project default target/base branch. |
+
+This is the best place to review the branch as a whole before opening or updating a PR.
+
+#### PR
+
+Shows pull request info for the current branch.
+
+If a PR exists, the panel can show:
+
+- PR state badge
+- PR title and number
+- Link to open the PR in the browser
+- Manual **Refresh**
+- Merge-conflict warning with **Resolve with Claude**
+- Check run status list
+- **Fix with Claude** for failed checks
+- PR comments and review comments
+- Comment selection and bulk-fix actions
+- Resolve/unresolve controls for review threads
+- Open-commented-file actions into the diff viewer
+
+If no PR exists, the panel offers **Create PR**.
+
+> **Naming note:** some buttons still say **“Fix with Claude”** or **“Resolve with Claude”**. In practice, these actions follow your current app configuration and may open either an Agent tab or a Claude CLI tab.
 
 ---
 
-### Diff Viewer
+### Runners panel
 
-When you click a file in the Changes or Files tab, it opens in a side-by-side diff viewer powered by Monaco Editor.
+The runners panel appears below the changes panel when the selected project has commands configured.
 
-| Feature | Description |
-|---------|-------------|
-| **Side-by-side view** | Left pane shows the original version, right pane shows the modified version. |
-| **Syntax highlighting** | Automatic language detection based on file extension. Supports 25+ languages. |
-| **Colour coding** | Added lines highlighted green, removed lines highlighted red, modified lines highlighted yellow. |
-| **PR comments inline** | If viewing a PR-level diff, review comments appear as bubbles in the right margin at the relevant line numbers. |
-| **Comment colours** | Blue bubbles for unresolved comments, green for resolved. |
-| **Expandable comments** | Long comments are truncated with a "Show more" toggle. |
+Available runners:
+
+- **Setup**
+- **Build**
+- **Run**
+
+| Element | Description |
+|---|---|
+| **Runner header** | Expand/collapse the embedded runner terminal. |
+| **Status dot** | Hidden when idle, green when running, grey when stopped. |
+| **Run button** | Starts or restarts that runner. |
+| **Stop button** | Stops a running command. |
+| **Embedded terminal** | Shows live output when expanded. |
+
+Notes:
+
+- **Setup** is built from all setup scripts joined together.
+- Runner terminals are preserved when you switch between worktrees.
+- After creating a worktree, Coppice can automatically trigger **Setup** if setup scripts are configured.
 
 ---
 
-## Modals & Dialogs
+## Main area
+
+### Worktree header
+
+The header at the top of the main area shows the selected context.
+
+For a normal worktree it includes:
+
+| Element | Description |
+|---|---|
+| **Project / worktree label** | Shows the current project and worktree name. |
+| **Live branch name** | Polled from Git, so it stays accurate even if the branch changes outside Coppice. |
+| **Target branch picker** | Displays `→ target-branch`; click to edit it inline. |
+| **Fetch button** | Fetches the current target branch from `origin`. |
+| **Open in editor** | Opens the worktree, or the active diff file if a diff tab is selected. |
+| **Open terminal** | Opens the worktree in your configured external terminal emulator. |
+| **Open in file manager** | Opens the worktree folder in Finder/Explorer/etc. |
+
+When Scratchpad is selected, the header simply shows **Scratchpad**.
+
+---
+
+### Tab bar
+
+The tab bar is more flexible than the older user guide described.
+
+#### New-tab controls
+
+| Position | Control | Description |
+|---|---|---|
+| **Left** | **New Agent session** | Creates a built-in agent tab. |
+| **Right** | **New terminal** | Creates a normal shell tab. |
+| **Right** | **CLI** | Creates a Claude CLI terminal tab using the configured Claude command. |
+
+#### Tab types
+
+Tabs can be:
+
+- **Agent**
+- **Claude CLI terminal**
+- **Terminal**
+- **Diff**
+
+#### Tab interactions
+
+| Interaction | Result |
+|---|---|
+| **Click** | Activate the tab |
+| **Double-click tab title** | Rename the tab |
+| **Hover X** | Close the tab |
+| **Middle-click** | Close the tab |
+
+If you try to close an agent/CLI tab that is still actively working, Coppice asks for confirmation first.
+
+Unlike older versions, Coppice does **not** automatically create a Claude CLI tab when you select a worktree.
+
+---
+
+### Agent sessions
+
+Agent tabs are the main place for AI-assisted work in Coppice.
+
+Depending on your settings, new agent tabs use either:
+
+- **Claude Agent**, or
+- **Pi Agent**
+
+#### Agent controls
+
+At the bottom of an agent tab you can configure the session with controls such as:
+
+- **Backend badge** (`Cl` or `Pi`)
+- **Model picker**
+- **1M** toggle for supported Claude models
+- **Effort**
+- **Permission mode**
+- **Concise** mode
+- **Chat** mode
+
+Permission modes are:
+
+- **Default** — ask before edits and shell commands
+- **Accept Edits** — auto-allow file edits, still ask for shell commands
+- **Allow All** — auto-allow everything
+- **Plan Only** — read-only planning / analysis flow
+
+#### Input bar
+
+The agent input bar supports:
+
+- sending a normal message
+- queuing a message while the agent is already busy
+- attaching images with the image button
+- dragging images into the tab
+- pasting screenshots/images from the clipboard
+- slash-command autocomplete by typing `/`
+
+#### Agent workflow UI
+
+Agent tabs can also show:
+
+- streaming assistant output
+- grouped tool calls/results
+- inline **Plan Approval Required** blocks in plan mode
+- permission prompts for non-plan actions
+- “ask user” prompts when the agent needs more information
+- stop/interrupt controls while the agent is working
+- token/context/cost information in the toolbar
+
+---
+
+### Terminal tabs
+
+Terminal tabs are full PTY-backed shell sessions.
+
+| Feature | Description |
+|---|---|
+| **Shell session** | Uses your configured shell/platform default. |
+| **Clickable links** | URLs open in your browser. |
+| **Copy with selection** | `Ctrl/Cmd+C` copies selected text. |
+| **Interrupt without selection** | `Ctrl/Cmd+C` sends the normal interrupt signal when nothing is selected. |
+| **Scrollback** | 10,000 lines. |
+| **Theme-aware** | Matches the current Coppice theme. |
+| **Exit message** | Shows `[Process exited]` when the session ends. |
+
+#### Claude CLI tabs
+
+The **CLI** button creates a terminal tab that runs your configured Claude command.
+
+This is separate from the built-in **Agent** tab type:
+
+- **Agent** = integrated agent UI with controls, permissions, and message history
+- **CLI** = terminal session running the Claude CLI
+
+#### Drag and drop
+
+Drag-and-drop behaves differently depending on the active tab type:
+
+- On an **agent tab**, dropped image files become image attachments
+- On a **terminal/CLI tab**, dropped files are written into the terminal as quoted file paths
+
+---
+
+### Diff viewer
+
+Clicking a file in **Uncommitted** or **Files** opens a Monaco-based side-by-side diff.
+
+| Feature | Description |
+|---|---|
+| **Uncommitted mode** | `HEAD` vs working tree |
+| **PR mode** | merge-base vs `HEAD` |
+| **Syntax highlighting** | Language detection based on file type |
+| **Inline PR comments** | PR-mode diffs can render review comments inline in the modified pane |
+| **Theme-aware editor** | Matches the active Coppice theme |
+
+Opening the same file/mode again reuses the existing diff tab instead of creating duplicates.
+
+---
+
+## Tile view
+
+Tile view is a grid of agent tabs shown full-window.
+
+It is useful when you want to monitor or work with multiple agent sessions at once.
+
+### What it shows
+
+- Agent tabs from all open worktrees
+- Agent tabs from Scratchpad
+- Empty slots for adding more work
+
+### What you can do there
+
+- open an existing worktree into a new agent tile
+- create a new worktree and immediately open an agent tab for it
+- switch backend/model from the tile-view header
+- close tile view with **Esc** or the tile-view button
+
+Tile view is agent-focused; it is not a multi-terminal grid.
+
+---
+
+## Dialogs and settings
 
 ### App Settings
 
-Opened via the **⚙ gear icon** in the sidebar header. Configures global defaults that apply to all projects.
+App Settings now covers much more than editor/terminal defaults.
 
-| Setting | Description | Example |
-|---------|-------------|---------|
-| **Editor command** | The CLI command to launch your editor. | `cursor`, `code`, `codium` |
-| **Claude command** | The default command to launch Claude Code. | `claude` |
-| **Terminal font family** | Font for all terminal views. Must be installed on your system. | `JetBrains Mono`, `Fira Code` |
-| **Terminal font size** | Font size in pixels for terminal views. | `14` |
-| **Terminal emulator** | App to use for "Open in terminal". | `alacritty`, `kitty`, `ghostty` |
-| **Shell** | Override the default shell for terminal sessions. | `/bin/zsh`, `fish` |
-| **Window decorations** | Toggle the native title bar on/off. Useful for tiling window managers. | On / Off |
-| **Notification sound** | Play a chime when an agent finishes working in a background tab. | On / Off |
+#### GitHub
 
-A hint at the top reads: *"Global defaults. Leave blank to use platform defaults. Per-project settings override these."*
+At the top of settings is a **GitHub** section.
+
+From here you can:
+
+- sign in with GitHub using the bundled `gh` CLI
+- sign out
+- enable PR/check/comment features without installing `gh` yourself separately in the app bundle
+
+#### General app settings
+
+Global settings include:
+
+- editor command
+- Claude command
+- terminal font family and size
+- terminal emulator
+- shell override
+- theme (`dark`, `dim`, `atom`, `light`, `system`)
+- window decorations
+- notification sound
+- OS notifications
+
+#### Agent mode
+
+You can choose between:
+
+- **Terminal (CLI)**
+- **Claude Agent**
+- **Pi Agent**
+
+#### Claude Agent settings
+
+When Claude Agent is selected, App Settings exposes options such as:
+
+- Anthropic API key
+- base URL / proxy settings
+- default model
+- default effort
+- small/fast model override
+- subagent model
+- bash output limits
+- task output limits
+
+#### Pi Agent settings
+
+When Pi Agent is selected, App Settings includes Pi-specific configuration such as:
+
+- provider authentication
+- provider/model defaults
+- thinking level
+- optional web access
+- optional subagent support
+
+#### MCP servers
+
+App Settings also contains an **MCP Servers** editor for adding extra MCP servers available to agent sessions.
 
 ---
 
 ### Project Settings
 
-Opened via the **+ button** (new project) or the **⋮ button** (edit existing project) in the sidebar.
+Project Settings defines the per-project defaults that power worktrees and runners.
 
-| Setting | Description | Required |
-|---------|-------------|----------|
-| **Project name** | A display name for the project. | Yes |
-| **Local path** | The path to the Git repository on disk. Use the Browse button to select it. | Yes |
-| **GitHub remote** | The GitHub repository, as a URL or `owner/repo` format. Enables PR features. | No |
-| **Base branch** | The default base branch for comparisons (e.g. `main`). | No |
-| **Build command** | Command to run for the Build runner. | No |
-| **Run command** | Command to run for the Run runner. | No |
-| **Setup scripts** | Commands to run when setting up a new worktree (one per line). | No |
-| **Env files to copy** | Env files to copy from the main repo into new worktrees (one per line). | No |
-| **Claude command** | Override the global Claude command for this project. | No |
-| **PR create skill** | Custom Claude command for creating pull requests. | No |
+Fields include:
 
-When editing an existing project, a red **Delete** button appears at the bottom-left.
+- **Project name**
+- **Local path**
+- **GitHub remote**
+- **Base branch**
+- **Target branch**
+- **Build command**
+- **Run command**
+- **Setup scripts**
+- **Env files to copy**
+- **Claude command** override
+- **PR create skill**
+
+Notes:
+
+- **Target branch** is the default PR comparison branch for that project.
+- **Env files to copy** are used when creating new worktrees.
+- **PR create skill** lets you customise what happens when you press **Create PR**.
+- Existing projects can be deleted from the bottom of this dialog.
 
 ---
 
 ### Create Worktree
 
-Opened via the **+ button** on a project row. Creates a new Git worktree.
+Create Worktree has two modes:
 
-The dialog has two modes, toggled at the top:
+- **New branch**
+- **Existing branch**
 
-#### Existing Branch Mode
-1. **Filter** — Type to search through existing branches.
-2. **Branch list** — Select which branch to check out.
-3. **Worktree name** — Name for the worktree directory (auto-filled from branch name).
+The current modal opens in **New branch** mode by default.
 
-#### New Branch Mode
-1. **Base branch** — Select the branch to create from.
-2. **New branch name** — Name for the new Git branch.
-3. **Worktree name** — Name for the worktree directory (auto-filled from branch name).
+#### New branch mode
 
-After creation, if setup scripts are configured, they run automatically in the new worktree.
+1. Filter/select the base branch
+2. Enter the new branch name
+3. Confirm the worktree folder name
+4. Create the worktree
 
-A progress indicator shows the creation status, including file copy operations.
+As you type the branch name, the worktree folder name is auto-filled and sanitised.
 
----
+#### Existing branch mode
 
-## Keyboard Shortcuts
+1. Filter/select an existing branch
+2. Confirm the worktree folder name
+3. Create the worktree
 
-| Shortcut | Action |
-|----------|--------|
-| **Ctrl+Tab** | Switch to the next tab |
-| **Ctrl+Shift+Tab** | Switch to the previous tab |
-| **Ctrl+PageDown** | Switch to the next tab (alternative) |
-| **Ctrl+PageUp** | Switch to the previous tab (alternative) |
-| **Ctrl+T** | Open a new terminal tab |
-| **Ctrl+Shift+T** | Open a new Claude Code session |
-| **Ctrl+W** | Close the current tab |
+Other notes:
 
-In terminal views:
-| Shortcut | Action |
-|----------|--------|
-| **Ctrl+C** (with selection) | Copy selected text |
-| **Ctrl+C** (without selection) | Send interrupt signal (SIGINT) |
-
-In modals:
-| Shortcut | Action |
-|----------|--------|
-| **Enter** | Confirm / submit |
-| **Escape** | Cancel / close |
-
-In the project tree:
-| Action | Trigger |
-|--------|---------|
-| **Rename worktree** | Double-click the worktree name |
-| **Confirm rename** | Press Enter |
-| **Cancel rename** | Press Escape |
+- The branch list supports filtering.
+- The project default/base branch is highlighted as the default choice when possible.
+- Progress text appears while Coppice creates the worktree and copies configured env files.
+- After creation, Coppice selects the new worktree, and Setup can be triggered automatically if configured.
 
 ---
 
-## Status Indicators
+### Delete Worktree
 
-Coloured dots appear throughout the UI to show the status of background processes.
+Deleting a worktree now has two confirmation actions:
 
-### Claude Status (on worktree rows and tabs)
+- **Delete** — removes the worktree directory and deletes the local branch
+- **Delete, Keep Branch** — removes the worktree directory but keeps the local branch
+
+This is more accurate than the older guide, which implied deletion always removed the branch with no option.
+
+---
+
+## Keyboard shortcuts and interactions
+
+Coppice uses **Ctrl** on Windows/Linux and **Cmd** on macOS for its main shortcuts.
+
+### Tab shortcuts
+
+| Shortcut | Action |
+|---|---|
+| **Ctrl/Cmd+Tab** | Next tab |
+| **Ctrl/Cmd+Shift+Tab** | Previous tab |
+| **Ctrl/Cmd+PageDown** | Next tab |
+| **Ctrl/Cmd+PageUp** | Previous tab |
+| **Ctrl/Cmd+W** | Close current tab |
+| **Ctrl/Cmd+T** | New terminal tab |
+| **Ctrl/Cmd+Shift+T** | New default coding tab (Agent if agent mode is enabled; Claude CLI tab if terminal mode is selected) |
+| **Ctrl/Cmd+Shift+A** | New Agent tab |
+
+### Other interactions
+
+| Interaction | Result |
+|---|---|
+| **Esc** | Closes tile view; also dismisses many dialogs/popovers |
+| **Double-click tab title** | Rename tab |
+| **Middle-click tab** | Close tab |
+| **Right-click changed file** | Open file actions menu |
+| **Right-click project header** | Open project settings |
+| **Enter in dialogs** | Confirm/create when valid |
+| **Drag images into an agent tab** | Add them as attachments |
+| **Drag files into a terminal tab** | Paste file paths into the shell |
+
+### Terminal copy behaviour
+
+| Shortcut | Action |
+|---|---|
+| **Ctrl/Cmd+C** with selection | Copy selected text |
+| **Ctrl/Cmd+C** without selection | Send interrupt |
+
+---
+
+## Status indicators
+
+### Agent status
+
+Shown on Scratchpad, worktree rows, and relevant tabs.
 
 | Indicator | Meaning |
-|-----------|---------|
-| **Pulsing indigo dot** | An agent is actively working (generating output). Tooltip: *"Agent is working"*. |
-| **Static yellow dot** | An agent is idle — waiting for your input. Tooltip: *"Agent is waiting for input"*. |
-| **No dot** | No agent session running, or the agent tab has not been used yet. |
+|---|---|
+| **Pulsing accent dot** | An agent is actively working |
+| **Static yellow dot** | An agent is waiting for input |
+| **No dot** | No active/idle agent session for that scope |
 
-### Runner Status (on runner rows)
+### Runner status
 
 | Indicator | Meaning |
-|-----------|---------|
-| **Pulsing green dot** | Runner command is actively running. Tooltip: *"Run command active"*. |
-| **Static gray dot** | Runner command has stopped/exited. |
-| **No dot** | Runner has not been started. |
+|---|---|
+| **Pulsing green dot** | Runner is running |
+| **Static grey dot** | Runner has stopped |
+| **No dot** | Runner has not been started |
 
-### PR Check Status (in PR tab)
+### PR checks
 
 | Icon | Meaning |
-|------|---------|
-| **✅ Green checkmark** | Check passed successfully. |
-| **❌ Red X** | Check failed. |
-| **⏳ Gray circle** | Check is pending or queued. |
-| **🔄 Spinning icon** | Check is in progress. |
+|---|---|
+| **Green check** | Success |
+| **Red X** | Failure |
+| **Grey dot/circle** | Pending or queued |
+| **Spinning indicator** | In progress |
 
-### File Status Badges (in changes panel)
+### File status badges
 
-| Badge | Colour | Meaning |
-|-------|--------|---------|
-| **M** | Yellow | Modified |
-| **A** | Green | Added |
-| **D** | Red | Deleted |
-| **R** | Blue | Renamed |
-| **??** | Gray | Untracked (new file not yet staged) |
-
----
-
-## Drag & Drop
-
-You can drag files from your system file manager and drop them onto a terminal view. The file path will be written into the terminal as text, making it easy to reference files in commands.
+| Badge | Meaning |
+|---|---|
+| **M** | Modified |
+| **A** | Added |
+| **D** | Deleted |
+| **R** | Renamed |
+| **??** | Untracked |
 
 ---
 
 ## Tips
 
-- **Multiple branches at once**: Create multiple worktrees for the same project to work on several branches simultaneously, each with its own terminal sessions and runners.
-- **Quick PR iteration**: Use the PR tab to see check failures and review comments, then click "Fix with Claude" to have Claude address them directly.
-- **Bulk comment fixing**: Select multiple unresolved PR comments and fix them all at once with a single Claude instruction.
-- **Target branch**: Set the target branch per-worktree to compare against a branch other than `main` (useful for stacked PRs).
-- **Setup automation**: Configure setup scripts and env files in project settings so new worktrees are ready to use immediately after creation.
-- **Runner shortcuts**: Expand a runner to see its output inline without switching tabs.
+- **Use Scratchpad for planning** when you want an agent session that is not tied to a specific repo worktree.
+- **Use target branches per worktree** for stacked PR workflows.
+- **Use Tile view** when you want several agent sessions visible at once.
+- **Keep Setup scripts and env-file copying configured** so new worktrees are ready immediately.
+- **Use the Files tab before opening a PR** to review the whole branch against its target branch.
+- **Remember that “Fix with Claude” actions follow your current app mode** and may open an Agent tab rather than only a CLI session.
+- **Use CLI tabs for raw terminal-based Claude workflows** and Agent tabs for the integrated permission/model/tools UI.
