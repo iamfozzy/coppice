@@ -47,9 +47,9 @@ export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDen
               <line x1="7" y1="5.5" x2="7" y2="8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               <circle cx="7" cy="10.5" r="0.6" fill="currentColor" />
             </svg>
-            <span className="text-[11px] font-semibold text-warning">Plan Approval Required</span>
+            <span className="text-[length:var(--app-font-11)] font-semibold text-warning">Plan Approval Required</span>
           </div>
-          <span className="text-[10px] font-mono text-text-tertiary">{pending.toolName}</span>
+          <span className="text-[length:var(--app-font-10)] font-mono text-text-tertiary">{pending.toolName}</span>
         </div>
 
         {/* Plan content — renders fully, no inner scroll */}
@@ -57,16 +57,16 @@ export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDen
           {draftPlan.trim() ? (
             <MarkdownContent text={draftPlan} worktreePath={worktreePath} />
           ) : (
-            <p className="text-[12px] text-text-tertiary">No plan text found in payload. See raw payload below.</p>
+            <p className="text-[length:var(--app-font-12)] text-text-tertiary">No plan text found in payload. See raw payload below.</p>
           )}
         </div>
 
         {/* Collapsible raw payload */}
         <details className="border-t border-warning/15">
-          <summary className="px-3 py-1.5 text-[10px] text-text-tertiary cursor-pointer select-none uppercase tracking-wider hover:text-text-secondary transition-colors">
+          <summary className="px-3 py-1.5 text-[length:var(--app-font-10)] text-text-tertiary cursor-pointer select-none uppercase tracking-wider hover:text-text-secondary transition-colors">
             Raw payload
           </summary>
-          <pre className="px-3 py-2 border-t border-border-primary text-[11px] text-text-secondary whitespace-pre-wrap break-all leading-relaxed">
+          <pre className="px-3 py-2 border-t border-border-primary text-[length:var(--app-font-11)] text-text-secondary whitespace-pre-wrap break-all leading-relaxed">
             {JSON.stringify(pending.toolInput, null, 2)}
           </pre>
         </details>
@@ -77,24 +77,24 @@ export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDen
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
             placeholder="Request changes (optional)..."
-            className="w-full min-h-[60px] resize-y rounded-md border border-border-primary bg-bg-tertiary px-2.5 py-2 text-[12px] text-text-primary leading-relaxed placeholder:text-text-tertiary"
+            className="w-full min-h-[60px] resize-y rounded-md border border-border-primary bg-bg-tertiary px-2.5 py-2 text-[length:var(--app-font-12)] text-text-primary leading-relaxed placeholder:text-text-tertiary"
           />
           <div className="flex items-center gap-2">
             <button
-              className="px-3 py-1.5 text-[11px] font-medium rounded-md bg-accent hover:bg-accent-hover text-white transition-colors"
+              className="px-3 py-1.5 text-[length:var(--app-font-11)] font-medium rounded-md bg-accent hover:bg-accent-hover text-white transition-colors"
               onClick={handleApprove}
             >
               Approve Plan
             </button>
             <button
-              className="px-3 py-1.5 text-[11px] font-medium rounded-md bg-bg-tertiary border border-border-primary text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              className="px-3 py-1.5 text-[length:var(--app-font-11)] font-medium rounded-md bg-bg-tertiary border border-border-primary text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               onClick={handleRequestChanges}
               disabled={!feedback.trim()}
             >
               Request Changes
             </button>
             <button
-              className="px-3 py-1.5 text-[11px] font-medium rounded-md bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
+              className="px-3 py-1.5 text-[length:var(--app-font-11)] font-medium rounded-md bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
               onClick={onDeny}
             >
               Deny

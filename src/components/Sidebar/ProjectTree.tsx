@@ -156,7 +156,7 @@ function ProjectNode({
     <div>
       {/* Project header */}
       <div
-        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors group cursor-pointer"
+        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[length:var(--app-font-10)] font-medium uppercase tracking-wide text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors group cursor-pointer"
         onClick={() => !searchOpen && onToggleCollapse()}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -174,7 +174,7 @@ function ProjectNode({
         {searchOpen ? (
           <input
             ref={searchInputRef}
-            className="flex-1 min-w-0 bg-transparent border-b border-accent text-[11px] font-normal normal-case tracking-normal text-text-primary placeholder:text-text-tertiary focus:outline-none font-mono py-0.5"
+            className="flex-1 min-w-0 bg-transparent border-b border-accent text-[length:var(--app-font-11)] font-normal normal-case tracking-normal text-text-primary placeholder:text-text-tertiary focus:outline-none font-mono py-0.5"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -250,7 +250,7 @@ function ProjectNode({
         return (
         <div>
           {filtered.length === 0 ? (
-            <div className="pl-8 pr-3 py-1 text-[11px] text-text-tertiary">
+            <div className="pl-8 pr-3 py-1 text-[length:var(--app-font-11)] text-text-tertiary">
               {searchQuery ? "No matching branches" : "No worktrees"}
             </div>
           ) : (
@@ -262,7 +262,7 @@ function ProjectNode({
               return (
               <div
                 key={wt.id}
-                className={`flex items-center gap-2 pl-3 pr-3 py-1.5 text-[11px] transition-colors group/wt ${
+                className={`flex items-center gap-2 pl-3 pr-3 py-1.5 text-[length:var(--app-font-11)] transition-colors group/wt ${
                   isDeleting
                     ? "opacity-40 pointer-events-none"
                     : isSelected
@@ -314,7 +314,7 @@ function ProjectNode({
 function TabCountIndicator({ count }: { count: number }) {
   return (
     <span
-      className="shrink-0 text-[9px] leading-none text-text-tertiary"
+      className="shrink-0 text-[length:var(--app-font-9)] leading-none text-text-tertiary"
       title={`${count} tabs open`}
     >
       {count}

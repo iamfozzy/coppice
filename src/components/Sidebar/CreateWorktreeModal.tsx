@@ -275,7 +275,7 @@ export function CreateWorktreeModal({ projectId, onClose, onCreated }: Props) {
               >
                 <span className="font-mono truncate">{branch}</span>
                 {branch === defaultBranch && (
-                  <span className="text-[10px] uppercase tracking-wide text-text-tertiary shrink-0">
+                  <span className="text-[length:var(--app-font-10)] uppercase tracking-wide text-text-tertiary shrink-0">
                     default
                   </span>
                 )}

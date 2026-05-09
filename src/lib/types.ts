@@ -60,6 +60,7 @@ export interface AppSettings {
   claude_command: string;
   terminal_font_family: string;
   terminal_font_size: number;
+  app_font_size: number;
   terminal_emulator: string;
   shell: string;
   theme: ThemeMode;

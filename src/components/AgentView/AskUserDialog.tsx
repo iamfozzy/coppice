@@ -35,18 +35,18 @@ export function AskUserDialog({ pending, onSubmit }: Props) {
           <path d="M5 5.5a2 2 0 013.5 1.5c0 1-1.5 1.2-1.5 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" className="text-accent" />
           <circle cx="7" cy="10.5" r="0.6" fill="currentColor" className="text-accent" />
         </svg>
-        <span className="text-[11px] font-medium text-accent">Agent has a question</span>
+        <span className="text-[length:var(--app-font-11)] font-medium text-accent">Agent has a question</span>
       </div>
 
       <div className="px-3 py-2 space-y-3 overflow-y-auto min-h-0">
         {pending.questions.map((q) => (
           <div key={q.question} className="space-y-1.5">
-            <div className="text-[12px] text-text-primary font-medium">{q.question}</div>
+            <div className="text-[length:var(--app-font-12)] text-text-primary font-medium">{q.question}</div>
             <div className="space-y-1">
               {q.options.map((opt) => (
                 <label
                   key={opt.label}
-                  className={`flex items-start gap-2 px-2.5 py-1.5 rounded-md cursor-pointer transition-colors text-[11px] ${
+                  className={`flex items-start gap-2 px-2.5 py-1.5 rounded-md cursor-pointer transition-colors text-[length:var(--app-font-11)] ${
                     selections[q.question] === opt.label
                       ? "bg-accent/10 border border-accent/25"
                       : "bg-bg-tertiary/60 border border-border-primary hover:bg-bg-hover"
@@ -62,7 +62,7 @@ export function AskUserDialog({ pending, onSubmit }: Props) {
                   <div>
                     <div className="text-text-primary">{opt.label}</div>
                     {opt.description && (
-                      <div className="text-[10px] text-text-tertiary mt-0.5">{opt.description}</div>
+                      <div className="text-[length:var(--app-font-10)] text-text-tertiary mt-0.5">{opt.description}</div>
                     )}
                   </div>
                 </label>
@@ -71,7 +71,7 @@ export function AskUserDialog({ pending, onSubmit }: Props) {
               <div className="mt-1.5">
                 <input
                   type="text"
-                  className="w-full px-2.5 py-1.5 text-[11px] bg-bg-tertiary/60 border border-border-primary rounded-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/20 transition-all"
+                  className="w-full px-2.5 py-1.5 text-[length:var(--app-font-11)] bg-bg-tertiary/60 border border-border-primary rounded-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/20 transition-all"
                   placeholder="Or type your own answer..."
                   value={customText[q.question] || ""}
                   onChange={(e) =>
@@ -90,7 +90,7 @@ export function AskUserDialog({ pending, onSubmit }: Props) {
         ))}
 
         <button
-          className="px-3 py-1 text-[11px] font-medium rounded-md bg-accent hover:bg-accent-hover text-white transition-colors"
+          className="px-3 py-1 text-[length:var(--app-font-11)] font-medium rounded-md bg-accent hover:bg-accent-hover text-white transition-colors"
           onClick={handleSubmit}
         >
           Submit

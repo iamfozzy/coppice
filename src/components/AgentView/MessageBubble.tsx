@@ -20,7 +20,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onCancel, wo
               : "bg-accent/10 border border-accent/20"
           }`}>
             {message.isQueued && (
-              <div className="flex items-center gap-1 mb-1 text-[10px] text-amber-400 font-medium">
+              <div className="flex items-center gap-1 mb-1 text-[length:var(--app-font-10)] text-amber-400 font-medium">
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                   <circle cx="5" cy="5" r="4" stroke="currentColor" strokeWidth="1" />
                   <path d="M5 2.5v3l1.5 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
@@ -57,7 +57,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onCancel, wo
       return (
         <div className="flex items-center gap-2 py-0.5">
           <div className="flex-1 h-px bg-border-primary" />
-          <span className="text-[10px] text-text-tertiary shrink-0 flex items-center gap-1.5">
+          <span className="text-[length:var(--app-font-10)] text-text-tertiary shrink-0 flex items-center gap-1.5">
             {message.content}
             {message.mcpServers && message.mcpServers.length > 0 && (
               <McpTooltip servers={message.mcpServers} />
@@ -71,7 +71,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onCancel, wo
       return (
         <div className="pr-8">
           <div className="rounded-lg border border-border-primary bg-bg-secondary/40 overflow-hidden">
-            <div className="px-3 py-1 bg-bg-secondary/60 border-b border-border-primary text-[10px] text-text-tertiary font-mono uppercase tracking-wider">
+            <div className="px-3 py-1 bg-bg-secondary/60 border-b border-border-primary text-[length:var(--app-font-10)] text-text-tertiary font-mono uppercase tracking-wider">
               slash command output
             </div>
             <div className="px-3 py-2">
@@ -131,7 +131,7 @@ function McpDropdown({
       <button
         onClick={() => setOpen(!open)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors ${
+        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[length:var(--app-font-9)] font-medium transition-colors ${
           isConnected
             ? "bg-green-500/10 text-green-400 hover:bg-green-500/20"
             : "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
@@ -143,11 +143,11 @@ function McpDropdown({
       </button>
       {open && (
         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 z-50 min-w-[140px] bg-bg-secondary border border-border-primary rounded-lg shadow-lg py-1.5 px-2">
-          <div className="text-[9px] text-text-tertiary uppercase tracking-wider mb-1">
+          <div className="text-[length:var(--app-font-9)] text-text-tertiary uppercase tracking-wider mb-1">
             {isConnected ? "Connected" : "Pending"}
           </div>
           {servers.map((s, i) => (
-            <div key={i} className="flex items-center gap-1.5 py-0.5 text-[10px]">
+            <div key={i} className="flex items-center gap-1.5 py-0.5 text-[length:var(--app-font-10)]">
               <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-green-400" : "bg-amber-400"}`} />
               <span className="text-text-secondary truncate">{s.name}</span>
             </div>
@@ -168,7 +168,7 @@ function ThinkingBlock({ text }: { text: string }) {
     <div className="mb-2">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-[11px] text-text-tertiary hover:text-text-secondary transition-colors"
+        className="flex items-center gap-1.5 text-[length:var(--app-font-11)] text-text-tertiary hover:text-text-secondary transition-colors"
       >
         <svg
           width="10" height="10" viewBox="0 0 10 10" fill="none"

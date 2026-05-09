@@ -171,7 +171,7 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
 
   if (!checked) {
     return (
-      <div className="px-3 py-2 text-[11px] text-text-tertiary flex items-center gap-1.5">
+      <div className="px-3 py-2 text-[length:var(--app-font-11)] text-text-tertiary flex items-center gap-1.5">
         <svg className="animate-spin h-3 w-3" viewBox="0 0 12 12" fill="none">
           <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.5" opacity="0.25" />
           <path d="M6 1a5 5 0 014.33 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -184,7 +184,7 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
   if (error) {
     return (
       <div className="px-3 py-2">
-        <p className="text-[11px] text-text-tertiary">
+        <p className="text-[length:var(--app-font-11)] text-text-tertiary">
           Could not fetch PR info (is <code className="text-text-secondary">gh</code> installed?)
         </p>
       </div>
@@ -205,7 +205,7 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
               href={pr.url}
               target="_blank"
               rel="noopener"
-              className="text-[11px] text-accent hover:text-accent-hover truncate flex-1"
+              className="text-[length:var(--app-font-11)] text-accent hover:text-accent-hover truncate flex-1"
             >
               #{pr.number} {pr.title}
             </a>
@@ -228,12 +228,12 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
                 <path d="M6 1L1 10h10L6 1z" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinejoin="round" />
                 <path d="M6 5v2M6 8.5v.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               </svg>
-              <span className="text-[11px] text-error flex-1">Merge conflicts</span>
+              <span className="text-[length:var(--app-font-11)] text-error flex-1">Merge conflicts</span>
               <button
                 onClick={() => onFixWithClaude(
                   `This PR (#${pr.number}) has merge conflicts with the base branch. Please merge the base branch into the current branch and resolve any conflicts.\n\nRun: git merge origin/HEAD\n\nThen resolve any conflicts, stage the files, and commit.`
                 )}
-                className="px-2 py-0.5 text-[10px] font-medium bg-error/20 text-error hover:bg-error/30 rounded transition-colors"
+                className="px-2 py-0.5 text-[length:var(--app-font-10)] font-medium bg-error/20 text-error hover:bg-error/30 rounded transition-colors"
               >
                 Resolve with Claude
               </button>
@@ -243,13 +243,13 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
           {/* Check runs — vertical list */}
           {checks.length > 0 && (
             <div className="space-y-0.5">
-              <div className="text-[10px] text-text-tertiary font-medium mb-1">Checks</div>
+              <div className="text-[length:var(--app-font-10)] text-text-tertiary font-medium mb-1">Checks</div>
               {checks.map((check) => (
-                <div key={check.name} className="flex items-center gap-1.5 text-[11px]">
+                <div key={check.name} className="flex items-center gap-1.5 text-[length:var(--app-font-11)]">
                   <CheckStatusIcon status={check.conclusion ?? check.status} />
                   <span className="truncate flex-1 text-text-secondary">{check.name}</span>
                   {check.url && (
-                    <a href={check.url} target="_blank" rel="noopener" className="text-text-tertiary hover:text-text-secondary text-[10px] shrink-0">
+                    <a href={check.url} target="_blank" rel="noopener" className="text-text-tertiary hover:text-text-secondary text-[length:var(--app-font-10)] shrink-0">
                       view
                     </a>
                   )}
@@ -258,7 +258,7 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
               {checks.some((c) => (c.conclusion ?? c.status) === "FAILURE") && (
                 <button
                   onClick={handleFixWithClaude}
-                  className="mt-1 px-2 py-0.5 text-[10px] font-medium bg-accent/20 text-accent hover:bg-accent/30 rounded transition-colors"
+                  className="mt-1 px-2 py-0.5 text-[length:var(--app-font-10)] font-medium bg-accent/20 text-accent hover:bg-accent/30 rounded transition-colors"
                 >
                   Fix with Claude
                 </button>
@@ -269,7 +269,7 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
           {/* Comments */}
           {comments.length > 0 && (
             <div className="space-y-1.5">
-              <div className="flex items-center gap-2 text-[10px] text-text-tertiary font-medium">
+              <div className="flex items-center gap-2 text-[length:var(--app-font-10)] text-text-tertiary font-medium">
                 <span>Comments ({comments.length})</span>
                 {selectedComments.size > 0 ? (
                   <>
@@ -320,14 +320,14 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
             {onCreatePR && (
               <button
                 onClick={onCreatePR}
-                className="px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors"
+                className="px-1.5 py-0.5 text-[length:var(--app-font-10)] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors"
               >
                 Create PR
               </button>
             )}
             <button
               onClick={handleManualRefresh}
-              className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors flex items-center gap-1"
+              className="text-[length:var(--app-font-11)] text-text-tertiary hover:text-text-secondary transition-colors flex items-center gap-1"
               disabled={refreshing}
             >
               {refreshing && (
@@ -411,7 +411,7 @@ function CommentCard({
 
   return (
     <div className={`bg-bg-tertiary rounded px-2 py-1.5 space-y-1 ${comment.is_resolved ? "opacity-50" : ""}`}>
-      <div className="flex items-center gap-1.5 text-[10px]">
+      <div className="flex items-center gap-1.5 text-[length:var(--app-font-10)]">
         {comment.is_resolved ? (
           <svg width="10" height="10" viewBox="0 0 10 10" className="text-success shrink-0">
             <path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
@@ -449,7 +449,7 @@ function CommentCard({
           )
         )}
         {comment.is_resolved && (
-          <span className="text-success text-[9px] font-medium">Resolved</span>
+          <span className="text-success text-[length:var(--app-font-9)] font-medium">Resolved</span>
         )}
         <a href={comment.url} target="_blank" rel="noopener" className="ml-auto text-text-tertiary hover:text-text-secondary shrink-0">
           <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
@@ -459,7 +459,7 @@ function CommentCard({
       </div>
       <div
         ref={bodyRef}
-        className={`text-[11px] text-text-secondary whitespace-pre-wrap break-words ${expanded ? "" : "line-clamp-4"}`}
+        className={`text-[length:var(--app-font-11)] text-text-secondary whitespace-pre-wrap break-words ${expanded ? "" : "line-clamp-4"}`}
       >
         {comment.body}
       </div>
@@ -467,7 +467,7 @@ function CommentCard({
         {(isTruncated || expanded) && (
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+            className="text-[length:var(--app-font-10)] text-text-tertiary hover:text-text-secondary transition-colors"
           >
             {expanded ? "Show less" : "Show more"}
           </button>
@@ -475,7 +475,7 @@ function CommentCard({
         {!comment.is_resolved && (
           <button
             onClick={onFixWithClaude}
-            className="text-[10px] text-accent hover:text-accent-hover transition-colors"
+            className="text-[length:var(--app-font-10)] text-accent hover:text-accent-hover transition-colors"
           >
             Fix with Claude
           </button>
@@ -483,7 +483,7 @@ function CommentCard({
         {onResolve && (
           <button
             onClick={() => onResolve(!comment.is_resolved)}
-            className="text-[10px] text-text-tertiary hover:text-text-secondary transition-colors ml-auto"
+            className="text-[length:var(--app-font-10)] text-text-tertiary hover:text-text-secondary transition-colors ml-auto"
           >
             {comment.is_resolved ? "Unresolve" : "Resolve"}
           </button>
@@ -496,7 +496,7 @@ function CommentCard({
 function PrStateBadge({ state, draft }: { state: string; draft: boolean }) {
   if (draft) {
     return (
-      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-text-tertiary/20 text-text-tertiary">
+      <span className="px-1.5 py-0.5 text-[length:var(--app-font-10)] font-medium rounded bg-text-tertiary/20 text-text-tertiary">
         Draft
       </span>
     );
@@ -508,7 +508,7 @@ function PrStateBadge({ state, draft }: { state: string; draft: boolean }) {
   };
   return (
     <span
-      className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${colors[state] ?? "bg-text-tertiary/20 text-text-tertiary"}`}
+      className={`px-1.5 py-0.5 text-[length:var(--app-font-10)] font-medium rounded ${colors[state] ?? "bg-text-tertiary/20 text-text-tertiary"}`}
     >
       {state}
     </span>

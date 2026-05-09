@@ -85,7 +85,7 @@ export function ModelConfigPopover({
             <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-text-tertiary">
               <path d="M8 1v4M4.5 3L8 5l3.5-2M1 6l7 4 7-4M1 10l7 4 7-4" />
             </svg>
-            <div className="min-w-0 text-[10px] font-medium text-text-primary truncate">
+            <div className="min-w-0 text-[length:var(--app-font-10)] font-medium text-text-primary truncate">
               {backend === "pi" ? `${providerLabel} · ${modelLabel}` : modelLabel}
             </div>
           </div>
@@ -308,7 +308,7 @@ export function McpStatusPopover({
         <rect x="2.5" y="9.5" width="11" height="4" rx="1.2" />
         <path d="M5.5 4.5h.01M8 4.5h.01M5.5 11.5h.01M8 11.5h.01" />
       </svg>
-      <span className="text-[10px] font-medium tabular-nums leading-none">{badgeText}</span>
+      <span className="text-[length:var(--app-font-10)] font-medium tabular-nums leading-none">{badgeText}</span>
     </button>
   );
 
@@ -318,7 +318,7 @@ export function McpStatusPopover({
       {open && (
         <div className={`absolute top-8 z-20 w-72 rounded-md border border-border-primary bg-bg-secondary shadow-xl p-1.5 ${dropdownAlign === "left" ? "left-0" : "right-0"}`}>
           <div className="mb-2 rounded-md border border-border-primary/60 bg-bg-primary/40 px-2 py-1.5">
-            <div className="flex items-center gap-1.5 text-[10px] font-medium text-text-primary">
+            <div className="flex items-center gap-1.5 text-[length:var(--app-font-10)] font-medium text-text-primary">
               <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-text-tertiary">
                 <rect x="2.5" y="2.5" width="11" height="4" rx="1.2" />
                 <rect x="2.5" y="9.5" width="11" height="4" rx="1.2" />
@@ -326,7 +326,7 @@ export function McpStatusPopover({
               </svg>
               <span className="truncate">MCP servers</span>
             </div>
-            <div className="mt-1 flex items-center gap-3 text-[9px] text-text-tertiary">
+            <div className="mt-1 flex items-center gap-3 text-[length:var(--app-font-9)] text-text-tertiary">
               <span>Configured {configuredEntries.length}</span>
               <span>Connected {connectedCount}</span>
               {errorCount > 0 && <span>Errors {errorCount}</span>}
@@ -334,7 +334,7 @@ export function McpStatusPopover({
               {disconnectedCount > 0 && <span>Need auth {disconnectedCount}</span>}
             </div>
             {!hasLiveStatus && (
-              <div className="mt-1 text-[9px] text-text-tertiary">
+              <div className="mt-1 text-[length:var(--app-font-9)] text-text-tertiary">
                 {oauthRows.length > 0
                   ? "Showing OAuth status. Live session status appears once an agent starts."
                   : "Connection status appears after an agent session starts."}
@@ -362,11 +362,11 @@ export function McpStatusPopover({
                 <div key={row.name} className="rounded-md border border-border-primary/60 bg-bg-primary/20 px-2 py-1.5">
                   <div className="flex items-start gap-2">
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[10px] font-medium text-text-primary">{row.name}</div>
-                      <div className="mt-0.5 text-[9px] text-text-tertiary">{transport}</div>
-                      <div className="truncate text-[9px] text-text-tertiary" title={endpoint}>{endpoint}</div>
+                      <div className="truncate text-[length:var(--app-font-10)] font-medium text-text-primary">{row.name}</div>
+                      <div className="mt-0.5 text-[length:var(--app-font-9)] text-text-tertiary">{transport}</div>
+                      <div className="truncate text-[length:var(--app-font-9)] text-text-tertiary" title={endpoint}>{endpoint}</div>
                     </div>
-                    <div className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium ${badgeClass}`} title={statusLabel}>
+                    <div className={`shrink-0 rounded px-1.5 py-0.5 text-[length:var(--app-font-9)] font-medium ${badgeClass}`} title={statusLabel}>
                       {statusLabel}
                     </div>
                   </div>
@@ -399,7 +399,7 @@ function InlineChipGroup({
 
   return (
     <div className="mb-2">
-      <label className="mb-1 block px-1 text-[9px] uppercase tracking-wide text-text-tertiary">{label}</label>
+      <label className="mb-1 block px-1 text-[length:var(--app-font-9)] uppercase tracking-wide text-text-tertiary">{label}</label>
       <div className="flex flex-wrap gap-1">
         {options.map((option) => {
           const active = option.value === selectedValue;
@@ -409,7 +409,7 @@ function InlineChipGroup({
               type="button"
               title={option.hint ? `${option.label} — ${option.hint}` : option.label}
               onClick={() => { void onSelect(option.value); }}
-              className={`max-w-full rounded-md border px-2 py-1 text-[10px] transition-colors ${active ? toneActiveClass : "border-border-primary bg-bg-tertiary text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
+              className={`max-w-full rounded-md border px-2 py-1 text-[length:var(--app-font-10)] transition-colors ${active ? toneActiveClass : "border-border-primary bg-bg-tertiary text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
             >
               <span className="block truncate">{option.label}</span>
             </button>
@@ -456,7 +456,7 @@ function InlineOptionList({
 
   return (
     <div>
-      <label className="mb-1 block px-1 text-[9px] uppercase tracking-wide text-text-tertiary">{label}</label>
+      <label className="mb-1 block px-1 text-[length:var(--app-font-9)] uppercase tracking-wide text-text-tertiary">{label}</label>
       <div className="rounded-md border border-border-primary bg-bg-tertiary/40">
         {showSearch && (
           <div className="px-1.5 pt-1.5 pb-1">
@@ -466,7 +466,7 @@ function InlineOptionList({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search models..."
-              className="w-full px-2 py-1 text-[10px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+              className="w-full px-2 py-1 text-[length:var(--app-font-10)] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
             />
           </div>
         )}
@@ -481,14 +481,14 @@ function InlineOptionList({
                 onClick={() => { void onSelect(option.value); }}
                 className={`w-full px-2.5 py-1 text-left transition-colors ${active ? toneActiveClass : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
               >
-                <div className="truncate text-[10px] font-medium">{option.label || emptyLabel || "Select"}</div>
+                <div className="truncate text-[length:var(--app-font-10)] font-medium">{option.label || emptyLabel || "Select"}</div>
                 {option.hint && (
-                  <div className="truncate text-[9px] text-text-tertiary">{option.hint}</div>
+                  <div className="truncate text-[length:var(--app-font-9)] text-text-tertiary">{option.hint}</div>
                 )}
               </button>
             );
           }) : (
-            <div className="px-2.5 py-1.5 text-[10px] text-text-tertiary">{search ? "No matches" : (emptyLabel || "No options")}</div>
+            <div className="px-2.5 py-1.5 text-[length:var(--app-font-10)] text-text-tertiary">{search ? "No matches" : (emptyLabel || "No options")}</div>
           )}
         </div>
       </div>

@@ -102,7 +102,7 @@ export function AgentControls({
         side="top"
       >
         <button
-          className={`px-2 py-1 rounded-md text-[11px] font-semibold uppercase border transition-colors ${
+          className={`px-2 py-1 rounded-md text-[length:var(--app-font-11)] font-semibold uppercase border transition-colors ${
             isPiBackend
               ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
               : "bg-orange-500/10 text-orange-400 border-orange-500/20"
@@ -121,7 +121,7 @@ export function AgentControls({
       {supports1M && (
         <Tooltip text={extendedContext ? "1M context: ON — extended window enabled" : "1M context: OFF — using default 200K window"} side="top">
           <button
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[length:var(--app-font-11)] ${
               extendedContext
                 ? "border-accent bg-accent/10 text-accent"
                 : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
@@ -145,7 +145,7 @@ export function AgentControls({
       {/* Concise mode toggle */}
       <Tooltip text={conciseMode ? "Concise mode: ON — minimal tokens" : "Concise mode: OFF — normal responses"} side="top">
         <button
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[length:var(--app-font-11)] ${
             conciseMode
               ? "border-accent bg-accent/10 text-accent"
               : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
@@ -162,7 +162,7 @@ export function AgentControls({
       {/* Chat mode toggle */}
       <Tooltip text={chatMode ? "Chat mode: ON — no tools, lower cost" : "Chat mode: OFF — full agent with tools"} side="top">
         <button
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition-colors text-[length:var(--app-font-11)] ${
             chatMode
               ? "border-accent bg-accent/10 text-accent"
               : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
@@ -179,7 +179,7 @@ export function AgentControls({
       {permissionMode === "plan" && (
         <Tooltip text="Exit plan mode and return to default permissions" side="top">
           <button
-            className="ml-1 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1 text-[11px] text-warning hover:bg-warning/15 transition-colors"
+            className="ml-1 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1 text-[length:var(--app-font-11)] text-warning hover:bg-warning/15 transition-colors"
             onClick={() => onPermissionModeChange("default")}
           >
             Plan mode — Exit
@@ -215,8 +215,8 @@ function ModelPickerRow({
       onClick={onClick}
     >
       <div className="min-w-0 flex-1">
-        <div className="text-[9px] uppercase tracking-wide text-text-tertiary">{label}</div>
-        <div className="truncate text-[11px] text-text-primary">{value}</div>
+        <div className="text-[length:var(--app-font-9)] uppercase tracking-wide text-text-tertiary">{label}</div>
+        <div className="truncate text-[length:var(--app-font-11)] text-text-primary">{value}</div>
       </div>
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="shrink-0 text-text-tertiary">
         <path d="M3.5 2l3 3-3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
@@ -379,7 +379,7 @@ export function ModelPicker({
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Search models..."
-        className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+        className="w-full px-2 py-1 text-[length:var(--app-font-11)] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
       />
     </div>
   );
@@ -406,13 +406,13 @@ export function ModelPicker({
               }
             }}
             placeholder="provider/model-id"
-            className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+            className="w-full px-2 py-1 text-[length:var(--app-font-11)] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
           />
-          <p className="mt-1 text-[9px] text-text-tertiary">Enter to confirm</p>
+          <p className="mt-1 text-[length:var(--app-font-9)] text-text-tertiary">Enter to confirm</p>
         </div>
       ) : (
         <button
-          className="w-full text-left px-3 py-1.5 text-[11px] text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+          className="w-full text-left px-3 py-1.5 text-[length:var(--app-font-11)] text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
           onClick={() => {
             setCustomInput(true);
             setCustomValue(matchedPreset ? "" : model);
@@ -432,7 +432,7 @@ export function ModelPicker({
           return (
             <div key={group.provider}>
               <button
-                className={`w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                className={`w-full flex items-center justify-between px-3 py-1.5 text-[length:var(--app-font-11)] font-medium transition-colors ${
                   currentProvider === group.provider
                     ? "text-accent"
                     : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -451,7 +451,7 @@ export function ModelPicker({
                     return (
                       <button
                         key={candidate.value}
-                        className={`w-full text-left pl-6 pr-3 py-1 text-[11px] transition-colors ${
+                        className={`w-full text-left pl-6 pr-3 py-1 text-[length:var(--app-font-11)] transition-colors ${
                           isActive ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                         }`}
                         onClick={() => handleSelect(isPiBackend && candidate.provider ? `${candidate.provider}/${candidate.value}` : candidate.value)}
@@ -465,13 +465,13 @@ export function ModelPicker({
             </div>
           );
         }) : (
-          <div className="px-3 py-2 text-[11px] text-text-tertiary">{search ? "No matches" : "No models available"}</div>
+          <div className="px-3 py-2 text-[length:var(--app-font-11)] text-text-tertiary">{search ? "No matches" : "No models available"}</div>
         )
       ) : (
         filteredModels.length > 0 ? filteredModels.map((candidate) => (
           <button
             key={candidate.value}
-            className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
+            className={`w-full text-left px-3 py-1.5 text-[length:var(--app-font-11)] transition-colors ${
               (candidate.value === model || (candidate.provider && `${candidate.provider}/${candidate.value}` === model))
                 ? "bg-accent/10 text-accent"
                 : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -481,7 +481,7 @@ export function ModelPicker({
             {candidate.label}
           </button>
         )) : (
-          <div className="px-3 py-2 text-[11px] text-text-tertiary">No matches</div>
+          <div className="px-3 py-2 text-[length:var(--app-font-11)] text-text-tertiary">No matches</div>
         )
       )}
       {customModelFooter}
@@ -500,7 +500,7 @@ export function ModelPicker({
   return (
     <div className="relative" ref={ref}>
       <button
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors text-[11px]"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors text-[length:var(--app-font-11)]"
         onClick={() => setOpen((value) => !value)}
       >
         <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -545,11 +545,11 @@ export function ModelPicker({
                     <path d="M6.5 2L3.5 5l3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </button>
-                <div className="min-w-0 flex-1 text-[11px] font-medium text-text-primary">
+                <div className="min-w-0 flex-1 text-[length:var(--app-font-11)] font-medium text-text-primary">
                   {panel === "provider" ? "Provider" : "Model"}
                 </div>
                 {panel === "model" && isPiBackend && (
-                  <div className="max-w-[96px] truncate text-[10px] text-text-tertiary">{currentProviderLabel}</div>
+                  <div className="max-w-[96px] truncate text-[length:var(--app-font-10)] text-text-tertiary">{currentProviderLabel}</div>
                 )}
               </div>
 
@@ -561,7 +561,7 @@ export function ModelPicker({
                       <button
                         key={provider}
                         type="button"
-                        className={`w-full rounded-md px-2.5 py-2 text-left text-[11px] transition-colors ${
+                        className={`w-full rounded-md px-2.5 py-2 text-left text-[length:var(--app-font-11)] transition-colors ${
                           active
                             ? "bg-accent/10 text-accent"
                             : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -584,7 +584,7 @@ export function ModelPicker({
                         <button
                           key={fullValue}
                           type="button"
-                          className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
+                          className={`w-full text-left px-3 py-1.5 text-[length:var(--app-font-11)] transition-colors ${
                             isActive
                               ? "bg-accent/10 text-accent"
                               : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -595,7 +595,7 @@ export function ModelPicker({
                         </button>
                       );
                     }) : (
-                      <div className="px-3 py-2 text-[11px] text-text-tertiary">{search ? "No matches" : "No models available"}</div>
+                      <div className="px-3 py-2 text-[length:var(--app-font-11)] text-text-tertiary">{search ? "No matches" : "No models available"}</div>
                     )}
                     {customModelFooter}
                   </div>
@@ -649,7 +649,7 @@ export function EffortPicker({
     return (
       <button
         key={level.value}
-        className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
+        className={`w-full text-left px-3 py-1.5 text-[length:var(--app-font-11)] transition-colors ${
           isActive
             ? "bg-accent/10 text-accent"
             : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -668,7 +668,7 @@ export function EffortPicker({
   return (
     <div className="relative" ref={ref}>
       <button
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors text-[11px]"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors text-[length:var(--app-font-11)]"
         onClick={() => setOpen(!open)}
       >
         <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -718,7 +718,7 @@ function PermissionModePicker({
   return (
     <div className="relative" ref={ref}>
       <button
-        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-colors text-[11px] ${
+        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-colors text-[length:var(--app-font-11)] ${
           isHighlight
             ? "border-accent bg-accent/10 text-accent"
             : "border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
@@ -760,7 +760,7 @@ function PermissionModePicker({
           {PERMISSION_MODES.map((m) => (
             <button
               key={m.value}
-              className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
+              className={`w-full text-left px-3 py-1.5 text-[length:var(--app-font-11)] transition-colors ${
                 m.value === mode
                   ? "bg-accent/10 text-accent"
                   : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"

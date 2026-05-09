@@ -49,18 +49,18 @@ const CloseConfirmationPopover = memo(function CloseConfirmationPopover({
         onContextMenu={(event) => event.preventDefault()}
       >
         <div className="text-xs font-semibold text-text-primary">Agent is still working</div>
-        <p className="mt-1 text-[11px] leading-4 text-text-tertiary">
+        <p className="mt-1 text-[length:var(--app-font-11)] leading-4 text-text-tertiary">
           Close “{pendingClose.label}” and stop this active session?
         </p>
         <div className="mt-3 flex justify-end gap-2">
           <button
-            className="rounded px-2 py-1 text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+            className="rounded px-2 py-1 text-[length:var(--app-font-11)] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
             onClick={onCancel}
           >
             Cancel
           </button>
           <button
-            className="rounded bg-error/15 px-2 py-1 text-[11px] text-error transition-colors hover:bg-error/25"
+            className="rounded bg-error/15 px-2 py-1 text-[length:var(--app-font-11)] text-error transition-colors hover:bg-error/25"
             onClick={onConfirm}
           >
             Close tab

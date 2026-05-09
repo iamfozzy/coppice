@@ -9,6 +9,7 @@ import {
   MONACO_DARK_RULES, MONACO_DARK_COLORS, MONACO_DIM_COLORS, MONACO_ATOM_COLORS,
   MONACO_LIGHT_RULES, MONACO_LIGHT_COLORS,
 } from "../../lib/theme";
+import { DEFAULT_APP_FONT_SIZE, getScaledFontSize } from "../../lib/fontScale";
 
 interface Props {
   cwd: string;
@@ -93,14 +94,14 @@ function createCommentZoneNode(lineComments: PrComment[]): HTMLDivElement {
     header.style.cssText =
       "display: flex; align-items: center; gap: 6px; margin-bottom: 3px;";
     header.innerHTML = `
-      <strong style="color: #e5c07b; font-size: 11px;">${escapeHtml(comment.author)}</strong>
-      ${resolved ? '<span style="color: #98c379; font-size: 10px;">Resolved</span>' : ""}
+      <strong style="color: #e5c07b; font-size: var(--app-font-11);">${escapeHtml(comment.author)}</strong>
+      ${resolved ? '<span style="color: #98c379; font-size: var(--app-font-10);">Resolved</span>' : ""}
     `;
 
     const body = document.createElement("div");
     body.style.cssText = `
       color: #9da5b4;
-      font-size: 11px;
+      font-size: var(--app-font-11);
       line-height: 1.4;
       white-space: pre-wrap;
       word-break: break-word;
@@ -113,7 +114,7 @@ function createCommentZoneNode(lineComments: PrComment[]): HTMLDivElement {
     const toggle = document.createElement("button");
     toggle.style.cssText = `
       color: #5c6370;
-      font-size: 10px;
+      font-size: var(--app-font-10);
       background: none;
       border: none;
       cursor: pointer;
@@ -321,17 +322,19 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
 
   const language = getLanguage(file);
   const commentCount = comments?.filter((c) => c.line).length ?? 0;
+  const appFontSize = appSettings?.app_font_size ?? DEFAULT_APP_FONT_SIZE;
+  const diffFontSize = appSettings?.terminal_font_size || getScaledFontSize(12, appFontSize);
 
   return (
     <div className="h-full flex flex-col">
       {/* File header */}
       <div className="flex items-center gap-2 px-4 py-1.5 bg-bg-secondary border-b border-border-primary shrink-0">
         <span className="text-xs text-text-primary font-medium font-mono">{file}</span>
-        <span className="text-[11px] text-text-tertiary">
+        <span className="text-[length:var(--app-font-11)] text-text-tertiary">
           {mode === "pr" ? `vs ${baseBranch ?? "main"}` : "uncommitted changes (vs HEAD)"}
         </span>
         {commentCount > 0 && (
-          <span className="text-[10px] text-accent px-1.5 py-0.5 bg-accent/10 rounded">
+          <span className="text-[length:var(--app-font-10)] text-accent px-1.5 py-0.5 bg-accent/10 rounded">
             {commentCount} comment{commentCount !== 1 ? "s" : ""}
           </span>
         )}
@@ -351,8 +354,8 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
             fontFamily: appSettings?.terminal_font_family
               ? `'${appSettings.terminal_font_family}', 'JetBrains Mono', monospace`
               : "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-            fontSize: appSettings?.terminal_font_size || 12,
-            lineHeight: 18,
+            fontSize: diffFontSize,
+            lineHeight: Math.round(diffFontSize * 1.5),
             scrollBeyondLastLine: false,
             automaticLayout: true,
             renderOverviewRuler: true,

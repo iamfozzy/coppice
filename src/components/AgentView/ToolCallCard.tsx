@@ -156,8 +156,8 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
             <>
               {toolInput != null && !isSubagent && (
                 <div>
-                  <span className="text-text-tertiary text-[10px] uppercase tracking-wider font-medium">Input</span>
-                  <pre className="mt-0.5 text-text-secondary font-mono text-[11px] whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-bg-tertiary/60 rounded px-2 py-1.5 leading-relaxed">
+                  <span className="text-text-tertiary text-[length:var(--app-font-10)] uppercase tracking-wider font-medium">Input</span>
+                  <pre className="mt-0.5 text-text-secondary font-mono text-[length:var(--app-font-11)] whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-bg-tertiary/60 rounded px-2 py-1.5 leading-relaxed">
                     {typeof toolInput === "string" ? toolInput : JSON.stringify(toolInput, null, 2)}
                   </pre>
                 </div>
@@ -179,10 +179,10 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
 
           {toolOutput && (
             <div>
-              <span className={`text-[10px] uppercase tracking-wider font-medium ${isError ? "text-error" : "text-text-tertiary"}`}>
+              <span className={`text-[length:var(--app-font-10)] uppercase tracking-wider font-medium ${isError ? "text-error" : "text-text-tertiary"}`}>
                 {isError ? "Error" : "Output"}
               </span>
-              <pre className={`mt-0.5 font-mono text-[11px] whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-bg-tertiary/60 rounded px-2 py-1.5 leading-relaxed ${
+              <pre className={`mt-0.5 font-mono text-[length:var(--app-font-11)] whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-bg-tertiary/60 rounded px-2 py-1.5 leading-relaxed ${
                 isError ? "text-error/80" : "text-text-secondary"
               }`}>
                 {toolOutput}
@@ -202,7 +202,7 @@ function SubagentChildRow({ child }: { child: SubagentChild }) {
   const taskPreview = child.task ? truncate(child.task, 80) : "";
 
   return (
-    <div className="flex items-center gap-2 px-1.5 py-0.5 rounded font-mono text-[11px]">
+    <div className="flex items-center gap-2 px-1.5 py-0.5 rounded font-mono text-[length:var(--app-font-11)]">
       {child.status === "done" ? (
         <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
       ) : child.status === "error" ? (
@@ -272,7 +272,7 @@ function SubagentTaskSummary({ input }: { input: unknown }) {
       {entries.map((e, i) => {
         const label = e.role.charAt(0).toUpperCase() + e.role.slice(1);
         return (
-          <div key={i} className="flex items-center gap-2 px-1.5 py-0.5 font-mono text-[11px]">
+          <div key={i} className="flex items-center gap-2 px-1.5 py-0.5 font-mono text-[length:var(--app-font-11)]">
             <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
             <span className="text-text-tertiary">{label}</span>
             <span className="text-text-tertiary truncate">{truncate(e.task, 80)}</span>
@@ -322,8 +322,8 @@ function RichToolContent({ content, worktreePath }: { content: RichContent; work
     return (
       <div className="rounded-md border border-border-primary bg-bg-secondary/60 overflow-hidden">
         <div className="px-2.5 py-1.5 border-b border-border-primary flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-wider text-text-tertiary font-medium">Tasks</span>
-          <span className="text-[10px] text-text-tertiary font-mono">
+          <span className="text-[length:var(--app-font-10)] uppercase tracking-wider text-text-tertiary font-medium">Tasks</span>
+          <span className="text-[length:var(--app-font-10)] text-text-tertiary font-mono">
             {content.todos.filter((t) => t.status === "completed").length}/{content.todos.length} done
           </span>
         </div>
@@ -347,7 +347,7 @@ function RichToolContent({ content, worktreePath }: { content: RichContent; work
                   </svg>
                 )}
               </span>
-              <span className={`text-[11px] leading-relaxed ${
+              <span className={`text-[length:var(--app-font-11)] leading-relaxed ${
                 todo.status === "completed" ? "text-text-tertiary line-through" :
                 todo.status === "in_progress" ? "text-text-primary" :
                 "text-text-secondary"
@@ -365,10 +365,10 @@ function RichToolContent({ content, worktreePath }: { content: RichContent; work
     return (
       <div className="rounded-md border border-border-primary bg-bg-secondary/60 overflow-hidden">
         <div className="px-2.5 py-1.5 border-b border-border-primary flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-wider text-text-tertiary font-medium">Plan</span>
-          <span className="text-[10px] text-text-tertiary font-mono">{shortPath(content.filePath)}</span>
+          <span className="text-[length:var(--app-font-10)] uppercase tracking-wider text-text-tertiary font-medium">Plan</span>
+          <span className="text-[length:var(--app-font-10)] text-text-tertiary font-mono">{shortPath(content.filePath)}</span>
         </div>
-        <div className="px-2.5 py-2 max-h-80 overflow-y-auto text-[12px]">
+        <div className="px-2.5 py-2 max-h-80 overflow-y-auto text-[length:var(--app-font-12)]">
           <MarkdownContent text={content.markdown} worktreePath={worktreePath} />
         </div>
       </div>

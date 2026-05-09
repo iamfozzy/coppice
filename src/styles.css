@@ -26,6 +26,43 @@
 
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --text-xs: var(--app-font-12);
+  --text-sm: var(--app-font-14);
+  --text-base: var(--app-font-16);
+  --text-lg: var(--app-font-18);
+  --text-xl: var(--app-font-20);
+  --text-2xl: var(--app-font-24);
+  --text-3xl: var(--app-font-30);
+  --text-4xl: var(--app-font-36);
+  --text-5xl: var(--app-font-48);
+  --text-6xl: var(--app-font-60);
+  --text-7xl: var(--app-font-72);
+  --text-8xl: var(--app-font-96);
+  --text-9xl: var(--app-font-128);
+}
+
+:root {
+  --app-font-scale: 1;
+  --app-font-9: 9px;
+  --app-font-10: 10px;
+  --app-font-11: 11px;
+  --app-font-12: 12px;
+  --app-font-13: 13px;
+  --app-font-14: 14px;
+  --app-font-15: 15px;
+  --app-font-16: 16px;
+  --app-font-18: 18px;
+  --app-font-20: 20px;
+  --app-font-24: 24px;
+  --app-font-30: 30px;
+  --app-font-36: 36px;
+  --app-font-48: 48px;
+  --app-font-60: 60px;
+  --app-font-72: 72px;
+  --app-font-96: 96px;
+  --app-font-128: 128px;
+  --app-font-base: 16px;
 }
 
 /* ── Dim theme overrides — softer dark with slate-blue undertone ── */
@@ -101,6 +138,7 @@ body,
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
+  font-size: var(--app-font-base);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }

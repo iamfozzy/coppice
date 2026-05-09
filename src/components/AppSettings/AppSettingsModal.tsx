@@ -4,6 +4,7 @@ import { useAppStore } from "../../stores/appStore";
 import type { AppSettings, McpServerEntry, ThemeMode } from "../../lib/types";
 import { SUPPORTED_MODELS } from "../../lib/supportedModels";
 import { GitHubAuthSection } from "./GitHubAuthSection";
+import { normalizeAppFontSize } from "../../lib/fontScale";
 import {
   piGetModels,
   piOAuthLogin,
@@ -40,6 +41,7 @@ const defaultSettings: AppSettings = {
   claude_command: "",
   terminal_font_family: "",
   terminal_font_size: 0,
+  app_font_size: 16,
   terminal_emulator: "",
   shell: "",
   theme: "dim",
@@ -85,7 +87,7 @@ export function AppSettingsModal() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await saveSettings(form);
+      await saveSettings({ ...form, app_font_size: normalizeAppFontSize(form.app_font_size) });
       closeAppSettings();
     } finally {
       setSaving(false);
@@ -115,7 +117,7 @@ export function AppSettingsModal() {
 
         {/* Form */}
         <div className="px-6 py-5 space-y-5">
-          <p className="text-[11px] text-text-tertiary">
+          <p className="text-[length:var(--app-font-11)] text-text-tertiary">
             Global defaults. Leave blank to use platform defaults. Per-project settings override these.
           </p>
 
@@ -147,7 +149,14 @@ export function AppSettingsModal() {
             value={form.terminal_font_size ? String(form.terminal_font_size) : ""}
             onChange={(v) => setForm({ ...form, terminal_font_size: parseInt(v) || 0 })}
             placeholder="13"
-            hint="Font size in pixels"
+            hint="Font size in pixels. Leave blank to follow the app base font size."
+          />
+          <Field
+            label="Base font size"
+            value={String(form.app_font_size || 16)}
+            onChange={(v) => setForm({ ...form, app_font_size: parseInt(v) || 16 })}
+            placeholder="16"
+            hint="Base UI font size in pixels (10–24). All app text scales relative to this value."
           />
           <Field
             label="Terminal emulator"
@@ -184,7 +193,7 @@ export function AppSettingsModal() {
                 );
               })}
             </div>
-            <p className="mt-0.5 text-[10px] text-text-tertiary">
+            <p className="mt-0.5 text-[length:var(--app-font-10)] text-text-tertiary">
               {form.theme === "system"
                 ? "Follows your OS appearance setting"
                 : `Always use ${form.theme} mode`}
@@ -237,7 +246,7 @@ export function AppSettingsModal() {
                 );
               })}
             </div>
-            <p className="mt-1 text-[10px] text-text-tertiary">
+            <p className="mt-1 text-[length:var(--app-font-10)] text-text-tertiary">
               {form.default_claude_mode === "terminal"
                 ? "Runs Claude Code CLI in a PTY terminal (requires claude CLI installed)"
                 : (form.agent_backend || "claude") === "pi"
@@ -509,7 +518,7 @@ function PiAuthSection({ provider, form, setForm }: {
             type="button"
             onClick={handleOAuthLogin}
             disabled={oauthStatus === "pending"}
-            className={`px-3 py-1.5 text-[11px] font-medium rounded transition-colors ${
+            className={`px-3 py-1.5 text-[length:var(--app-font-11)] font-medium rounded transition-colors ${
               oauthStatus === "success"
                 ? "bg-green-500/15 text-green-400 border border-green-500/30"
                 : oauthStatus === "pending"
@@ -525,7 +534,7 @@ function PiAuthSection({ provider, form, setForm }: {
           {/* Device code — shown prominently for GitHub Copilot device flow */}
           {deviceCode && (
             <div className="mt-2.5 p-3 rounded bg-bg-tertiary border border-purple-500/30">
-              <p className="text-[11px] text-text-secondary mb-1">
+              <p className="text-[length:var(--app-font-11)] text-text-secondary mb-1">
                 Enter this code in your browser:
               </p>
               <p className="text-lg font-mono font-bold text-purple-400 tracking-widest select-all">
@@ -535,14 +544,14 @@ function PiAuthSection({ provider, form, setForm }: {
           )}
 
           {oauthMessage && !deviceCode && oauthStatus !== "idle" && (
-            <p className={`mt-1 text-[10px] ${
+            <p className={`mt-1 text-[length:var(--app-font-10)] ${
               oauthStatus === "error" ? "text-red-400" :
               oauthStatus === "success" ? "text-green-400" : "text-text-tertiary"
             }`}>
               {oauthMessage}
             </p>
           )}
-          <p className="mt-1.5 text-[10px] text-text-tertiary">
+          <p className="mt-1.5 text-[length:var(--app-font-10)] text-text-tertiary">
             {oauthStatus === "idle"
               ? "Uses your existing subscription — no API key needed."
               : oauthStatus === "pending"
@@ -556,7 +565,7 @@ function PiAuthSection({ provider, form, setForm }: {
       {supportsOAuth && (
         <div className="flex items-center gap-2">
           <div className="flex-1 border-t border-border-primary" />
-          <span className="text-[10px] text-text-tertiary">or use an API key</span>
+          <span className="text-[length:var(--app-font-10)] text-text-tertiary">or use an API key</span>
           <div className="flex-1 border-t border-border-primary" />
         </div>
       )}
@@ -579,7 +588,7 @@ function PiAuthSection({ provider, form, setForm }: {
           placeholder={API_KEY_PLACEHOLDERS[provider] || "API key"}
           className="w-full px-2.5 py-1.5 text-xs bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary font-mono"
         />
-        <p className="mt-1 text-[10px] text-text-tertiary">
+        <p className="mt-1 text-[length:var(--app-font-10)] text-text-tertiary">
           {provider === "anthropic"
             ? "Shared with Claude Agent mode. Also set via ANTHROPIC_API_KEY env var."
             : `Set via ${API_KEY_ENV_VARS[provider] || "environment variable"} or enter here.`}
@@ -715,7 +724,7 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
   return (
     <div className="space-y-5">
       {loading && (
-        <p className="text-[10px] text-purple-400 animate-pulse">Loading models from Pi SDK...</p>
+        <p className="text-[length:var(--app-font-10)] text-purple-400 animate-pulse">Loading models from Pi SDK...</p>
       )}
 
       {/* ── Default provider & model ── */}
@@ -747,7 +756,7 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
       {/* ── Configured providers with per-provider auth ── */}
       <div className="pt-4 border-t border-border-primary">
         <label className="block text-xs text-text-secondary mb-1.5">Providers &amp; Authentication</label>
-        <p className="text-[10px] text-text-tertiary mb-3">
+        <p className="text-[length:var(--app-font-10)] text-text-tertiary mb-3">
           Add providers you want to use. Each needs an API key or OAuth login.
         </p>
         <div className="space-y-2.5 mb-3">
@@ -767,7 +776,7 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
           <button
             type="button"
             onClick={() => setAddProviderOpen(!addProviderOpen)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] rounded bg-bg-tertiary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[length:var(--app-font-11)] rounded bg-bg-tertiary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
               <path d="M5 1v8M1 5h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -783,7 +792,7 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
                   value={addProviderFilter}
                   onChange={(e) => setAddProviderFilter(e.target.value)}
                   placeholder="Search providers..."
-                  className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+                  className="w-full px-2 py-1 text-[length:var(--app-font-11)] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
                 />
               </div>
               <div className="max-h-[200px] overflow-y-auto py-1">
@@ -791,13 +800,13 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
                   <button
                     key={p}
                     type="button"
-                    className="w-full text-left px-3 py-1.5 text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
+                    className="w-full text-left px-3 py-1.5 text-[length:var(--app-font-11)] text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
                     onClick={() => addProvider(p)}
                   >
                     {formatProvider(p)}
                   </button>
                 )) : (
-                  <p className="px-3 py-1.5 text-[10px] text-text-tertiary">No more providers to add</p>
+                  <p className="px-3 py-1.5 text-[length:var(--app-font-10)] text-text-tertiary">No more providers to add</p>
                 )}
               </div>
             </div>
@@ -877,7 +886,7 @@ function PiProviderCard({ provider, form, setForm, canRemove, onRemove }: {
           <path d="M2.5 1L5.5 4 2.5 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <span className="text-xs font-medium text-text-primary flex-1">{formatProvider(provider)}</span>
-        {authBadge && <span className="rounded-full bg-green-500/10 px-1.5 py-0.5 text-[9px] text-green-400 shrink-0">{authBadge}</span>}
+        {authBadge && <span className="rounded-full bg-green-500/10 px-1.5 py-0.5 text-[length:var(--app-font-9)] text-green-400 shrink-0">{authBadge}</span>}
         {canRemove && (
           <button
             type="button"
@@ -957,7 +966,7 @@ function PiProviderCombobox({ providers, value, onChange }: {
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 placeholder="Filter..."
-                className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+                className="w-full px-2 py-1 text-[length:var(--app-font-11)] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
               />
             </div>
           )}
@@ -1065,7 +1074,7 @@ function PiModelCombobox({ provider, models, value, onChange }: {
           </div>
         )}
       </div>
-      <p className="mt-1 text-[10px] text-text-tertiary">
+      <p className="mt-1 text-[length:var(--app-font-10)] text-text-tertiary">
         {models.length} models from {formatProvider(provider)}. Type to filter or enter a custom model ID.
       </p>
     </div>
@@ -1095,7 +1104,7 @@ function Field({
         placeholder={placeholder}
         className="w-full px-3 py-1.5 text-sm bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors font-mono"
       />
-      {hint && <p className="mt-0.5 text-[10px] text-text-tertiary">{hint}</p>}
+      {hint && <p className="mt-0.5 text-[length:var(--app-font-10)] text-text-tertiary">{hint}</p>}
     </div>
   );
 }
@@ -1131,7 +1140,7 @@ function Toggle({
         </button>
         <span className="text-xs text-text-secondary">{label}</span>
       </label>
-      {hint && <p className="mt-0.5 ml-10 text-[10px] text-text-tertiary">{hint}</p>}
+      {hint && <p className="mt-0.5 ml-10 text-[length:var(--app-font-10)] text-text-tertiary">{hint}</p>}
     </div>
   );
 }
@@ -1224,7 +1233,7 @@ function SettingsEffortDropdown({
           </div>
         )}
       </div>
-      {hint && <p className="mt-0.5 text-[10px] text-text-tertiary">{hint}</p>}
+      {hint && <p className="mt-0.5 text-[length:var(--app-font-10)] text-text-tertiary">{hint}</p>}
     </div>
   );
 }
@@ -1333,7 +1342,7 @@ function ModelCombobox({
           </div>
         )}
       </div>
-      {hint && <p className="mt-0.5 text-[10px] text-text-tertiary">{hint}</p>}
+      {hint && <p className="mt-0.5 text-[length:var(--app-font-10)] text-text-tertiary">{hint}</p>}
     </div>
   );
 }
@@ -1550,7 +1559,7 @@ function McpServersEditor({
   return (
     <div>
       <label className="block text-xs text-text-secondary mb-1">MCP Servers</label>
-      <p className="text-[10px] text-text-tertiary mb-2">
+      <p className="text-[length:var(--app-font-10)] text-text-tertiary mb-2">
         Additional MCP servers available to Claude Agent and Pi Agent sessions. OAuth tokens are stored in your OS keychain.
       </p>
 
@@ -1693,18 +1702,18 @@ function McpServerRow({
           />
         )}
         <span className="font-mono font-medium text-text-primary">{name}</span>
-        <span className="px-1.5 py-0.5 rounded bg-bg-secondary border border-border-primary text-[10px] text-text-tertiary">
+        <span className="px-1.5 py-0.5 rounded bg-bg-secondary border border-border-primary text-[length:var(--app-font-10)] text-text-tertiary">
           {subLabel}
         </span>
         {showStatus && (
-          <span className="text-[10px] text-text-tertiary">{statusLabel(entry, status)}</span>
+          <span className="text-[length:var(--app-font-10)] text-text-tertiary">{statusLabel(entry, status)}</span>
         )}
         {hasManualAuth && (
-          <span className="text-[10px] text-text-tertiary" title="Static Authorization header configured">
+          <span className="text-[length:var(--app-font-10)] text-text-tertiary" title="Static Authorization header configured">
             manual auth
           </span>
         )}
-        <span className="text-text-tertiary truncate flex-1 text-[10px]" title={endpoint}>
+        <span className="text-text-tertiary truncate flex-1 text-[length:var(--app-font-10)]" title={endpoint}>
           {endpoint}
         </span>
         <button
@@ -1725,7 +1734,7 @@ function McpServerRow({
             type="button"
             onClick={onConnect}
             disabled={!!busy}
-            className={`px-2 py-0.5 text-[10px] rounded border transition-colors disabled:opacity-50 ${
+            className={`px-2 py-0.5 text-[length:var(--app-font-10)] rounded border transition-colors disabled:opacity-50 ${
               isConnected
                 ? "bg-bg-primary border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
                 : "bg-accent/10 border-accent/40 text-accent hover:bg-accent/15"
@@ -1740,13 +1749,13 @@ function McpServerRow({
         <button
           type="button"
           onClick={onTest}
-          className="px-2 py-0.5 text-[10px] rounded bg-bg-primary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          className="px-2 py-0.5 text-[length:var(--app-font-10)] rounded bg-bg-primary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
         >
           Test
         </button>
-        {busy && <span className="text-[10px] text-amber-400 ml-1">{busy}</span>}
+        {busy && <span className="text-[length:var(--app-font-10)] text-amber-400 ml-1">{busy}</span>}
         {testResult && !busy && (
-          <span className={`text-[10px] ml-1 ${testTone} truncate max-w-[260px]`} title={testResult}>
+          <span className={`text-[length:var(--app-font-10)] ml-1 ${testTone} truncate max-w-[260px]`} title={testResult}>
             {testResult}
           </span>
         )}
@@ -1771,7 +1780,7 @@ function McpCatalogPicker({
   return (
     <div className="space-y-2 p-2.5 bg-bg-tertiary border border-border-primary rounded">
       <div className="flex items-center justify-between">
-        <div className="text-[10px] uppercase tracking-wide text-text-tertiary">Curated MCP servers</div>
+        <div className="text-[length:var(--app-font-10)] uppercase tracking-wide text-text-tertiary">Curated MCP servers</div>
         <button
           type="button"
           onClick={onCancel}
@@ -1784,14 +1793,14 @@ function McpCatalogPicker({
         </button>
       </div>
       {catalog.length === 0 && (
-        <div className="text-[10px] text-text-tertiary">Loading catalog…</div>
+        <div className="text-[length:var(--app-font-10)] text-text-tertiary">Loading catalog…</div>
       )}
       <div className="space-y-1.5">
         {catalog.map((entry) => (
           <McpCatalogRow key={entry.id} entry={entry} onInstall={onInstall} />
         ))}
       </div>
-      {error && <div className="text-[10px] text-red-400">{error}</div>}
+      {error && <div className="text-[length:var(--app-font-10)] text-red-400">{error}</div>}
     </div>
   );
 }
@@ -1828,17 +1837,17 @@ function McpCatalogRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-medium text-text-primary">{entry.display_name}</span>
-            <span className="px-1 py-0.5 rounded bg-bg-secondary text-[9px] text-text-tertiary">
+            <span className="px-1 py-0.5 rounded bg-bg-secondary text-[length:var(--app-font-9)] text-text-tertiary">
               {entry.server_type}
             </span>
-            {isOauth && <span className="px-1 py-0.5 rounded bg-accent/10 text-[9px] text-accent">OAuth</span>}
+            {isOauth && <span className="px-1 py-0.5 rounded bg-accent/10 text-[length:var(--app-font-9)] text-accent">OAuth</span>}
             {isStaticBearer && (
-              <span className="px-1 py-0.5 rounded bg-amber-500/10 text-[9px] text-amber-400">Token</span>
+              <span className="px-1 py-0.5 rounded bg-amber-500/10 text-[length:var(--app-font-9)] text-amber-400">Token</span>
             )}
           </div>
-          <div className="text-[10px] text-text-tertiary mt-0.5">{entry.description}</div>
+          <div className="text-[length:var(--app-font-10)] text-text-tertiary mt-0.5">{entry.description}</div>
           <div
-            className="text-[9px] text-text-tertiary/70 mt-0.5 font-mono truncate"
+            className="text-[length:var(--app-font-9)] text-text-tertiary/70 mt-0.5 font-mono truncate"
             title={entry.url}
           >
             {entry.url}
@@ -1848,7 +1857,7 @@ function McpCatalogRow({
           <button
             type="button"
             onClick={submit}
-            className="shrink-0 px-2 py-1 text-[10px] rounded bg-accent hover:bg-accent-hover text-white transition-colors"
+            className="shrink-0 px-2 py-1 text-[length:var(--app-font-10)] rounded bg-accent hover:bg-accent-hover text-white transition-colors"
           >
             {buttonLabel}
           </button>
@@ -1858,7 +1867,7 @@ function McpCatalogRow({
       {isStaticBearer && (
         <div className="space-y-1.5">
           {entry.token_help && (
-            <div className="text-[9px] text-text-tertiary">{entry.token_help}</div>
+            <div className="text-[length:var(--app-font-9)] text-text-tertiary">{entry.token_help}</div>
           )}
           <div className="flex gap-1.5">
             <input
@@ -1871,13 +1880,13 @@ function McpCatalogRow({
               placeholder="Paste token here"
               autoComplete="off"
               spellCheck={false}
-              className="flex-1 px-2 py-1 text-[10px] bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+              className="flex-1 px-2 py-1 text-[length:var(--app-font-10)] bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
             />
             <button
               type="button"
               onClick={submit}
               disabled={!canSubmit}
-              className="shrink-0 px-2 py-1 text-[10px] rounded bg-accent hover:bg-accent-hover disabled:opacity-40 text-white transition-colors"
+              className="shrink-0 px-2 py-1 text-[length:var(--app-font-10)] rounded bg-accent hover:bg-accent-hover disabled:opacity-40 text-white transition-colors"
             >
               {buttonLabel}
             </button>
@@ -1887,7 +1896,7 @@ function McpCatalogRow({
               href={entry.token_url}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 text-[10px] text-accent hover:underline"
+              className="inline-flex items-center gap-1 text-[length:var(--app-font-10)] text-accent hover:underline"
             >
               <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
                 <path d="M5 7L11 1M11 1H7M11 1V5M9 7v3a1 1 0 01-1 1H2a1 1 0 01-1-1V4a1 1 0 011-1h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
@@ -1970,7 +1979,7 @@ function McpCustomForm({
               key={t}
               type="button"
               onClick={() => setEditType(t)}
-              className={`px-2 py-1 text-[10px] transition-colors ${
+              className={`px-2 py-1 text-[length:var(--app-font-10)] transition-colors ${
                 editType === t
                   ? "bg-accent text-white"
                   : "bg-bg-primary text-text-secondary hover:bg-bg-hover"
@@ -1982,7 +1991,7 @@ function McpCustomForm({
         </div>
       </div>
       {nameTaken && (
-        <div className="text-[10px] text-red-400">A server named "{trimmedName}" already exists.</div>
+        <div className="text-[length:var(--app-font-10)] text-red-400">A server named "{trimmedName}" already exists.</div>
       )}
 
       {editType === "stdio" ? (
@@ -2025,7 +2034,7 @@ function McpCustomForm({
             rows={2}
             className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono resize-none"
           />
-          <p className="text-[9px] text-text-tertiary">
+          <p className="text-[length:var(--app-font-9)] text-text-tertiary">
             For OAuth-protected servers, prefer "Add from catalog" — Coppice will run the OAuth flow and store tokens in your keychain.
           </p>
         </>
