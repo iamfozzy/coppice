@@ -1151,6 +1151,24 @@ let sessionTotalsSeeded = false;
 /** Last per-turn usage for context window display. */
 let lastTurnUsage = null;
 
+function usageToTokenUsage(usage) {
+  return {
+    inputTokens: usage.input || 0,
+    outputTokens: usage.output || 0,
+    cacheReadTokens: usage.cacheRead || 0,
+    cacheWriteTokens: usage.cacheWrite || 0,
+  };
+}
+
+function addUsageToSessionTotals(usage) {
+  const tokens = usageToTokenUsage(usage);
+  sessionTotals.inputTokens += tokens.inputTokens;
+  sessionTotals.outputTokens += tokens.outputTokens;
+  sessionTotals.cacheReadTokens += tokens.cacheReadTokens;
+  sessionTotals.cacheWriteTokens += tokens.cacheWriteTokens;
+  sessionTotals.totalCostUsd += usage.cost?.total || 0;
+}
+
 /** Whether we've already kicked off title generation for this bridge. */
 let titleGenerated = false;
 
@@ -1279,12 +1297,8 @@ function subscribeToSessionEvents(agentSession) {
         // Emit per-turn usage
         const usage = msg.usage;
         if (usage) {
-          lastTurnUsage = {
-            inputTokens: usage.input || 0,
-            outputTokens: usage.output || 0,
-            cacheReadTokens: usage.cacheRead || 0,
-            cacheWriteTokens: usage.cacheWrite || 0,
-          };
+          lastTurnUsage = usageToTokenUsage(usage);
+          addUsageToSessionTotals(usage);
           log(
             `turn usage: in=${lastTurnUsage.inputTokens} CR=${lastTurnUsage.cacheReadTokens} CW=${lastTurnUsage.cacheWriteTokens} out=${lastTurnUsage.outputTokens}`,
           );
@@ -1329,31 +1343,16 @@ function subscribeToSessionEvents(agentSession) {
       }
 
       case "agent_end": {
-        // Find the last assistant message for usage/cost
         const lastAssistant = [...(event.messages || [])]
           .reverse()
           .find((m) => m.role === "assistant");
-        const usage = lastAssistant?.usage;
 
-        if (usage) {
-          const queryCost = {
-            inputTokens: usage.input || 0,
-            outputTokens: usage.output || 0,
-            cacheReadTokens: usage.cacheRead || 0,
-            cacheWriteTokens: usage.cacheWrite || 0,
-          };
-          const queryCostUsd = usage.cost?.total || 0;
-
-          sessionTotals.inputTokens += queryCost.inputTokens;
-          sessionTotals.outputTokens += queryCost.outputTokens;
-          sessionTotals.cacheReadTokens += queryCost.cacheReadTokens;
-          sessionTotals.cacheWriteTokens += queryCost.cacheWriteTokens;
-          sessionTotals.totalCostUsd += queryCostUsd;
-        }
-
-        // Context window from model metadata
+        // Context window from Pi's session accounting when available. This is
+        // more accurate than a model-name heuristic and matches Pi's own footer,
+        // including provider-specific windows and post-compaction unknown usage.
+        const contextUsage = agentSession.getContextUsage?.();
         const currentModel = agentSession.model;
-        const contextWindow = currentModel?.contextWindow || 0;
+        const contextWindow = contextUsage?.contextWindow || currentModel?.contextWindow || 0;
 
         const subtype = lastAssistant?.stopReason === "aborted"
           ? "interrupted"

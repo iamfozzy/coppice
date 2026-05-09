@@ -62,7 +62,7 @@ impl Default for AppSettings {
             terminal_font_size: 0,
             terminal_emulator: String::new(),
             shell: String::new(),
-            theme: "dark".to_string(),
+            theme: "dim".to_string(),
             window_decorations: true,
             notification_sound: true,
             notification_popup: true,

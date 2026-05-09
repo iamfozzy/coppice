@@ -88,7 +88,7 @@ function App() {
 
   // Apply theme setting and listen for OS preference changes in "system" mode
   useEffect(() => {
-    const mode = appSettings?.theme ?? "dark";
+    const mode = appSettings?.theme ?? "dim";
     applyTheme(mode);
     if (mode === "system") {
       const mq = window.matchMedia("(prefers-color-scheme: dark)");

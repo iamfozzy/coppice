@@ -29,7 +29,7 @@ const defaultSettings: AppSettings = {
   terminal_font_size: 0,
   terminal_emulator: "",
   shell: "",
-  theme: "dark",
+  theme: "dim",
   window_decorations: true,
   notification_sound: true,
   notification_popup: true,
@@ -81,7 +81,7 @@ export function AppSettingsModal() {
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200]"
       onClick={(e) => {
         if (e.target === e.currentTarget) closeAppSettings();
       }}
@@ -1046,9 +1046,6 @@ function PiModelCombobox({ provider, models, value, onChange }: {
                   }`}
                 >
                   <span>{m.label}</span>
-                  <span className="text-[10px] text-text-tertiary">
-                    {m.contextWindow ? `${Math.round(m.contextWindow / 1000)}K` : ""}
-                  </span>
                 </button>
               );
             })}

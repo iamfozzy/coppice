@@ -4,11 +4,13 @@ import { MessageList } from "../AgentView/MessageList";
 import { AgentInputBar } from "../AgentView/AgentInputBar";
 import { CreateWorktreeModal } from "../Sidebar/CreateWorktreeModal";
 import { Tooltip } from "../ui/Tooltip";
+import { TileViewToggleButton } from "../ui/TileViewToggleButton";
+import { ModelConfigPopover, formatPiProvider, getPiModelsForProvider, stripPiProviderPrefix, type HeaderOption } from "../ui/AgentHeaderControls";
 import { useAgentTabCloseConfirmation } from "../ui/useAgentTabCloseConfirmation";
-import { modelSupports1MContext, type SupportedModel } from "../../lib/supportedModels";
+import { CLAUDE_MODELS, modelSupports1MContext, type SupportedModel } from "../../lib/supportedModels";
 import { EffortPicker, ModelPicker } from "../AgentView/AgentControls";
 import * as commands from "../../lib/commands";
-import type { ImageAttachment, EffortLevel, AgentPermissionMode, Project } from "../../lib/types";
+import type { AgentBackend, ImageAttachment, EffortLevel, AgentPermissionMode, Project } from "../../lib/types";
 import { SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
 import { PermissionDialog } from "../AgentView/PermissionDialog";
 import { AskUserDialog } from "../AgentView/AskUserDialog";
@@ -151,10 +153,68 @@ interface TilePickerProps {
 
 function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
   const toggleTileView = useAppStore((s) => s.toggleTileView);
+  const openProjectSettings = useAppStore((s) => s.openProjectSettings);
+  const openAppSettings = useAppStore((s) => s.openAppSettings);
+  const appSettings = useAppStore((s) => s.appSettings);
+  const saveSettings = useAppStore((s) => s.saveSettings);
+  const setDefaultAgentBackend = useAppStore((s) => s.setDefaultAgentBackend);
+  const setAgentBackend = useAppStore((s) => s.setAgentBackend);
+  const setAgentModel = useAppStore((s) => s.setAgentModel);
+  const piAvailableModels = useAppStore((s) => s.piAvailableModels);
+  const ensurePiModelsLoaded = useAppStore((s) => s.ensurePiModelsLoaded);
+
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [switchingBackend, setSwitchingBackend] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
+  const currentBackend = appSettings?.agent_backend ?? "claude";
+  const currentClaudeModel = appSettings?.agent_default_model || "";
+  const currentClaudePreset = CLAUDE_MODELS.find((model) => model.value === currentClaudeModel);
+  const claudeModelLabel = currentClaudePreset?.label || currentClaudeModel || "SDK default";
+  const claudeModelOptions: HeaderOption[] = [
+    ...(currentClaudeModel && !currentClaudePreset
+      ? [{ value: currentClaudeModel, label: currentClaudeModel, hint: "Custom model" }]
+      : []),
+    { value: "", label: "SDK default", hint: "Use the Claude SDK default model" },
+    ...CLAUDE_MODELS.map((model) => ({ value: model.value, label: model.label })),
+  ];
+
+  const currentPiProvider: string = appSettings?.pi_default_provider || appSettings?.pi_configured_providers?.[0] || "anthropic";
+  const configuredPiProviders: string[] = (() => {
+    const fromSettings = appSettings?.pi_configured_providers?.filter((provider): provider is string => Boolean(provider)) ?? [];
+    if (fromSettings.length > 0) {
+      return fromSettings.includes(currentPiProvider) ? fromSettings : [...fromSettings, currentPiProvider];
+    }
+    const fromSdk = [...new Set(
+      piAvailableModels
+        .map((model) => model.provider)
+        .filter((provider): provider is string => Boolean(provider))
+    )];
+    return fromSdk.length > 0 ? fromSdk : [currentPiProvider];
+  })();
+  const currentPiModelId = stripPiProviderPrefix(appSettings?.pi_default_model || "");
+  const currentPiModels = getPiModelsForProvider(currentPiProvider, piAvailableModels);
+  const currentPiPreset = currentPiModels.find((model) => model.value === currentPiModelId);
+  const piModelLabel = currentPiPreset?.label || currentPiModelId || "Select model";
+  const piProviderOptions: HeaderOption[] = configuredPiProviders.map((provider) => ({
+    value: provider,
+    label: formatPiProvider(provider),
+  }));
+  const piModelOptions: HeaderOption[] = [
+    ...(currentPiModelId && !currentPiPreset
+      ? [{ value: currentPiModelId, label: currentPiModelId, hint: "Custom model" }]
+      : []),
+    ...currentPiModels.map((model) => ({
+      value: model.value,
+      label: model.label,
+    })),
+  ];
+
+  useEffect(() => {
+    if (currentBackend !== "pi" || piAvailableModels.length > 0) return;
+    ensurePiModelsLoaded().catch(() => {});
+  }, [currentBackend, piAvailableModels.length, ensurePiModelsLoaded]);
+
   useEffect(() => {
     if (!pickerOpen) return;
     const onClick = (e: MouseEvent) => {
@@ -166,31 +226,172 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
     return () => document.removeEventListener("mousedown", onClick);
   }, [pickerOpen]);
 
+  const syncActiveIdleAgentModel = useCallback((backend: AgentBackend, model: string) => {
+    const s = useAppStore.getState();
+    const wtId = s.selectedWorktreeId;
+    const activeTabId = wtId ? s.activeTabByWorktree[wtId] : null;
+    const activeTab = wtId && activeTabId ? s.tabsByWorktree[wtId]?.find((tab) => tab.id === activeTabId) : null;
+    const activeSession = activeTabId ? s.agentSessionByTab[activeTabId] : null;
+    if (
+      activeTabId
+      && activeTab?.type === "agent"
+      && activeSession
+      && activeSession.backend === backend
+      && activeSession.status === "idle"
+      && activeSession.messages.length === 0
+      && !activeSession.sdkSessionId
+    ) {
+      setAgentModel(activeTabId, model);
+    }
+  }, [setAgentModel]);
+
+  const handleBackendToggle = useCallback(async () => {
+    const settings = useAppStore.getState().appSettings;
+    if (!settings) return;
+    const nextBackend: AgentBackend = settings.agent_backend === "pi" ? "claude" : "pi";
+    setSwitchingBackend(true);
+    try {
+      await setDefaultAgentBackend(nextBackend);
+      const s = useAppStore.getState();
+      const wtId = s.selectedWorktreeId;
+      const activeTabId = wtId ? s.activeTabByWorktree[wtId] : null;
+      const activeTab = wtId && activeTabId ? s.tabsByWorktree[wtId]?.find((tab) => tab.id === activeTabId) : null;
+      const activeSession = activeTabId ? s.agentSessionByTab[activeTabId] : null;
+      if (
+        activeTabId
+        && activeTab?.type === "agent"
+        && activeSession
+        && activeSession.status === "idle"
+        && activeSession.messages.length === 0
+        && !activeSession.sdkSessionId
+      ) {
+        setAgentBackend(
+          activeTabId,
+          nextBackend,
+          nextBackend === "pi" ? settings.pi_default_model || "" : settings.agent_default_model || "",
+        );
+      }
+    } finally {
+      setSwitchingBackend(false);
+    }
+  }, [setDefaultAgentBackend, setAgentBackend]);
+
+  const handleClaudeModelSelect = useCallback(async (model: string) => {
+    const settings = useAppStore.getState().appSettings;
+    if (!settings || settings.agent_default_model === model) return;
+    await saveSettings({ ...settings, agent_default_model: model });
+    syncActiveIdleAgentModel("claude", model);
+  }, [saveSettings, syncActiveIdleAgentModel]);
+
+  const handlePiProviderSelect = useCallback(async (provider: string) => {
+    const settings = useAppStore.getState().appSettings;
+    if (!settings) return;
+    const providerModels = getPiModelsForProvider(provider, useAppStore.getState().piAvailableModels);
+    const nextModel = providerModels[0] ? `${provider}/${providerModels[0].value}` : "";
+    if (settings.pi_default_provider === provider && settings.pi_default_model === nextModel) return;
+    await saveSettings({
+      ...settings,
+      pi_default_provider: provider,
+      pi_default_model: nextModel,
+    });
+    syncActiveIdleAgentModel("pi", nextModel);
+  }, [saveSettings, syncActiveIdleAgentModel]);
+
+  const handlePiModelSelect = useCallback(async (model: string) => {
+    const settings = useAppStore.getState().appSettings;
+    if (!settings) return;
+    const provider = settings.pi_default_provider || settings.pi_configured_providers?.[0] || "anthropic";
+    const nextModel = `${provider}/${model}`;
+    if (settings.pi_default_model === nextModel) return;
+    await saveSettings({
+      ...settings,
+      pi_default_provider: provider,
+      pi_default_model: nextModel,
+    });
+    syncActiveIdleAgentModel("pi", nextModel);
+  }, [saveSettings, syncActiveIdleAgentModel]);
+
+  const backendTooltip = currentBackend === "pi" ? "Switch to CL" : "Switch to PI";
+  const modelTooltip = currentBackend === "pi"
+    ? `${formatPiProvider(currentPiProvider)} · ${piModelLabel}`
+    : claudeModelLabel;
+
   return (
-    <div className="flex items-center h-10 px-3 shrink-0 bg-bg-secondary border-b border-border-primary">
-      {/* Left: close toggle */}
-      <Tooltip text="Close tile view (Esc)" align="left">
-        <button
-          onClick={toggleTileView}
-          className="w-7 h-7 flex items-center justify-center rounded text-accent hover:text-accent-hover hover:bg-accent/10 transition-colors"
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-            <rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-            <rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-            <rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-          </svg>
-        </button>
-      </Tooltip>
+    <div className="flex items-center justify-between h-12 px-3 py-2 shrink-0 bg-bg-secondary border-b border-border-primary gap-3">
+      <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center shrink-0">
+          <TileViewToggleButton
+            active
+            onClick={toggleTileView}
+            tooltip="Close tile view (Esc)"
+            align="left"
+          />
+        </div>
 
-      <span className="text-[11px] text-text-tertiary ml-2 select-none">Tile View</span>
+        <div className="w-px h-5 bg-border-primary/70 shrink-0" />
 
-      {/* Right: add tile */}
-      <div className="ml-auto relative" ref={pickerRef}>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Tooltip text={backendTooltip} align="right">
+            <button
+              type="button"
+              onClick={() => void handleBackendToggle()}
+              disabled={!appSettings || switchingBackend}
+              className={`h-7 min-w-8 px-2.5 flex items-center justify-center rounded-md text-[11px] font-semibold uppercase border transition-colors ${currentBackend === "pi" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"} ${appSettings && !switchingBackend ? "hover:brightness-125" : ""} disabled:opacity-50`}
+            >
+              {currentBackend === "pi" ? "Pi" : "Cl"}
+            </button>
+          </Tooltip>
+
+          <ModelConfigPopover
+            tone={currentBackend}
+            backend={currentBackend}
+            disabled={!appSettings || switchingBackend}
+            tooltip={modelTooltip}
+            dropdownAlign="left"
+            providerLabel={formatPiProvider(currentPiProvider)}
+            providerValue={currentPiProvider}
+            providerOptions={piProviderOptions}
+            onProviderSelect={handlePiProviderSelect}
+            modelLabel={currentBackend === "pi" ? piModelLabel : claudeModelLabel}
+            modelValue={currentBackend === "pi" ? currentPiModelId : currentClaudeModel}
+            modelOptions={currentBackend === "pi" ? piModelOptions : claudeModelOptions}
+            onModelSelect={currentBackend === "pi" ? handlePiModelSelect : handleClaudeModelSelect}
+          />
+
+          <Tooltip text="Settings">
+            <button
+              onClick={openAppSettings}
+              className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M5.7 1h2.6l.4 1.5a4.5 4.5 0 011.1.6l1.5-.5 1.3 2.3-1.1 1a4.5 4.5 0 010 1.2l1.1 1-1.3 2.3-1.5-.5a4.5 4.5 0 01-1.1.6L8.3 13H5.7l-.4-1.5a4.5 4.5 0 01-1.1-.6l-1.5.5-1.3-2.3 1.1-1a4.5 4.5 0 010-1.2l-1.1-1L2.7 3.6l1.5.5a4.5 4.5 0 011.1-.6L5.7 1z"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  strokeLinejoin="round"
+                />
+                <circle cx="7" cy="7" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            </button>
+          </Tooltip>
+          <Tooltip text="Add project">
+            <button
+              onClick={() => openProjectSettings("new")}
+              className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+
+      <div className="relative flex items-center shrink-0" ref={pickerRef}>
         <Tooltip text="Add tile" align="right">
           <button
             onClick={() => setPickerOpen((v) => !v)}
-            className="w-7 h-7 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
