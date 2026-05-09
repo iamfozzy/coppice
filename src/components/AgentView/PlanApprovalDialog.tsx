@@ -1,12 +1,13 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import type { AgentPendingPermission } from "../../lib/types";
-import { MarkdownContent } from "./MessageBubble";
+import { MarkdownContent } from "./MarkdownContent";
 
 interface Props {
   pending: AgentPendingPermission;
   onApprove: (updatedInput: unknown) => void;
   onRequestChanges: (feedback: string) => void;
   onDeny: () => void;
+  worktreePath?: string;
 }
 
 /**
@@ -14,7 +15,7 @@ interface Props {
  * No nested scroll containers — the plan content flows naturally
  * and the parent MessageList handles all scrolling.
  */
-export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDeny }: Props) {
+export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDeny, worktreePath }: Props) {
   const plan = useMemo(() => extractPlanDraft(pending), [pending]);
   const draftPlan = plan.planText;
   const [feedback, setFeedback] = useState("");
@@ -54,7 +55,7 @@ export function PlanApprovalDialog({ pending, onApprove, onRequestChanges, onDen
         {/* Plan content — renders fully, no inner scroll */}
         <div className="px-3 py-3">
           {draftPlan.trim() ? (
-            <MarkdownContent text={draftPlan} />
+            <MarkdownContent text={draftPlan} worktreePath={worktreePath} />
           ) : (
             <p className="text-[12px] text-text-tertiary">No plan text found in payload. See raw payload below.</p>
           )}

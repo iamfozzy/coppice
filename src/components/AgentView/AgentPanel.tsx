@@ -908,6 +908,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           })
         }
         onPlanDeny={() => handleToolResponse("deny")}
+        worktreePath={cwd}
       />
 
       {/* Permission dialog — non-plan permissions only (plans render inline in chat) */}

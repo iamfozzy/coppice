@@ -688,6 +688,7 @@ function Tile({ tile }: { tile: TileTab }) {
           onPlanApprove={(updatedInput) => handleToolResponse("allow", { updatedInput })}
           onPlanRequestChanges={(feedback) => handleToolResponse("deny", { message: `Please revise the plan: ${feedback}` })}
           onPlanDeny={() => handleToolResponse("deny")}
+          worktreePath={cwd}
         />
       </div>
 

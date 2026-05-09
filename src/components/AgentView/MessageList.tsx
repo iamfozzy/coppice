@@ -17,6 +17,7 @@ interface Props {
   onPlanApprove?: (updatedInput: unknown) => void;
   onPlanRequestChanges?: (feedback: string) => void;
   onPlanDeny?: () => void;
+  worktreePath?: string;
 }
 
 interface ToolGroupItem {
@@ -77,7 +78,7 @@ function mergeMessages(messages: AgentMessage[]): { items: RenderItem[]; queued:
 
 export function MessageList({
   messages, streamingText, streamingThinkingText, status, stalled, onCancelQueued,
-  pendingPlan, onPlanApprove, onPlanRequestChanges, onPlanDeny,
+  pendingPlan, onPlanApprove, onPlanRequestChanges, onPlanDeny, worktreePath,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
@@ -126,9 +127,9 @@ export function MessageList({
 
       {items.map((item) => {
         if (item.kind === "tool_group") {
-          return <ToolGroup key={item.key} tools={item.tools} />;
+          return <ToolGroup key={item.key} tools={item.tools} worktreePath={worktreePath} />;
         }
-        return <MessageBubble key={item.msg.id} message={item.msg} />;
+        return <MessageBubble key={item.msg.id} message={item.msg} worktreePath={worktreePath} />;
       })}
 
       {/* Live streaming thinking — shown while thinking deltas arrive */}
@@ -163,6 +164,7 @@ export function MessageList({
           onApprove={onPlanApprove}
           onRequestChanges={onPlanRequestChanges}
           onDeny={onPlanDeny}
+          worktreePath={worktreePath}
         />
       )}
 
@@ -174,7 +176,7 @@ export function MessageList({
 
       {/* Queued messages — always at bottom until sent */}
       {queued.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} onCancel={onCancelQueued} />
+        <MessageBubble key={msg.id} message={msg} onCancel={onCancelQueued} worktreePath={worktreePath} />
       ))}
     </div>
   );

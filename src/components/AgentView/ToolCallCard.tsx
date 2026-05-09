@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAppStore, type SubagentChild } from "../../stores/appStore";
-import { MarkdownContent } from "./MessageBubble";
+import { MarkdownContent } from "./MarkdownContent";
 
 /** Stable reference so the Zustand selector doesn't trigger infinite re-renders. */
 const EMPTY_CHILDREN: SubagentChild[] = [];
@@ -11,6 +11,7 @@ interface Props {
   toolOutput?: string;
   isError?: boolean;
   isActive?: boolean;
+  worktreePath?: string;
 }
 
 interface TodoItem {
@@ -98,7 +99,7 @@ function ToolIcon({ name }: { name: string }) {
   }
 }
 
-export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActive }: Props) {
+export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActive, worktreePath }: Props) {
   const normalized = normalizeToolName(toolName);
   const richContent = getRichContent(normalized, toolInput);
   const isSubagent = normalized === "Subagent";
@@ -150,7 +151,7 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
       {expanded && hasDetail && (
         <div className="pl-5 pr-1 pt-1 pb-1.5 space-y-1.5">
           {richContent ? (
-            <RichToolContent content={richContent} />
+            <RichToolContent content={richContent} worktreePath={worktreePath} />
           ) : (
             <>
               {toolInput != null && !isSubagent && (
@@ -316,7 +317,7 @@ function isPlanFile(filePath: string): boolean {
 
 // ── Rich content renderer ──
 
-function RichToolContent({ content }: { content: RichContent }) {
+function RichToolContent({ content, worktreePath }: { content: RichContent; worktreePath?: string }) {
   if (content.kind === "todos") {
     return (
       <div className="rounded-md border border-border-primary bg-bg-secondary/60 overflow-hidden">
@@ -368,7 +369,7 @@ function RichToolContent({ content }: { content: RichContent }) {
           <span className="text-[10px] text-text-tertiary font-mono">{shortPath(content.filePath)}</span>
         </div>
         <div className="px-2.5 py-2 max-h-80 overflow-y-auto text-[12px]">
-          <MarkdownContent text={content.markdown} />
+          <MarkdownContent text={content.markdown} worktreePath={worktreePath} />
         </div>
       </div>
     );
