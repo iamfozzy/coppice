@@ -925,7 +925,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           session.status === "done"
             ? "Send a follow-up message..."
             : session.status === "waiting_input"
-              ? "Answer Claude's question..."
+              ? "Answer the agent's question..."
               : session.status === "idle"
                 ? "Send a message to start..."
                 : "Queue message..."

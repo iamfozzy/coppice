@@ -47,7 +47,7 @@ export function AgentToolbar({
 
       {/* Interrupt button */}
       {isWorking && (
-        <Tooltip text="Stop Claude" side="top">
+        <Tooltip text="Stop agent" side="top">
           <button
             className="flex items-center gap-1 px-2 py-0.5 rounded bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
             onClick={onInterrupt}

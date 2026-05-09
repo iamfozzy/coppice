@@ -23,7 +23,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onCancel }: 
                   <circle cx="5" cy="5" r="4" stroke="currentColor" strokeWidth="1" />
                   <path d="M5 2.5v3l1.5 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
                 </svg>
-                <span className="flex-1">Queued — will send when Claude finishes</span>
+                <span className="flex-1">Queued — will send when the agent finishes</span>
                 {onCancel && (
                   <Tooltip text="Cancel queued message" side="top">
                     <button

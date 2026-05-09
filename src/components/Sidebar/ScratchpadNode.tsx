@@ -56,13 +56,13 @@ export function ScratchpadNode() {
           </span>
         )}
         {claudeStatus === "active" && (
-          <span className="shrink-0 relative flex h-2 w-2" title="Claude is working">
+          <span className="shrink-0 relative flex h-2 w-2" title="Agent is working">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-50" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
           </span>
         )}
         {claudeStatus === "idle" && (
-          <span className="shrink-0 relative flex h-2 w-2" title="Claude is waiting for input">
+          <span className="shrink-0 relative flex h-2 w-2" title="Agent is waiting for input">
             <span className="relative inline-flex rounded-full h-2 w-2 bg-warning" />
           </span>
         )}

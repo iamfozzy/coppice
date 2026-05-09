@@ -119,7 +119,7 @@ The project tree is the main navigation panel. It lists all your projects, each 
 | **Worktree name** | Display name of the worktree directory. **Double-click** to rename it inline. Press Enter to confirm or Escape to cancel. |
 | **Branch name** | The Git branch checked out in this worktree, shown in monospace below the name. |
 | **PR badge** | If a pull request exists for this branch, the PR number (e.g. `#9`) is shown next to the branch name. |
-| **Claude indicator** | A coloured dot showing Claude Code status. See [Status Indicators](#status-indicators). |
+| **Agent indicator** | A coloured dot showing agent status. See [Status Indicators](#status-indicators). |
 | **Run indicator** | A green animated dot if the worktree's Run command is active. |
 | **✕ Delete button** | Appears on hover. Deletes the worktree and removes the directory from disk. A confirmation dialog appears first. Tooltip: *"Delete worktree"*. |
 
@@ -262,7 +262,7 @@ Below the header is a tab bar for managing terminal and diff sessions.
 |---------|-------------|
 | **Tab** | Click to switch to that terminal or diff view. Each tab shows its name and a close button (✕) on hover. |
 | **Tab types** | Tabs can be: **Claude** (Claude Code session), **Terminal** (plain shell), or **Diff** (file diff viewer). |
-| **Claude status dot** | Claude tabs show a coloured dot indicating whether Claude is active or idle. |
+| **Agent status dot** | Agent tabs show a coloured dot indicating whether the agent is active or idle. |
 | **✕ Close button** | Appears on hover. Closes the tab and kills the associated terminal session. |
 | **[>_] New Terminal** | Creates a new plain terminal tab. Tooltip: *"New terminal (Ctrl+T)"*. |
 | **[🤖] New Claude** | Creates a new Claude Code session tab. Tooltip: *"New Claude session (Ctrl+Shift+T)"*. |
@@ -292,8 +292,8 @@ Claude tabs launch Claude Code in the worktree directory. They have additional b
 | Feature | Description |
 |---------|-------------|
 | **Auto-creation** | When you select a worktree that has no Claude tabs, one is automatically created. |
-| **Idle detection** | After Claude finishes working and is waiting for input, the tab shows an "idle" indicator (see [Status Indicators](#status-indicators)). |
-| **Notification sound** | Optionally plays a two-tone chime when Claude becomes idle in a background tab. Enable in [App Settings](#app-settings). |
+| **Idle detection** | After an agent finishes working and is waiting for input, the tab shows an "idle" indicator (see [Status Indicators](#status-indicators)). |
+| **Notification sound** | Optionally plays a two-tone chime when an agent becomes idle in a background tab. Enable in [App Settings](#app-settings). |
 | **Command injection** | Features like "Fix with Claude" and "Commit & Push" send instructions directly to the active Claude session. |
 
 ---
@@ -328,7 +328,7 @@ Opened via the **⚙ gear icon** in the sidebar header. Configures global defaul
 | **Terminal emulator** | App to use for "Open in terminal". | `alacritty`, `kitty`, `ghostty` |
 | **Shell** | Override the default shell for terminal sessions. | `/bin/zsh`, `fish` |
 | **Window decorations** | Toggle the native title bar on/off. Useful for tiling window managers. | On / Off |
-| **Notification sound** | Play a chime when Claude finishes working in a background tab. | On / Off |
+| **Notification sound** | Play a chime when an agent finishes working in a background tab. | On / Off |
 
 A hint at the top reads: *"Global defaults. Leave blank to use platform defaults. Per-project settings override these."*
 
@@ -418,9 +418,9 @@ Coloured dots appear throughout the UI to show the status of background processe
 
 | Indicator | Meaning |
 |-----------|---------|
-| **Pulsing indigo dot** | Claude is actively working (generating output). Tooltip: *"Claude is working"*. |
-| **Static yellow dot** | Claude is idle — waiting for your input. Tooltip: *"Claude is waiting for input"*. |
-| **No dot** | No Claude session running, or Claude tab not yet used. |
+| **Pulsing indigo dot** | An agent is actively working (generating output). Tooltip: *"Agent is working"*. |
+| **Static yellow dot** | An agent is idle — waiting for your input. Tooltip: *"Agent is waiting for input"*. |
+| **No dot** | No agent session running, or the agent tab has not been used yet. |
 
 ### Runner Status (on runner rows)
 
