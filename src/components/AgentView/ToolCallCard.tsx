@@ -15,9 +15,32 @@ interface TodoItem {
   activeForm?: string;
 }
 
+export function normalizeToolName(name: string): string {
+  const lower = name.toLowerCase();
+  const map: Record<string, string> = {
+    read: "Read",
+    write: "Write",
+    edit: "Edit",
+    bash: "Bash",
+    glob: "Glob",
+    grep: "Grep",
+    find: "Grep",
+    ls: "Bash",
+    todowrite: "TodoWrite",
+    websearch: "WebSearch",
+    web_search: "WebSearch",
+    webfetch: "WebFetch",
+    fetch_content: "WebFetch",
+    agent: "Agent",
+    code_search: "Grep",
+    get_search_content: "Read",
+  };
+  return map[lower] || name;
+}
+
 /** Icon for common tool types. Falls back to a generic wrench. */
 function ToolIcon({ name }: { name: string }) {
-  switch (name) {
+  switch (normalizeToolName(name)) {
     case "Read":
       return (
         <svg width="11" height="11" viewBox="0 0 12 12" fill="none" className="shrink-0">
@@ -63,9 +86,10 @@ function ToolIcon({ name }: { name: string }) {
 }
 
 export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActive }: Props) {
-  const richContent = getRichContent(toolName, toolInput);
+  const normalized = normalizeToolName(toolName);
+  const richContent = getRichContent(normalized, toolInput);
   const [expanded, setExpanded] = useState(richContent !== null);
-  const summary = toolInput != null ? summarizeInput(toolName, toolInput) : "";
+  const summary = toolInput != null ? summarizeInput(normalized, toolInput) : "";
   const hasDetail = toolInput != null || !!toolOutput;
 
   const accent = isError ? "text-error" : isActive ? "text-accent" : "text-text-tertiary";
@@ -91,7 +115,7 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
 
         <span className={accent}><ToolIcon name={toolName} /></span>
         <span className="font-mono text-text-secondary font-medium">
-          {richContent?.label ?? toolName}
+          {richContent?.label ?? normalized}
         </span>
 
         {summary && (
@@ -157,9 +181,9 @@ function getRichContent(toolName: string, toolInput: unknown): RichContent | nul
     return { kind: "todos", label: "Plan", todos: obj.todos as TodoItem[] };
   }
 
-  if (toolName === "Write" && typeof obj.file_path === "string" && typeof obj.content === "string") {
-    const fp = obj.file_path as string;
-    if (isPlanFile(fp)) {
+  if (toolName === "Write" && typeof obj.content === "string") {
+    const fp = (obj.file_path || obj.path) as string | undefined;
+    if (typeof fp === "string" && isPlanFile(fp)) {
       return { kind: "plan_md", label: "Write Plan", filePath: fp, markdown: obj.content as string };
     }
   }
@@ -244,9 +268,8 @@ function summarizeInput(toolName: string, input: unknown): string {
   switch (toolName) {
     case "Read":
     case "Write":
-      return shortPath(String(obj.file_path || ""));
     case "Edit":
-      return shortPath(String(obj.file_path || ""));
+      return shortPath(String(obj.file_path || obj.path || ""));
     case "Bash":
       return truncate(String(obj.command || ""), 70);
     case "Glob":

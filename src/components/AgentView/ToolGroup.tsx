@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { AgentMessage } from "../../lib/types";
-import { ToolCallCard } from "./ToolCallCard";
+import { ToolCallCard, normalizeToolName } from "./ToolCallCard";
 
 export interface GroupedTool {
   callMsg: AgentMessage;
@@ -43,7 +43,7 @@ export function ToolGroup({ tools }: Props) {
   // Build "Read×3, Grep×2" summary
   const counts = new Map<string, number>();
   for (const t of tools) {
-    const n = t.callMsg.toolName || "Tool";
+    const n = normalizeToolName(t.callMsg.toolName || "Tool");
     counts.set(n, (counts.get(n) || 0) + 1);
   }
   const summary = [...counts.entries()]
