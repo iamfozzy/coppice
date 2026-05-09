@@ -16,7 +16,7 @@ export function TileViewToggleButton({
       <button
         type="button"
         onClick={onClick}
-        className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${
+        className={`w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/60 transition-colors ${
           active
             ? "text-accent hover:text-accent-hover hover:bg-accent/10"
             : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"

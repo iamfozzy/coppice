@@ -199,6 +199,32 @@ function fmtProvider(slug: string) {
   return PROVIDER_LABELS[slug] || slug.charAt(0).toUpperCase() + slug.slice(1);
 }
 
+function ModelPickerRow({
+  label,
+  value,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="w-full flex items-center gap-2 rounded-md border border-border-primary bg-bg-tertiary/60 px-2.5 py-2 text-left transition-colors hover:bg-bg-hover"
+      onClick={onClick}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="text-[9px] uppercase tracking-wide text-text-tertiary">{label}</div>
+        <div className="truncate text-[11px] text-text-primary">{value}</div>
+      </div>
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="shrink-0 text-text-tertiary">
+        <path d="M3.5 2l3 3-3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
 export function ModelPicker({
   model,
   onModelChange,
@@ -214,6 +240,7 @@ export function ModelPicker({
   inline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [panel, setPanel] = useState<"main" | "provider" | "model">("main");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [customInput, setCustomInput] = useState(false);
   const [customValue, setCustomValue] = useState("");
@@ -222,22 +249,32 @@ export function ModelPicker({
   const inputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const configuredProviders = useAppStore((s) => s.appSettings?.pi_configured_providers);
+  const configuredProviders = useAppStore((s) => s.appSettings?.pi_configured_providers ?? []);
 
   const MODELS = availableModels && availableModels.length > 0 ? availableModels : CLAUDE_MODELS;
   const matchedPreset = MODELS.find((m) =>
     m.value === model || (m.provider && `${m.provider}/${m.value}` === model)
   );
-  const displayLabel = matchedPreset?.label ?? model ?? MODELS[0].label;
-
-  const showList = inline || open;
-  const showSearch = true;
+  const providerChoices = isPiBackend
+    ? (configuredProviders.filter((provider): provider is string => Boolean(provider)).length > 0
+      ? configuredProviders.filter((provider): provider is string => Boolean(provider))
+      : [...new Set(MODELS.map((candidate) => candidate.provider).filter((provider): provider is string => Boolean(provider)))])
+    : [];
+  const currentProvider = isPiBackend
+    ? (model.includes("/")
+      ? model.split("/")[0]
+      : matchedPreset?.provider ?? providerChoices[0] ?? "anthropic")
+    : "";
+  const currentModelId = isPiBackend && model.includes("/") ? model.split("/").slice(1).join("/") : model;
+  const displayLabel = matchedPreset?.label ?? currentModelId ?? MODELS[0]?.label ?? "SDK default";
+  const currentProviderLabel = currentProvider ? fmtProvider(currentProvider) : "";
 
   useEffect(() => {
     if (!open || inline) return;
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
+        setPanel("main");
         setCustomInput(false);
         setExpandedProvider(null);
         setSearch("");
@@ -248,52 +285,79 @@ export function ModelPicker({
   }, [open, inline]);
 
   useEffect(() => {
+    if (!open) {
+      setPanel("main");
+      setCustomInput(false);
+      setExpandedProvider(null);
+      setSearch("");
+    }
+  }, [open]);
+
+  useEffect(() => {
     if (customInput && inputRef.current) inputRef.current.focus();
   }, [customInput]);
 
   useEffect(() => {
-    if (showList && showSearch && !customInput && searchRef.current) searchRef.current.focus();
-  }, [showList, showSearch, customInput]);
+    const shouldFocusSearch = inline || (open && panel === "model");
+    if (shouldFocusSearch && !customInput && searchRef.current) searchRef.current.focus();
+  }, [inline, open, panel, customInput]);
 
-  const usePiGrouped = isPiBackend && configuredProviders && configuredProviders.length > 0;
-
-  const filterModel = (m: SupportedModel) => {
+  const filterModel = (candidate: SupportedModel) => {
     if (!search) return true;
     const q = search.toLowerCase();
-    return m.label.toLowerCase().includes(q) || m.value.toLowerCase().includes(q) || (m.provider && m.provider.toLowerCase().includes(q));
+    return candidate.label.toLowerCase().includes(q)
+      || candidate.value.toLowerCase().includes(q)
+      || (candidate.provider && candidate.provider.toLowerCase().includes(q));
   };
 
+  const usePiGrouped = isPiBackend && configuredProviders.length > 0;
   const providerGroups = usePiGrouped
-    ? configuredProviders!.map((p) => ({
-        provider: p,
-        models: MODELS.filter((m) => m.provider === p && filterModel(m)),
-      })).filter((g) => g.models.length > 0)
+    ? configuredProviders.map((provider) => ({
+        provider,
+        models: MODELS.filter((candidate) => candidate.provider === provider && filterModel(candidate)),
+      })).filter((group) => group.models.length > 0)
     : [];
-
   const filteredModels = search ? MODELS.filter(filterModel) : MODELS;
-
-  const currentProvider = model.includes("/") ? model.split("/")[0] : matchedPreset?.provider;
-
-  useEffect(() => {
-    if (showList && usePiGrouped && currentProvider && !search) setExpandedProvider(currentProvider);
-  }, [showList]);
+  const currentProviderModels = isPiBackend
+    ? MODELS.filter((candidate) => candidate.provider === currentProvider && filterModel(candidate))
+    : filteredModels;
 
   useEffect(() => {
-    if (search && usePiGrouped && providerGroups.length > 0) {
+    if (inline && usePiGrouped && currentProvider && !search) setExpandedProvider(currentProvider);
+  }, [inline, usePiGrouped, currentProvider, search]);
+
+  useEffect(() => {
+    if (inline && search && usePiGrouped && providerGroups.length > 0) {
       setExpandedProvider(providerGroups[0].provider);
     }
-  }, [search]);
+  }, [inline, search, usePiGrouped, providerGroups]);
+
+  const closeMenu = () => {
+    setOpen(false);
+    setPanel("main");
+    setCustomInput(false);
+    setExpandedProvider(null);
+    setSearch("");
+  };
 
   const handleSelect = (value: string) => {
     onModelChange(value);
-    if (!inline) {
-      setOpen(false);
-      setExpandedProvider(null);
-      setSearch("");
+    if (!inline) closeMenu();
+  };
+
+  const handleProviderSelect = (provider: string) => {
+    const providerModels = MODELS.filter((candidate) => candidate.provider === provider);
+    const nextModelId = provider === currentProvider
+      ? currentModelId
+      : providerModels.find((candidate) => candidate.value === currentModelId)?.value ?? providerModels[0]?.value ?? currentModelId;
+    if (nextModelId) {
+      handleSelect(`${provider}/${nextModelId}`);
+    } else {
+      closeMenu();
     }
   };
 
-  const searchInput = showSearch && !customInput && (
+  const searchInput = !customInput && (
     <div className="px-2 pt-1.5 pb-1 border-b border-border-primary">
       <input
         ref={searchRef}
@@ -306,39 +370,79 @@ export function ModelPicker({
     </div>
   );
 
-  const listContent = (
+  const customModelFooter = !search && (
+    <>
+      <div className="border-t border-border-primary my-0.5" />
+      {customInput ? (
+        <div className="px-2 py-1.5">
+          <input
+            ref={inputRef}
+            type="text"
+            value={customValue}
+            onChange={(e) => setCustomValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && customValue.trim()) {
+                handleSelect(customValue.trim());
+                setCustomInput(false);
+                setCustomValue("");
+              }
+              if (e.key === "Escape") {
+                setCustomInput(false);
+                setCustomValue("");
+              }
+            }}
+            placeholder="provider/model-id"
+            className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+          />
+          <p className="mt-1 text-[9px] text-text-tertiary">Enter to confirm</p>
+        </div>
+      ) : (
+        <button
+          className="w-full text-left px-3 py-1.5 text-[11px] text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+          onClick={() => {
+            setCustomInput(true);
+            setCustomValue(matchedPreset ? "" : model);
+          }}
+        >
+          Custom model...
+        </button>
+      )}
+    </>
+  );
+
+  const inlineListContent = (
     <>
       {usePiGrouped ? (
-        providerGroups.length > 0 ? providerGroups.map((g) => {
-          const isExpanded = expandedProvider === g.provider || !!search;
+        providerGroups.length > 0 ? providerGroups.map((group) => {
+          const isExpanded = expandedProvider === group.provider || !!search;
           return (
-            <div key={g.provider}>
+            <div key={group.provider}>
               <button
                 className={`w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium transition-colors ${
-                  currentProvider === g.provider
+                  currentProvider === group.provider
                     ? "text-accent"
                     : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                 }`}
-                onClick={() => setExpandedProvider(isExpanded && !search ? null : g.provider)}
+                onClick={() => setExpandedProvider(isExpanded && !search ? null : group.provider)}
               >
-                <span>{fmtProvider(g.provider)}</span>
+                <span>{fmtProvider(group.provider)}</span>
                 <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}>
                   <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
               {isExpanded && (
                 <div className="pb-1">
-                  {g.models.map((m) => {
-                    const isActive = m.value === model || `${m.provider}/${m.value}` === model;
+                  {group.models.map((candidate) => {
+                    const isActive = candidate.value === model || `${candidate.provider}/${candidate.value}` === model;
                     return (
                       <button
-                        key={m.value}
+                        key={candidate.value}
                         className={`w-full text-left pl-6 pr-3 py-1 text-[11px] transition-colors ${
                           isActive ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                         }`}
-                        onClick={() => handleSelect(isPiBackend && m.provider ? `${m.provider}/${m.value}` : m.value)}
+                        onClick={() => handleSelect(isPiBackend && candidate.provider ? `${candidate.provider}/${candidate.value}` : candidate.value)}
                       >
-                        {m.label}
+                        {candidate.label}
                       </button>
                     );
                   })}
@@ -350,61 +454,23 @@ export function ModelPicker({
           <div className="px-3 py-2 text-[11px] text-text-tertiary">{search ? "No matches" : "No models available"}</div>
         )
       ) : (
-        filteredModels.length > 0 ? filteredModels.map((m) => (
+        filteredModels.length > 0 ? filteredModels.map((candidate) => (
           <button
-            key={m.value}
+            key={candidate.value}
             className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
-              (m.value === model || (m.provider && `${m.provider}/${m.value}` === model))
+              (candidate.value === model || (candidate.provider && `${candidate.provider}/${candidate.value}` === model))
                 ? "bg-accent/10 text-accent"
                 : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
             }`}
-            onClick={() => handleSelect(isPiBackend && m.provider ? `${m.provider}/${m.value}` : m.value)}
+            onClick={() => handleSelect(isPiBackend && candidate.provider ? `${candidate.provider}/${candidate.value}` : candidate.value)}
           >
-            {m.label}
+            {candidate.label}
           </button>
         )) : (
           <div className="px-3 py-2 text-[11px] text-text-tertiary">No matches</div>
         )
       )}
-      {!search && (
-        <>
-          <div className="border-t border-border-primary my-0.5" />
-          {customInput ? (
-            <div className="px-2 py-1.5">
-              <input
-                ref={inputRef}
-                type="text"
-                value={customValue}
-                onChange={(e) => setCustomValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && customValue.trim()) {
-                    handleSelect(customValue.trim());
-                    setCustomInput(false);
-                    setCustomValue("");
-                  }
-                  if (e.key === "Escape") {
-                    setCustomInput(false);
-                    setCustomValue("");
-                  }
-                }}
-                placeholder="provider/model-id"
-                className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
-              />
-              <p className="mt-1 text-[9px] text-text-tertiary">Enter to confirm</p>
-            </div>
-          ) : (
-            <button
-              className="w-full text-left px-3 py-1.5 text-[11px] text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
-              onClick={() => {
-                setCustomInput(true);
-                setCustomValue(matchedPreset ? "" : model);
-              }}
-            >
-              Custom model...
-            </button>
-          )}
-        </>
-      )}
+      {customModelFooter}
     </>
   );
 
@@ -412,7 +478,7 @@ export function ModelPicker({
     return (
       <div>
         {searchInput}
-        <div className="max-h-[240px] overflow-y-auto">{listContent}</div>
+        <div className="max-h-[240px] overflow-y-auto">{inlineListContent}</div>
       </div>
     );
   }
@@ -421,7 +487,7 @@ export function ModelPicker({
     <div className="relative" ref={ref}>
       <button
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors text-[11px]"
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen((value) => !value)}
       >
         <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M8 1v4M4.5 3L8 5l3.5-2M1 6l7 4 7-4M1 10l7 4 7-4" />
@@ -432,11 +498,97 @@ export function ModelPicker({
         </svg>
       </button>
       {open && (
-        <div className="absolute bottom-full mb-1 left-0 min-w-[200px] max-h-[320px] bg-bg-secondary border border-border-primary rounded-md shadow-lg z-50 flex flex-col">
-          {searchInput}
-          <div className="overflow-y-auto flex-1">
-            {listContent}
-          </div>
+        <div className="absolute bottom-full mb-1 left-0 w-56 bg-bg-secondary border border-border-primary rounded-md shadow-lg z-50 overflow-hidden">
+          {panel === "main" ? (
+            <div className="p-1.5 space-y-1.5">
+              {isPiBackend && providerChoices.length > 0 && (
+                <ModelPickerRow
+                  label="Provider"
+                  value={currentProviderLabel}
+                  onClick={() => setPanel("provider")}
+                />
+              )}
+              <ModelPickerRow
+                label="Model"
+                value={displayLabel}
+                onClick={() => setPanel("model")}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 border-b border-border-primary px-2 py-1.5">
+                <button
+                  type="button"
+                  className="flex items-center justify-center w-6 h-6 rounded-md text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
+                  onClick={() => {
+                    setPanel("main");
+                    setCustomInput(false);
+                    setSearch("");
+                  }}
+                  aria-label="Back"
+                >
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <path d="M6.5 2L3.5 5l3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                <div className="min-w-0 flex-1 text-[11px] font-medium text-text-primary">
+                  {panel === "provider" ? "Provider" : "Model"}
+                </div>
+                {panel === "model" && isPiBackend && (
+                  <div className="max-w-[96px] truncate text-[10px] text-text-tertiary">{currentProviderLabel}</div>
+                )}
+              </div>
+
+              {panel === "provider" ? (
+                <div className="max-h-[240px] overflow-y-auto p-1.5">
+                  {providerChoices.map((provider) => {
+                    const active = provider === currentProvider;
+                    return (
+                      <button
+                        key={provider}
+                        type="button"
+                        className={`w-full rounded-md px-2.5 py-2 text-left text-[11px] transition-colors ${
+                          active
+                            ? "bg-accent/10 text-accent"
+                            : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                        }`}
+                        onClick={() => handleProviderSelect(provider)}
+                      >
+                        {fmtProvider(provider)}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex flex-col max-h-[320px]">
+                  {searchInput}
+                  <div className="overflow-y-auto flex-1">
+                    {currentProviderModels.length > 0 ? currentProviderModels.map((candidate) => {
+                      const fullValue = isPiBackend && candidate.provider ? `${candidate.provider}/${candidate.value}` : candidate.value;
+                      const isActive = fullValue === model || candidate.value === currentModelId;
+                      return (
+                        <button
+                          key={fullValue}
+                          type="button"
+                          className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
+                            isActive
+                              ? "bg-accent/10 text-accent"
+                              : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                          }`}
+                          onClick={() => handleSelect(fullValue)}
+                        >
+                          {candidate.label}
+                        </button>
+                      );
+                    }) : (
+                      <div className="px-3 py-2 text-[11px] text-text-tertiary">{search ? "No matches" : "No models available"}</div>
+                    )}
+                    {customModelFooter}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
