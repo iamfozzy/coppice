@@ -911,18 +911,22 @@ function TileControlsDropdown({
     const nextModelId = nextModels.find((candidate) => candidate.value === currentModelId)?.value
       ?? nextModels[0]?.value
       ?? currentModelId;
-    if (nextModelId) onModelChange(`${provider}/${nextModelId}`);
-    closeMenu();
-  }, [availableModels, closeMenu, currentModelId, onModelChange]);
+    if (!nextModelId) {
+      setPanel("main");
+      return;
+    }
+    const nextValue = `${provider}/${nextModelId}`;
+    if (nextValue !== model) onModelChange(nextValue);
+    setPanel("model");
+  }, [availableModels, currentModelId, model, onModelChange]);
 
   const handleModelSelect = useCallback((value: string) => {
-    if (isPiBackend && !value.includes("/")) {
-      onModelChange(`${currentPiProvider}/${value}`);
-    } else {
-      onModelChange(value);
-    }
-    closeMenu();
-  }, [closeMenu, currentPiProvider, isPiBackend, onModelChange]);
+    const nextValue = isPiBackend && !value.includes("/")
+      ? `${currentPiProvider}/${value}`
+      : value;
+    if (nextValue !== model) onModelChange(nextValue);
+    setPanel("main");
+  }, [currentPiProvider, isPiBackend, model, onModelChange]);
 
   const panelTitle = panel === "provider"
     ? "Provider"
@@ -1071,7 +1075,7 @@ function TileControlsDropdown({
                   effort={effort}
                   onEffortChange={(value) => {
                     onEffortChange(value);
-                    closeMenu();
+                    setPanel("main");
                   }}
                   isPiBackend={isPiBackend}
                   inline
