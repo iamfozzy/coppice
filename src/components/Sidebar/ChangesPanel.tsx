@@ -237,35 +237,13 @@ export const ChangesPanel = memo(function ChangesPanel() {
             onClick={() => setTab("pr-status")}
           />
         </div>
-        {hasLocalChanges ? (
+        {hasLocalChanges && (
           <Tooltip text={uncommittedFiles.length > 0 ? "Commit all changes and push to origin" : `Push ${unpushedCount} unpushed commit${unpushedCount !== 1 ? "s" : ""} to origin`} side="top" align="right">
             <button
               className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
               onClick={handlePush}
             >
               {uncommittedFiles.length > 0 ? "Commit & Push" : `Push (${unpushedCount})`}
-            </button>
-          </Tooltip>
-        ) : (
-          <Tooltip text={`Create a pull request targeting ${baseBranch}`} side="top" align="right">
-            <button
-              className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
-              onClick={() => {
-                if (project.pr_create_skill) {
-                  if (useAgent) {
-                    requestAgentTab(project.pr_create_skill);
-                  } else {
-                    requestClaudeTab(project.pr_create_skill);
-                  }
-                } else {
-                  sendToAgent(
-                    `Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}`,
-                    fastModel
-                  );
-                }
-              }}
-            >
-              Create PR
             </button>
           </Tooltip>
         )}
@@ -306,6 +284,20 @@ export const ChangesPanel = memo(function ChangesPanel() {
             projectId={project.id}
             branch={worktree.branch}
             worktreePath={worktree.path}
+            onCreatePR={() => {
+              if (project.pr_create_skill) {
+                if (useAgent) {
+                  requestAgentTab(project.pr_create_skill);
+                } else {
+                  requestClaudeTab(project.pr_create_skill);
+                }
+              } else {
+                sendToAgent(
+                  `Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}`,
+                  fastModel
+                );
+              }
+            }}
             onFixWithClaude={(context) => {
               if (typeof context === "object" && "prNumber" in context) {
                 const checkList = context.failedChecks.length > 0

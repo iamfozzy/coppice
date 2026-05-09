@@ -10,9 +10,10 @@ interface Props {
   worktreePath: string;
   onFixWithClaude: (context: string | { prNumber: number; failedChecks: string[] }) => void;
   onOpenFile?: (file: string) => void;
+  onCreatePR?: () => void;
 }
 
-export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onOpenFile }: Props) {
+export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, onFixWithClaude, onOpenFile, onCreatePR }: Props) {
   const cacheKey = `pr-${projectId}-${worktreePath}`;
   const commentsCacheKey = `pr-comments-${projectId}-${worktreePath}`;
   const setPrComments = useAppStore((s) => s.setPrComments);
@@ -316,7 +317,14 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
       ) : (
         <div className="px-3 py-2">
           <div className="flex items-center gap-3">
-            <span className="text-[11px] text-text-tertiary">No PR found</span>
+            {onCreatePR && (
+              <button
+                onClick={onCreatePR}
+                className="px-1.5 py-0.5 text-[10px] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors"
+              >
+                Create PR
+              </button>
+            )}
             <button
               onClick={handleManualRefresh}
               className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors flex items-center gap-1"
