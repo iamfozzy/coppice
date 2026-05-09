@@ -60,19 +60,3 @@ pub fn purge_old_agent_tab_cache(
     db.purge_old_agent_tab_cache(max_age_days).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn load_agent_tab_trace(
-    db: State<'_, Database>,
-    tab_id: String,
-) -> Result<String, String> {
-    db.load_agent_tab_trace(&tab_id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn save_agent_tab_trace(
-    db: State<'_, Database>,
-    tab_id: String,
-    trace_json: String,
-) -> Result<(), String> {
-    db.save_agent_tab_trace(&tab_id, &trace_json).map_err(|e| e.to_string())
-}

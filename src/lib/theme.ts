@@ -1,7 +1,7 @@
 import type { ThemeMode } from "./types";
 
 /** Resolve "system" to the actual theme based on OS preference. */
-export function resolveTheme(mode: ThemeMode): "dark" | "light" {
+export function resolveTheme(mode: ThemeMode): "dark" | "dim" | "atom" | "light" {
   if (mode === "system") {
     return window.matchMedia("(prefers-color-scheme: dark)").matches
       ? "dark"
@@ -39,6 +39,52 @@ export const XTERM_DARK = {
   brightMagenta: "#c084fc",
   brightCyan: "#22d3ee",
   brightWhite: "#fafafa",
+};
+
+export const XTERM_DIM = {
+  background: "#171921",
+  foreground: "#dfe1e8",
+  cursor: "#dfe1e8",
+  selectionBackground: "#6366f150",
+  black: "#171921",
+  red: "#ef4444",
+  green: "#22c55e",
+  yellow: "#eab308",
+  blue: "#6366f1",
+  magenta: "#a855f7",
+  cyan: "#06b6d4",
+  white: "#dfe1e8",
+  brightBlack: "#646882",
+  brightRed: "#f87171",
+  brightGreen: "#4ade80",
+  brightYellow: "#fde047",
+  brightBlue: "#818cf8",
+  brightMagenta: "#c084fc",
+  brightCyan: "#22d3ee",
+  brightWhite: "#f0f1f5",
+};
+
+export const XTERM_ATOM = {
+  background: "#1e2127",
+  foreground: "#d4d8e0",
+  cursor: "#528bff",
+  selectionBackground: "#3e445180",
+  black: "#1e2127",
+  red: "#e86671",
+  green: "#98c379",
+  yellow: "#e5c07b",
+  blue: "#61afef",
+  magenta: "#c678dd",
+  cyan: "#56b6c2",
+  white: "#d4d8e0",
+  brightBlack: "#5c6370",
+  brightRed: "#f07178",
+  brightGreen: "#a9d488",
+  brightYellow: "#f0d07e",
+  brightBlue: "#74baf7",
+  brightMagenta: "#d07ef7",
+  brightCyan: "#68d8d6",
+  brightWhite: "#e8eaf0",
 };
 
 export const XTERM_LIGHT = {
@@ -97,6 +143,40 @@ export const MONACO_DARK_COLORS = {
   "editorLineNumber.activeForeground": "#abb2bf",
   "editor.selectionBackground": "#3e4451",
   "editor.lineHighlightBackground": "#1a1a1e",
+  "editorCursor.foreground": "#528bff",
+  "editorGutter.addedBackground": "#98c37980",
+  "editorGutter.modifiedBackground": "#e5c07b80",
+  "editorGutter.deletedBackground": "#e06c7580",
+  "diffEditor.insertedTextBackground": "#98c37930",
+  "diffEditor.removedTextBackground": "#e06c7530",
+  "diffEditor.insertedLineBackground": "#98c37920",
+  "diffEditor.removedLineBackground": "#e06c7520",
+};
+
+export const MONACO_DIM_COLORS = {
+  "editor.background": "#171921",
+  "editor.foreground": "#abb2bf",
+  "editorLineNumber.foreground": "#4a5068",
+  "editorLineNumber.activeForeground": "#abb2bf",
+  "editor.selectionBackground": "#3e4460",
+  "editor.lineHighlightBackground": "#1e2029",
+  "editorCursor.foreground": "#528bff",
+  "editorGutter.addedBackground": "#98c37980",
+  "editorGutter.modifiedBackground": "#e5c07b80",
+  "editorGutter.deletedBackground": "#e06c7580",
+  "diffEditor.insertedTextBackground": "#98c37930",
+  "diffEditor.removedTextBackground": "#e06c7530",
+  "diffEditor.insertedLineBackground": "#98c37920",
+  "diffEditor.removedLineBackground": "#e06c7520",
+};
+
+export const MONACO_ATOM_COLORS = {
+  "editor.background": "#1e2127",
+  "editor.foreground": "#abb2bf",
+  "editorLineNumber.foreground": "#495162",
+  "editorLineNumber.activeForeground": "#abb2bf",
+  "editor.selectionBackground": "#353a46",
+  "editor.lineHighlightBackground": "#252830",
   "editorCursor.foreground": "#528bff",
   "editorGutter.addedBackground": "#98c37980",
   "editorGutter.modifiedBackground": "#e5c07b80",

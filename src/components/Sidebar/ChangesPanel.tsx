@@ -204,6 +204,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
   };
 
   const useAgent = appSettings?.default_claude_mode === "agent";
+  const backend = appSettings?.agent_backend || "claude";
   const sendToAgent = (prompt: string, model?: string) => {
     if (useAgent) {
       requestAgentTab(prompt, model);
@@ -212,13 +213,15 @@ export const ChangesPanel = memo(function ChangesPanel() {
     }
   };
 
-  const HAIKU_MODEL = "claude-haiku-4-5-20251001";
+  // In Pi mode, use the user's default model (no override needed).
+  // In Claude mode, use Haiku for fast/cheap commit and push operations.
+  const fastModel = backend === "pi" ? undefined : "claude-haiku-4-5-20251001";
 
   const handlePush = () => {
     if (uncommittedFiles.length > 0) {
-      sendToAgent("Commit all the changes in this worktree with a clear, descriptive commit message, then push to origin. Do NOT add any Co-Authored-By or attribution lines to the commit message.", HAIKU_MODEL);
+      sendToAgent("Commit all the changes in this worktree with a clear, descriptive commit message, then push to origin. Do NOT add any Co-Authored-By or attribution lines to the commit message.", fastModel);
     } else {
-      sendToAgent("Push the current branch to origin.", HAIKU_MODEL);
+      sendToAgent("Push the current branch to origin.", fastModel);
     }
   };
 
@@ -257,7 +260,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
                 } else {
                   sendToAgent(
                     `Please look at the changes on this branch compared to the ${baseBranch} branch (the target branch). Push the branch to origin if needed, then create a well-written pull request targeting the ${baseBranch} branch, with a clear title and description summarizing the changes. Use: gh pr create --base ${baseBranch}`,
-                    HAIKU_MODEL
+                    fastModel
                   );
                 }
               }}

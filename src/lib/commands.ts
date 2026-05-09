@@ -278,6 +278,7 @@ export async function githubAuthLogout(): Promise<void> {
 
 // Agent commands
 export interface AgentStartOptions {
+  backend?: import("./types").AgentBackend;
   model?: string;
   effort?: string;
   permissionMode?: string;
@@ -305,6 +306,7 @@ export async function agentStart(
     sessionId,
     cwd,
     prompt,
+    backend: options?.backend,
     model: options?.model,
     effort: options?.effort,
     permissionMode: options?.permissionMode,
@@ -396,6 +398,29 @@ export async function agentCheckAvailable(): Promise<AgentAvailability> {
   return invoke("agent_check_available");
 }
 
+/** Start Pi OAuth login flow for a provider. Opens browser for auth. */
+export async function piOAuthLogin(provider: string): Promise<void> {
+  return invoke("pi_oauth_login", { provider });
+}
+
+/** Check which providers have OAuth credentials in ~/.pi/agent/auth.json. */
+export async function piOAuthCheck(): Promise<Record<string, boolean>> {
+  return invoke("pi_oauth_check");
+}
+
+/** Query the Pi SDK's built-in model registry. No running session required. */
+export async function piGetModels(): Promise<
+  Array<{
+    value: string;
+    label: string;
+    provider: string;
+    contextWindow: number;
+    reasoning: boolean;
+  }>
+> {
+  return invoke("pi_get_models");
+}
+
 export interface ImageFileData {
   data: string;
   media_type: string;
@@ -423,6 +448,7 @@ export interface AgentTabCache {
   label: string;
   cwd: string;
   sdk_session_id: string | null;
+  backend: string | null;
   model: string;
   effort: string;
   permission_mode: string;
@@ -465,10 +491,3 @@ export async function deleteAgentTabCacheForWorktree(worktreeId: string): Promis
   return invoke("delete_agent_tab_cache_for_worktree", { worktreeId });
 }
 
-export async function loadAgentTabTrace(tabId: string): Promise<string> {
-  return invoke("load_agent_tab_trace", { tabId });
-}
-
-export async function saveAgentTabTrace(tabId: string, traceJson: string): Promise<void> {
-  return invoke("save_agent_tab_trace", { tabId, traceJson });
-}

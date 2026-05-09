@@ -7,6 +7,7 @@ mod settings;
 use db::Database;
 use services::agent_manager::AgentManager;
 use services::pty_manager::PtyManager;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,7 +23,7 @@ pub fn run() {
     let agent_manager = AgentManager::new();
     let settings_state = settings::SettingsState::new();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -89,6 +90,9 @@ pub fn run() {
             commands::agent::agent_close,
             commands::agent::agent_exists,
             commands::agent::agent_check_available,
+            commands::agent::pi_get_models,
+            commands::agent::pi_oauth_login,
+            commands::agent::pi_oauth_check,
             commands::agent::read_image_base64,
             commands::agent::get_project_commands,
             // Agent tab cache commands
@@ -99,9 +103,17 @@ pub fn run() {
             commands::agent_tab_cache::delete_agent_tab_cache,
             commands::agent_tab_cache::delete_agent_tab_cache_for_worktree,
             commands::agent_tab_cache::purge_old_agent_tab_cache,
-            commands::agent_tab_cache::load_agent_tab_trace,
-            commands::agent_tab_cache::save_agent_tab_trace,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            // Gracefully shut down all child processes to prevent orphans.
+            let agent_mgr = handle.state::<AgentManager>();
+            agent_mgr.close_all();
+            let pty_mgr = handle.state::<PtyManager>();
+            pty_mgr.close_all();
+        }
+    });
 }

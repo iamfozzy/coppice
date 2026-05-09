@@ -28,6 +28,46 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
+/* ── Dim theme overrides — softer dark with slate-blue undertone ── */
+[data-theme="dim"] {
+  --color-bg-primary: #171921;
+  --color-bg-secondary: #1e2029;
+  --color-bg-tertiary: #272a37;
+  --color-bg-hover: #303445;
+  --color-bg-active: #393e52;
+
+  --color-border-primary: #353b50;
+  --color-border-secondary: #464d66;
+
+  --color-text-primary: #dfe1e8;
+  --color-text-secondary: #9095a8;
+  --color-text-tertiary: #646882;
+}
+
+/* ── Atom One Dark theme ── */
+[data-theme="atom"] {
+  --color-bg-primary: #1e2127;
+  --color-bg-secondary: #191c21;
+  --color-bg-tertiary: #252830;
+  --color-bg-hover: #2c303a;
+  --color-bg-active: #353a46;
+
+  --color-border-primary: #333842;
+  --color-border-secondary: #434955;
+
+  --color-text-primary: #d4d8e0;
+  --color-text-secondary: #8d93a5;
+  --color-text-tertiary: #5c6370;
+
+  --color-accent: #528bff;
+  --color-accent-hover: #61afef;
+  --color-accent-muted: #528bff33;
+
+  --color-success: #5ec26a;
+  --color-warning: #d4a028;
+  --color-error: #e55561;
+}
+
 /* ── Light theme overrides ── */
 [data-theme="light"] {
   --color-bg-primary: #ffffff;

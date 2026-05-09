@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { AgentMessage } from "../../lib/types";
-import { ToolCallCard } from "./ToolCallCard";
+import { ToolCallCard, normalizeToolName } from "./ToolCallCard";
 
 export interface GroupedTool {
   callMsg: AgentMessage;
@@ -11,16 +11,7 @@ interface Props {
   tools: GroupedTool[];
 }
 
-/**
- * Groups a run of consecutive tool calls from the same assistant turn into a
- * single collapsible block. While any tool is still running, the group is
- * auto-expanded so the user can see progress; once all tools finish it
- * auto-collapses to a one-line summary. Manual toggle overrides the auto
- * behavior.
- *
- * Single-tool groups render inline as a plain row (no group chrome).
- */
-export function ToolGroup({ tools }: Props) {
+export const ToolGroup = memo(function ToolGroup({ tools }: Props) {
   const anyActive = tools.some((t) => t.resultMsg === null);
   const anyError = tools.some((t) => t.resultMsg?.isError);
 
@@ -43,7 +34,7 @@ export function ToolGroup({ tools }: Props) {
   // Build "Read×3, Grep×2" summary
   const counts = new Map<string, number>();
   for (const t of tools) {
-    const n = t.callMsg.toolName || "Tool";
+    const n = normalizeToolName(t.callMsg.toolName || "Tool");
     counts.set(n, (counts.get(n) || 0) + 1);
   }
   const summary = [...counts.entries()]
@@ -97,4 +88,4 @@ export function ToolGroup({ tools }: Props) {
       )}
     </div>
   );
-}
+});

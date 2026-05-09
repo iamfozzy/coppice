@@ -1,5 +1,9 @@
 import { useState } from "react";
+import { useAppStore, type SubagentChild } from "../../stores/appStore";
 import { MarkdownContent } from "./MessageBubble";
+
+/** Stable reference so the Zustand selector doesn't trigger infinite re-renders. */
+const EMPTY_CHILDREN: SubagentChild[] = [];
 
 interface Props {
   toolName: string;
@@ -15,9 +19,33 @@ interface TodoItem {
   activeForm?: string;
 }
 
+export function normalizeToolName(name: string): string {
+  const lower = name.toLowerCase();
+  const map: Record<string, string> = {
+    read: "Read",
+    write: "Write",
+    edit: "Edit",
+    bash: "Bash",
+    glob: "Glob",
+    grep: "Grep",
+    find: "Grep",
+    ls: "Bash",
+    todowrite: "TodoWrite",
+    websearch: "WebSearch",
+    web_search: "WebSearch",
+    webfetch: "WebFetch",
+    fetch_content: "WebFetch",
+    agent: "Agent",
+    subagent: "Subagent",
+    code_search: "Grep",
+    get_search_content: "Read",
+  };
+  return map[lower] || name;
+}
+
 /** Icon for common tool types. Falls back to a generic wrench. */
 function ToolIcon({ name }: { name: string }) {
-  switch (name) {
+  switch (normalizeToolName(name)) {
     case "Read":
       return (
         <svg width="11" height="11" viewBox="0 0 12 12" fill="none" className="shrink-0">
@@ -53,6 +81,14 @@ function ToolIcon({ name }: { name: string }) {
           <path d="M3.5 6l1.5 1.5 3.5-3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
+    case "Subagent":
+    case "Agent":
+      return (
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" className="shrink-0">
+          <circle cx="6" cy="4" r="2.5" stroke="currentColor" strokeWidth="1.1" />
+          <path d="M2 10.5c0-2.2 1.8-4 4-4s4 1.8 4 4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+        </svg>
+      );
     default:
       return (
         <svg width="11" height="11" viewBox="0 0 12 12" fill="none" className="shrink-0">
@@ -63,10 +99,13 @@ function ToolIcon({ name }: { name: string }) {
 }
 
 export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActive }: Props) {
-  const richContent = getRichContent(toolName, toolInput);
-  const [expanded, setExpanded] = useState(richContent !== null);
-  const summary = toolInput != null ? summarizeInput(toolName, toolInput) : "";
-  const hasDetail = toolInput != null || !!toolOutput;
+  const normalized = normalizeToolName(toolName);
+  const richContent = getRichContent(normalized, toolInput);
+  const isSubagent = normalized === "Subagent";
+  const [expanded, setExpanded] = useState(richContent !== null || isSubagent);
+  const summary = toolInput != null ? summarizeInput(normalized, toolInput) : "";
+  const subagentChildren = useAppStore((s) => isSubagent && isActive ? s.subagentChildren : EMPTY_CHILDREN);
+  const hasDetail = (toolInput != null && !isSubagent) || !!toolOutput || isSubagent;
 
   const accent = isError ? "text-error" : isActive ? "text-accent" : "text-text-tertiary";
 
@@ -91,7 +130,7 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
 
         <span className={accent}><ToolIcon name={toolName} /></span>
         <span className="font-mono text-text-secondary font-medium">
-          {richContent?.label ?? toolName}
+          {richContent?.label ?? normalized}
         </span>
 
         {summary && (
@@ -114,7 +153,7 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
             <RichToolContent content={richContent} />
           ) : (
             <>
-              {toolInput != null && (
+              {toolInput != null && !isSubagent && (
                 <div>
                   <span className="text-text-tertiary text-[10px] uppercase tracking-wider font-medium">Input</span>
                   <pre className="mt-0.5 text-text-secondary font-mono text-[11px] whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-bg-tertiary/60 rounded px-2 py-1.5 leading-relaxed">
@@ -123,6 +162,18 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
                 </div>
               )}
             </>
+          )}
+
+          {/* Subagent: live children when active, task summary when completed */}
+          {isSubagent && isActive && subagentChildren.length > 0 && (
+            <div className="space-y-0.5">
+              {subagentChildren.map((child) => (
+                <SubagentChildRow key={child.id} child={child} />
+              ))}
+            </div>
+          )}
+          {isSubagent && !isActive && toolInput != null && (
+            <SubagentTaskSummary input={toolInput} />
           )}
 
           {toolOutput && (
@@ -143,6 +194,94 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
   );
 }
 
+// ── Subagent child row ──
+
+function SubagentChildRow({ child }: { child: SubagentChild }) {
+  const role = child.role.charAt(0).toUpperCase() + child.role.slice(1);
+  const taskPreview = child.task ? truncate(child.task, 80) : "";
+
+  return (
+    <div className="flex items-center gap-2 px-1.5 py-0.5 rounded font-mono text-[11px]">
+      {child.status === "done" ? (
+        <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
+      ) : child.status === "error" ? (
+        <span className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
+      ) : (
+        <span className="relative flex h-1.5 w-1.5 shrink-0">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-60" />
+          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
+        </span>
+      )}
+
+      <span className={
+        child.status === "done" ? "text-text-tertiary" :
+        child.status === "error" ? "text-error/80" :
+        "text-text-secondary font-medium"
+      }>
+        {role}
+      </span>
+
+      {child.status === "running" && child.lastTool && (
+        <span className="text-text-tertiary">{child.lastTool}</span>
+      )}
+
+      {child.status === "done" && (
+        <span className="text-success/70">done</span>
+      )}
+
+      {child.status === "error" && (
+        <span className="text-error/70 truncate">{child.error}</span>
+      )}
+
+      {child.status === "running" && !child.lastTool && taskPreview && (
+        <span className="text-text-tertiary truncate">{taskPreview}</span>
+      )}
+    </div>
+  );
+}
+
+/** Compact task summary for completed subagent cards (restored from cache). */
+function SubagentTaskSummary({ input }: { input: unknown }) {
+  if (!input || typeof input !== "object") return null;
+  const obj = input as Record<string, unknown>;
+
+  // Build list of { role, task } entries
+  const entries: { role: string; task: string }[] = [];
+  if (Array.isArray(obj.tasks)) {
+    for (const t of obj.tasks) {
+      if (t && typeof t === "object") {
+        const to = t as Record<string, unknown>;
+        entries.push({
+          role: String(to.agent || "worker"),
+          task: String(to.task || ""),
+        });
+      }
+    }
+  } else if (obj.task) {
+    entries.push({
+      role: String(obj.agent || "worker"),
+      task: String(obj.task),
+    });
+  }
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="space-y-0.5">
+      {entries.map((e, i) => {
+        const label = e.role.charAt(0).toUpperCase() + e.role.slice(1);
+        return (
+          <div key={i} className="flex items-center gap-2 px-1.5 py-0.5 font-mono text-[11px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
+            <span className="text-text-tertiary">{label}</span>
+            <span className="text-text-tertiary truncate">{truncate(e.task, 80)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Rich content detection ──
 
 type RichContent =
@@ -157,9 +296,9 @@ function getRichContent(toolName: string, toolInput: unknown): RichContent | nul
     return { kind: "todos", label: "Plan", todos: obj.todos as TodoItem[] };
   }
 
-  if (toolName === "Write" && typeof obj.file_path === "string" && typeof obj.content === "string") {
-    const fp = obj.file_path as string;
-    if (isPlanFile(fp)) {
+  if (toolName === "Write" && typeof obj.content === "string") {
+    const fp = (obj.file_path || obj.path) as string | undefined;
+    if (typeof fp === "string" && isPlanFile(fp)) {
       return { kind: "plan_md", label: "Write Plan", filePath: fp, markdown: obj.content as string };
     }
   }
@@ -244,9 +383,8 @@ function summarizeInput(toolName: string, input: unknown): string {
   switch (toolName) {
     case "Read":
     case "Write":
-      return shortPath(String(obj.file_path || ""));
     case "Edit":
-      return shortPath(String(obj.file_path || ""));
+      return shortPath(String(obj.file_path || obj.path || ""));
     case "Bash":
       return truncate(String(obj.command || ""), 70);
     case "Glob":
@@ -259,6 +397,13 @@ function summarizeInput(toolName: string, input: unknown): string {
       return truncate(String(obj.url || ""), 60);
     case "Agent":
       return truncate(String(obj.description || ""), 60);
+    case "Subagent": {
+      const role = String(obj.agent || "worker");
+      const task = obj.task ? truncate(String(obj.task), 50) : "";
+      const tasks = Array.isArray(obj.tasks) ? obj.tasks : [];
+      if (tasks.length > 1) return `${tasks.length} parallel tasks`;
+      return task ? `${role}: ${task}` : role;
+    }
     case "TodoWrite": {
       const todos = Array.isArray(obj.todos) ? obj.todos as TodoItem[] : [];
       const done = todos.filter((t) => t.status === "completed").length;

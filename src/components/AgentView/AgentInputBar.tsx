@@ -354,7 +354,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
         </div>
       )}
 
-      <div className="flex items-end gap-2 px-3 py-2.5 bg-bg-secondary">
+      <div className="flex items-end gap-2 px-3 py-2.5 bg-bg-secondary min-w-0">
         {/* Hidden file input */}
         <input
           ref={fileInputRef}
@@ -385,7 +385,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
         </Tooltip>
         <textarea
           ref={textareaRef}
-          className="flex-1 resize-none overflow-hidden bg-transparent border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-0 transition-colors font-mono leading-relaxed"
+          className="flex-1 min-w-0 resize-none overflow-hidden bg-transparent border border-border-primary rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/60 focus:ring-0 transition-colors font-mono leading-relaxed"
           rows={1}
           value={text}
           onChange={(e) => setText(e.target.value)}

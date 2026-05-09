@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as commands from "../../lib/commands";
 import { useAppStore } from "../../stores/appStore";
-import type { AgentMessage, EffortLevel, ImageAttachment, SlashCommand, TraceEvent } from "../../lib/types";
+import type { AgentMessage, EffortLevel, ImageAttachment, SlashCommand } from "../../lib/types";
 import { AgentToolbar } from "./AgentToolbar";
 import { AgentControls } from "./AgentControls";
 import { MessageList } from "./MessageList";
@@ -23,9 +23,22 @@ function nextMsgId() {
   return `msg-${++msgIdCounter}-${Date.now()}`;
 }
 
-let traceIdCounter = 0;
-function nextTraceId() {
-  return `tr-${++traceIdCounter}-${Date.now()}`;
+function shouldSurfaceBridgeStderr(text: string, recentStructuredErrorMs: number) {
+  if (!text.trim()) return false;
+
+  if (/generated title:|generating title for/i.test(text)) return false;
+  if (/Failed to enumerate models:/i.test(text)) return false;
+
+  if (/\[(?:pi-)?bridge\]\s*(event:|step:|turn usage:|session start\b|prompting model=|auth storage:|opening browser:|stdout:|script:|process spawned\b|starting login for:|killing previous OAuth process\b|received SIGTERM\b|progress:|auth: url=|login succeeded\b|credentials saved\b|model switched to\b|agent\.prompt\(\) resolved\b)/i.test(text)) {
+    return false;
+  }
+
+  const echoedStructuredError = /\[(?:pi-)?bridge\]\s*(API error:|Agent error:|Agent prompt error:|Error handling command:|Failed to resolve model\b)/i;
+  if (echoedStructuredError.test(text)) {
+    return recentStructuredErrorMs >= 2000;
+  }
+
+  return /cannot find module|cannot find package|ERR_MODULE_NOT_FOUND|SyntaxError|ReferenceError|TypeError|Unhandled|uncaught|ENOENT|EACCES|permission denied|node:internal|Failed to spawn|Failed to start|import error|bridge script .* not found/i.test(text);
 }
 
 export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
@@ -50,15 +63,19 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   const cancelQueuedMessage = useAppStore((s) => s.cancelQueuedAgentMessage);
   const shiftQueuedMessage = useAppStore((s) => s.shiftQueuedMessage);
   const promoteAllQueuedMessages = useAppStore((s) => s.promoteAllQueuedMessages);
-  const appendTrace = useAppStore((s) => s.appendTraceEvent);
-  const appendTraces = useAppStore((s) => s.appendTraceEvents);
   const appSettings = useAppStore((s) => s.appSettings);
+  const piAvailableModels = useAppStore((s) => s.piAvailableModels);
+  const ensurePiModelsLoaded = useAppStore((s) => s.ensurePiModelsLoaded);
+  const setBackend = useAppStore((s) => s.setAgentBackend);
 
   const startedRef = useRef(false);
   // Track current tool_use blocks to pair with tool_results
   const activeToolsRef = useRef<Map<string, { name: string; input: unknown }>>(new Map());
   // Track the last assistant message uuid to deduplicate
   const lastAssistantUuidRef = useRef<string | null>(null);
+  // Recent structured stdout error event time, used to suppress duplicate
+  // stderr echoes from the bridge process.
+  const lastStructuredErrorAtRef = useRef(0);
   // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt).
   // If the tab was restored from cache (has existing messages), treat it as already renamed.
   const tabRenamedRef = useRef((session?.messages?.length ?? 0) > 0);
@@ -66,6 +83,27 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   // Stall detection — track last event from bridge, warn if no events for 30s while busy
   const lastEventTimeRef = useRef(Date.now());
   const [stalled, setStalled] = useState(false);
+
+  // Buffer streaming text/thinking deltas and flush once per animation frame
+  const streamingTextBuf = useRef("");
+  const streamingThinkingBuf = useRef("");
+  const streamingRafId = useRef(0);
+  const flushStreamingBuffers = useCallback(() => {
+    streamingRafId.current = 0;
+    if (streamingTextBuf.current) {
+      updateStreaming(sessionId, streamingTextBuf.current);
+      streamingTextBuf.current = "";
+    }
+    if (streamingThinkingBuf.current) {
+      updateStreamingThinking(sessionId, streamingThinkingBuf.current);
+      streamingThinkingBuf.current = "";
+    }
+  }, [sessionId, updateStreaming, updateStreamingThinking]);
+
+  useEffect(() => {
+    if (session?.backend !== "pi" || piAvailableModels.length > 0) return;
+    ensurePiModelsLoaded().catch(() => {});
+  }, [session?.backend, piAvailableModels.length, ensurePiModelsLoaded]);
 
   /** Rename this tab by looking up the owning worktree. */
   const renameThisTab = (label: string) => {
@@ -97,6 +135,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       // Always resume — SDK handles its own compaction
       commands
         .agentStart(sessionId, cwd, text, {
+          backend: currentSession.backend,
           model: currentSession.model || undefined,
           effort: currentSession.effort || undefined,
           permissionMode: currentSession.permissionMode || undefined,
@@ -120,6 +159,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       // Fresh start
       commands
         .agentStart(sessionId, cwd, text, {
+          backend: currentSession?.backend,
           model: currentSession?.model || undefined,
           effort: currentSession?.effort || undefined,
           permissionMode: currentSession?.permissionMode || undefined,
@@ -143,6 +183,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
 
   // Subscribe to agent events from the Rust backend
   useEffect(() => {
+    let eventCount = 0;
+    let eventWindowStart = Date.now();
+    const EVENT_RATE_WINDOW_MS = 1000;
+    const EVENT_RATE_WARN_THRESHOLD = 500;
+
     const unlisten = listen<string>(`agent-event-${sessionId}`, (event) => {
       let msg: Record<string, unknown>;
       try {
@@ -150,13 +195,26 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       } catch {
         return;
       }
-      lastEventTimeRef.current = Date.now();
+
+      // Event rate tracking — detect bridge flooding
+      eventCount++;
+      const now = Date.now();
+      if (now - eventWindowStart >= EVENT_RATE_WINDOW_MS) {
+        if (eventCount > EVENT_RATE_WARN_THRESHOLD) {
+          console.warn(`[AgentPanel] high event rate: ${eventCount} events/sec from bridge (session ${sessionId})`);
+        }
+        eventCount = 0;
+        eventWindowStart = now;
+      }
+
+      lastEventTimeRef.current = now;
       if (stalled) setStalled(false);
       handleBridgeEvent(msg);
     });
 
     return () => {
       unlisten.then((fn) => fn());
+      if (streamingRafId.current) cancelAnimationFrame(streamingRafId.current);
     };
   }, [sessionId]);
 
@@ -175,16 +233,15 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   // Eagerly load project slash commands from .claude/commands/ so they appear
   // in the command picker before the SDK bridge session has started.
   useEffect(() => {
-    console.log("[AgentPanel] useEffect fired — loading project commands for cwd:", cwd, "sessionId:", sessionId);
-    commands.getProjectCommands(cwd).then((projectCmds) => {
-      console.log("[AgentPanel] getProjectCommands returned:", projectCmds);
-      if (!projectCmds.length) return;
-      const store = useAppStore.getState();
-      const current = store.agentSessionByTab[sessionId]?.slashCommands ?? [];
-      console.log("[AgentPanel] current slashCommands count:", current.length);
-      const existingNames = new Set(current.map((c) => c.name));
-      const newCmds = projectCmds.filter((c) => !existingNames.has(c.name));
-      if (newCmds.length) {
+    commands
+      .getProjectCommands(cwd)
+      .then((projectCmds) => {
+        if (!projectCmds.length) return;
+        const store = useAppStore.getState();
+        const current = store.agentSessionByTab[sessionId]?.slashCommands ?? [];
+        const existingNames = new Set(current.map((c) => c.name));
+        const newCmds = projectCmds.filter((c) => !existingNames.has(c.name));
+        if (!newCmds.length) return;
         setSlashCommands(sessionId, [
           ...current,
           ...newCmds.map((c) => ({
@@ -193,9 +250,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
             argumentHint: c.argumentHint,
           })),
         ]);
-        console.log("[AgentPanel] Merged", newCmds.length, "project commands into store");
-      }
-    }).catch((err) => { console.warn("[AgentPanel] Failed to load project commands:", err); });
+      })
+      .catch((err) => {
+        console.warn("[AgentPanel] Failed to load project commands:", err);
+      });
   }, [sessionId, cwd]);
 
   // Start the session if we have an initial prompt
@@ -213,12 +271,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       content: initialPrompt,
       timestamp: Date.now(),
     });
-    // Trace: initial query_start
-    appendTrace(sessionId, { type: "query_start", content: initialPrompt, id: nextTraceId(), timestamp: Date.now() });
     setStatus(sessionId, "thinking");
 
     commands
       .agentStart(sessionId, cwd, initialPrompt, {
+        backend: session?.backend,
         model: session?.model || undefined,
         effort: session?.effort || undefined,
         permissionMode: session?.permissionMode || undefined,
@@ -241,9 +298,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
 
   function handleBridgeEvent(msg: Record<string, unknown>) {
     const type = msg.type as string;
-    // Batch trace events — collected during the switch and flushed once at the end
-    const pendingTraces: Array<Omit<TraceEvent, "id" | "timestamp">> = [];
-    const bt = (e: Omit<TraceEvent, "id" | "timestamp">) => { pendingTraces.push(e); };
 
     switch (type) {
       case "init": {
@@ -289,7 +343,15 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       }
 
       case "assistant": {
-        // Flush any streaming text into a final message
+        // Flush buffered streaming deltas before clearing
+        if (streamingRafId.current) {
+          cancelAnimationFrame(streamingRafId.current);
+          streamingRafId.current = 0;
+        }
+        streamingTextBuf.current = "";
+        streamingThinkingBuf.current = "";
+
+        // Clear any streaming text
         const store = useAppStore.getState();
         const currentSession = store.agentSessionByTab[sessionId];
         if (currentSession?.streamingText) {
@@ -338,28 +400,18 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           });
         }
 
-        // Trace: turn_start FIRST — includes tool names so the turn always
-        // knows what tools were called even if tool_result pairing fails.
-        bt({
-          type: "turn_start",
-          content: textContent ? textContent.slice(0, 200) : undefined,
-          thinkingText: thinkingText || undefined,
-          turnToolNames: toolBlocks.length > 0 ? toolBlocks.map((b) => b.name) : undefined,
-        });
-
-        // Trace: individual tool_call events (for pairing with tool_result)
-        for (const tb of toolBlocks) {
-          bt({ type: "tool_call", toolName: tb.name, toolInput: tb.input, toolUseId: tb.id });
-        }
         break;
       }
 
       case "partial": {
         const delta = msg.delta as { type: string; text?: string; thinking?: string } | undefined;
         if (delta?.type === "text" && delta.text) {
-          updateStreaming(sessionId, delta.text);
+          streamingTextBuf.current += delta.text;
         } else if (delta?.type === "thinking" && delta.text) {
-          updateStreamingThinking(sessionId, delta.text);
+          streamingThinkingBuf.current += delta.text;
+        }
+        if (!streamingRafId.current) {
+          streamingRafId.current = requestAnimationFrame(flushStreamingBuffers);
         }
         setStatus(sessionId, "thinking");
         break;
@@ -369,6 +421,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         const toolUseId = msg.toolUseId as string;
         const tool = activeToolsRef.current.get(toolUseId);
         activeToolsRef.current.delete(toolUseId);
+        // Clear subagent children when the subagent tool completes
+        if (tool?.name === "subagent") {
+          useAppStore.getState().clearSubagentChildren();
+        }
         appendMessage(sessionId, {
           id: nextMsgId(),
           type: "tool_result",
@@ -377,14 +433,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           toolUseId,
           isError: msg.isError as boolean,
           timestamp: Date.now(),
-        });
-        // Trace: tool_result
-        bt({
-          type: "tool_result",
-          toolName: tool?.name || "Tool",
-          toolOutput: (msg.content as string)?.slice(0, 500),
-          toolUseId,
-          isError: msg.isError as boolean,
         });
         break;
       }
@@ -409,8 +457,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           // Accumulate output tokens for the in-flight query so the toolbar
           // can show live progress while session totals stay frozen.
           useAppStore.getState().accumulateQueryOutput(sessionId, tc.outputTokens);
-          // Trace: preserve per-turn cost (this is the data that was previously overwritten)
-          bt({ type: "turn_cost", cost: tc });
         }
         break;
       }
@@ -466,20 +512,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           useAppStore.getState().setAgentSdkContextWindow(sessionId, sdkContextWindow);
         }
         const subtype = msg.subtype as string;
+        const endedWithError = subtype === "error" || subtype.startsWith("error_");
         activeToolsRef.current.clear();
         lastAssistantUuidRef.current = null;
-
-        // Trace: query_end with full metrics
-        const durationMs = msg.durationMs as number | undefined;
-        const numTurns = msg.numTurns as number | undefined;
-        bt({
-          type: "query_end",
-          durationMs,
-          numTurns,
-          cumulativeCost: cost ?? undefined,
-          contextWindow: sdkContextWindow,
-          status: subtype,
-        });
 
         // Auto-dispatch next queued message
         const latestSession = useAppStore.getState().agentSessionByTab[sessionId];
@@ -497,9 +532,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
             timestamp: Date.now(),
           });
         }
-        setStatus(sessionId, "done");
+        setStatus(sessionId, endedWithError ? "error" : "done");
 
-        if (hasQueue) {
+        if (hasQueue && !endedWithError) {
           const nextQueued = latestSession.queuedMessages[0];
           shiftQueuedMessage(sessionId);
           dispatchToAgent(nextQueued.text, nextQueued.images);
@@ -511,14 +546,18 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         const statusVal = msg.status as string;
         if (statusVal === "tool_use") setStatus(sessionId, "tool_use");
         else if (statusVal === "thinking") setStatus(sessionId, "thinking");
-        else if (statusVal === "exited") setStatus(sessionId, "done");
-        // Trace: status transitions
-        bt({ type: "status_change", status: statusVal });
+        else if (statusVal === "exited") {
+          const currentStatus = useAppStore.getState().agentSessionByTab[sessionId]?.status;
+          if (currentStatus === "thinking" || currentStatus === "tool_use" || currentStatus === "waiting_permission" || currentStatus === "waiting_input") {
+            setStatus(sessionId, "done");
+          }
+        }
         break;
       }
 
       case "error": {
         const errorMsg = msg.message as string;
+        lastStructuredErrorAtRef.current = Date.now();
         appendMessage(sessionId, {
           id: nextMsgId(),
           type: "error",
@@ -526,8 +565,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           timestamp: Date.now(),
         });
         setStatus(sessionId, "error");
-        // Trace: error
-        bt({ type: "error", content: errorMsg });
 
         // Promote all queued messages to regular (unsent) user messages on error —
         // don't auto-dispatch so the user can decide whether to retry.
@@ -544,12 +581,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         // thread. If the bridge dies before emitting anything useful, this is
         // the only breadcrumb the user gets.
         const text = (msg.text as string) || "";
-        // Skip known informational log lines that aren't real errors
-        const isInfoLine = /generated title:|generating title for/i.test(text);
-        const looksLikeError = /error|cannot find|failed|exception|ENOENT|throw/i.test(text);
-        if (looksLikeError && !isInfoLine) {
-          // Strip any existing [bridge] prefix to avoid doubling up
-          const cleaned = text.replace(/^\[bridge\]\s*/i, "");
+        const recentStructuredErrorMs = Date.now() - lastStructuredErrorAtRef.current;
+        if (shouldSurfaceBridgeStderr(text, recentStructuredErrorMs)) {
+          const cleaned = text.replace(/^\[(?:pi-)?bridge\]\s*/i, "");
           appendMessage(sessionId, {
             id: nextMsgId(),
             type: "error",
@@ -604,6 +638,41 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         break;
       }
 
+      case "subagent_progress": {
+        const subEvt = msg.event as string;
+        const childId = msg.childId as string;
+        const subRole = msg.role as string;
+        const subTask = (msg.task as string) || "";
+        const store = useAppStore.getState();
+
+        if (subEvt === "start") {
+          store.updateSubagentChild({
+            id: childId, role: subRole, task: subTask,
+            lastTool: "", status: "running",
+          });
+        } else if (subEvt === "tool_start") {
+          const existing = store.subagentChildren.find((c) => c.id === childId);
+          if (existing) {
+            store.updateSubagentChild({ ...existing, lastTool: msg.toolName as string });
+          }
+        } else if (subEvt === "done") {
+          const existing = store.subagentChildren.find((c) => c.id === childId);
+          if (existing) {
+            store.updateSubagentChild({ ...existing, status: "done", lastTool: "" });
+          }
+        } else if (subEvt === "error") {
+          const existing = store.subagentChildren.find((c) => c.id === childId);
+          if (existing) {
+            store.updateSubagentChild({
+              ...existing, status: "error",
+              error: (msg.error as string) || "unknown", lastTool: "",
+            });
+          }
+        }
+        setStatus(sessionId, "tool_use");
+        break;
+      }
+
       case "compact_boundary": {
         const preTokens = msg.preTokens as number | undefined;
         const trigger = msg.trigger as string | undefined;
@@ -614,21 +683,26 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           content: `${label} — context summarized${preTokens ? ` (was ${Math.round(preTokens / 1000)}K tokens)` : ""}.`,
           timestamp: Date.now(),
         });
-        // Trace: compaction event
-        bt({ type: "compact", preTokens, trigger: trigger ?? undefined });
         break;
       }
 
       case "heartbeat":
         break;
-    }
 
-    // Flush all batched trace events in a single state update
-    if (pendingTraces.length > 0) {
-      const now = Date.now();
-      appendTraces(sessionId, pendingTraces.map((e, i) => ({
-        ...e, id: nextTraceId(), timestamp: now + i,
-      })));
+      // Pi bridge: dynamic model list from all available providers
+      case "pi_models": {
+        const models = msg.models as Array<{
+          value: string;
+          label: string;
+          provider?: string;
+          contextWindow?: number;
+          reasoning?: boolean;
+        }>;
+        if (models && models.length) {
+          useAppStore.setState({ piAvailableModels: models });
+        }
+        break;
+      }
     }
   }
 
@@ -651,8 +725,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         content: text + imageNote,
         timestamp: Date.now(),
       });
-      // Trace: query_start
-      appendTrace(sessionId, { type: "query_start", content: text, id: nextTraceId(), timestamp: Date.now() });
       dispatchToAgent(text, images);
     } else if (
       currentSession?.status === "thinking" ||
@@ -745,6 +817,30 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     setExtendedContext(sessionId, enabled);
   };
 
+  const handleBackendToggle = () => {
+    if (!session || session.status !== "idle") return;
+    const newBackend = session.backend === "pi" ? "claude" : "pi";
+    const defaultModel = newBackend === "pi"
+      ? appSettings?.pi_default_model || ""
+      : appSettings?.agent_default_model || "";
+    setBackend(sessionId, newBackend, defaultModel);
+    // Re-load project commands for the command picker (Rust scanner returns both
+    // .claude/ and .pi/ dirs — the commands list is the same — but the built-in
+    // defaults are now reset by setAgentBackend to match the new backend).
+    commands.getProjectCommands(cwd).then((projectCmds) => {
+      if (!projectCmds.length) return;
+      const store = useAppStore.getState();
+      const current = store.agentSessionByTab[sessionId]?.slashCommands ?? [];
+      const existingNames = new Set(current.map((c) => c.name));
+      const newCmds = projectCmds.filter((c) => !existingNames.has(c.name));
+      if (!newCmds.length) return;
+      setSlashCommands(sessionId, [
+        ...current,
+        ...newCmds.map((c) => ({ name: c.name, description: c.description, argumentHint: c.argumentHint })),
+      ]);
+    }).catch(() => {});
+  };
+
   const handleInterrupt = () => {
     // Stop sends the interrupt signal. The bridge will emit a `result` event
     // which will set status to "done" and auto-dispatch queued messages.
@@ -797,7 +893,6 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       {/* Bottom controls: status/cost bar, model/effort/plan, then input */}
       <AgentToolbar
         session={session}
-        sessionId={sessionId}
         onInterrupt={handleInterrupt}
       />
       <AgentControls
@@ -813,6 +908,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         onConciseModeChange={handleConciseModeChange}
         onChatModeChange={handleChatModeChange}
         onExtendedContextChange={handleExtendedContextChange}
+        availableModels={session.backend === "pi" ? piAvailableModels : undefined}
+        isPiBackend={session.backend === "pi"}
+        canToggleBackend={session.status === "idle"}
+        onBackendToggle={handleBackendToggle}
       />
       <AgentInputBar
         sessionId={sessionId}

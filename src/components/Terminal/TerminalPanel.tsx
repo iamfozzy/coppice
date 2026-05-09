@@ -6,7 +6,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { listen } from "@tauri-apps/api/event";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import * as commands from "../../lib/commands";
-import { XTERM_DARK, XTERM_LIGHT, resolveTheme } from "../../lib/theme";
+import { XTERM_DARK, XTERM_DIM, XTERM_ATOM, XTERM_LIGHT, resolveTheme } from "../../lib/theme";
 import { useAppStore } from "../../stores/appStore";
 import "@xterm/xterm/css/xterm.css";
 
@@ -60,7 +60,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     const container = containerRef.current;
     if (!container) return;
 
-    const xtermTheme = resolveTheme(themeMode) === "light" ? XTERM_LIGHT : XTERM_DARK;
+    const xtermTheme = { light: XTERM_LIGHT, dim: XTERM_DIM, atom: XTERM_ATOM, dark: XTERM_DARK }[resolveTheme(themeMode)];
     const term = new Terminal({
       theme: xtermTheme,
       fontFamily: fontFamily
@@ -239,7 +239,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
   useEffect(() => {
     const term = termInstanceRef.current;
     if (!term) return;
-    term.options.theme = resolveTheme(themeMode) === "light" ? XTERM_LIGHT : XTERM_DARK;
+    term.options.theme = { light: XTERM_LIGHT, dim: XTERM_DIM, atom: XTERM_ATOM, dark: XTERM_DARK }[resolveTheme(themeMode)];
   }, [themeMode]);
 
 

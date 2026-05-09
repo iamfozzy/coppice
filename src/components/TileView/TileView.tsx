@@ -4,7 +4,8 @@ import { MessageList } from "../AgentView/MessageList";
 import { AgentInputBar } from "../AgentView/AgentInputBar";
 import { CreateWorktreeModal } from "../Sidebar/CreateWorktreeModal";
 import { Tooltip } from "../ui/Tooltip";
-import { SUPPORTED_MODELS, modelSupports1MContext } from "../../lib/supportedModels";
+import { modelSupports1MContext, type SupportedModel } from "../../lib/supportedModels";
+import { ModelPicker } from "../AgentView/AgentControls";
 import * as commands from "../../lib/commands";
 import type { ImageAttachment, EffortLevel, AgentPermissionMode, Project } from "../../lib/types";
 import { SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
@@ -218,7 +219,10 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const session = useAppStore((s) => s.agentSessionByTab[tab.id]);
   const claudeStatus = useAppStore((s) => s.claudeStatusByTab[tab.id] ?? null);
   const appSettings = useAppStore((s) => s.appSettings);
+  const piAvailableModels = useAppStore((s) => s.piAvailableModels);
+  const ensurePiModelsLoaded = useAppStore((s) => s.ensurePiModelsLoaded);
   const [dotHovered, setDotHovered] = useState(false);
+  const setAgentBackend = useAppStore((s) => s.setAgentBackend);
 
   const selectProject = useAppStore((s) => s.selectProject);
   const selectWorktree = useAppStore((s) => s.selectWorktree);
@@ -230,7 +234,6 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const appendMessage = useAppStore((s) => s.appendAgentMessage);
   const setStatus = useAppStore((s) => s.setAgentStatus);
   const pushQueuedMessage = useAppStore((s) => s.pushAgentQueuedMessage);
-  const appendTrace = useAppStore((s) => s.appendTraceEvent);
   const setModel = useAppStore((s) => s.setAgentModel);
   const setEffort = useAppStore((s) => s.setAgentEffort);
   const setPermissionMode = useAppStore((s) => s.setAgentPermissionMode);
@@ -242,6 +245,11 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
 
   const sessionId = tab.id;
   const cwd = tab.cwd;
+
+  useEffect(() => {
+    if (session?.backend !== "pi" || piAvailableModels.length > 0) return;
+    ensurePiModelsLoaded().catch(() => {});
+  }, [session?.backend, piAvailableModels.length, ensurePiModelsLoaded]);
 
   const clearTileNotification = useCallback(() => {
     clearClaudeIdleStatus(tab.id);
@@ -272,10 +280,10 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
         content: text + imageNote,
         timestamp: Date.now(),
       });
-      appendTrace(sessionId, { type: "query_start", content: text, id: `tile-tr-${Date.now()}`, timestamp: Date.now() });
       setStatus(sessionId, "thinking");
 
       const opts: Parameters<typeof commands.agentStart>[3] = {
+        backend: session.backend,
         model: session.model || undefined,
         effort: session.effort || undefined,
         permissionMode: session.permissionMode || undefined,
@@ -322,7 +330,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
         });
       });
     }
-  }, [session, sessionId, cwd, appendMessage, setStatus, pushQueuedMessage, appendTrace, appSettings]);
+  }, [session, sessionId, cwd, appendMessage, setStatus, pushQueuedMessage, appSettings]);
 
   const handleModelChange = useCallback((model: string) => {
     setModel(sessionId, model);
@@ -349,6 +357,17 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const handleExtendedContextChange = useCallback((enabled: boolean) => {
     setExtendedContext(sessionId, enabled);
   }, [sessionId, setExtendedContext]);
+
+  const handleBackendToggle = useCallback(() => {
+    if (!session || session.status !== "idle") return;
+    const newBackend = session.backend === "pi" ? "claude" as const : "pi" as const;
+    const settings = useAppStore.getState().appSettings;
+    const defaultModel = newBackend === "pi"
+      ? settings?.pi_default_model || ""
+      : settings?.agent_default_model || "";
+    setAgentBackend(sessionId, newBackend, defaultModel);
+    if (newBackend === "pi") ensurePiModelsLoaded().catch(() => {});
+  }, [session, sessionId, setAgentBackend, ensurePiModelsLoaded]);
 
   const handleInterrupt = useCallback(() => {
     commands.agentInterrupt(sessionId).catch(() => {});
@@ -408,7 +427,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
 
   return (
     <div
-      className="bg-bg-primary flex flex-col min-h-0 relative"
+      className="bg-bg-primary flex flex-col min-h-0 min-w-0 overflow-hidden relative"
     >
       {/* Tile header */}
       <div className="flex items-center gap-2 px-3 h-8 shrink-0 border-b border-border-primary bg-bg-secondary">
@@ -422,7 +441,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
             {dotHovered ? pinIcon : dotInner}
           </span>
         </Tooltip>
-        <span className="text-[11px] text-text-secondary truncate">
+        <span className="text-[11px] text-text-secondary truncate min-w-0">
           {projectName}
           <span className="text-text-tertiary mx-1">/</span>
           {worktreeName}
@@ -430,6 +449,35 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
           <span className="font-semibold">{tab.label}</span>
         </span>
         <div className="ml-auto flex items-center gap-2.5">
+          {/* Backend toggle — only for idle empty sessions */}
+          {(() => {
+            const canSwitch = session.status === "idle" && session.messages.length === 0 && !session.sdkSessionId;
+            const isPi = session.backend === "pi";
+            return (
+              <Tooltip text={canSwitch ? `Switch to ${isPi ? "Claude" : "Pi"}` : `Using ${isPi ? "Pi" : "Claude"}`} align="right">
+                <button
+                  disabled={!canSwitch}
+                  onClick={() => {
+                    const next = isPi ? "claude" as const : "pi" as const;
+                    const settings = useAppStore.getState().appSettings;
+                    setAgentBackend(
+                      tab.id,
+                      next,
+                      next === "pi" ? settings?.pi_default_model || "" : settings?.agent_default_model || "",
+                    );
+                    if (next === "pi") ensurePiModelsLoaded().catch(() => {});
+                  }}
+                  className={`flex items-center gap-0.5 px-1 h-4 rounded text-[9px] font-semibold uppercase transition-colors ${
+                    isPi
+                      ? "bg-purple-500/10 text-purple-400 border border-purple-500/20"
+                      : "bg-bg-tertiary text-text-tertiary border border-border-primary"
+                  } ${canSwitch ? "hover:bg-bg-hover cursor-pointer" : "opacity-60 cursor-default"}`}
+                >
+                  {isPi ? "Pi" : "Cl"}
+                </button>
+              </Tooltip>
+            );
+          })()}
           <TileRunnerButtons worktreeId={pinned.worktreeId} />
           <Tooltip text="Go to tab" align="right">
             <button
@@ -509,6 +557,10 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
               onConciseModeChange={handleConciseModeChange}
               onChatModeChange={handleChatModeChange}
               onExtendedContextChange={handleExtendedContextChange}
+              availableModels={session.backend === "pi" ? piAvailableModels : undefined}
+              isPiBackend={session.backend === "pi"}
+              canToggleBackend={session.status === "idle"}
+              onBackendToggle={handleBackendToggle}
             />
           }
         />
@@ -519,7 +571,21 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
 
 // ── Compact controls dropdown for tile input bars ──
 
-const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+const CLAUDE_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+  { value: "xhigh", label: "xhigh" },
+  { value: "max", label: "max" },
+];
+const PI_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
+  { value: "off", label: "Off" },
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Max" },
+];
 const PERMISSION_MODES: { value: AgentPermissionMode; label: string }[] = [
   { value: "default", label: "Default" },
   { value: "acceptEdits", label: "Accept Edits" },
@@ -540,6 +606,10 @@ function TileControlsDropdown({
   onConciseModeChange,
   onChatModeChange,
   onExtendedContextChange,
+  availableModels,
+  isPiBackend,
+  canToggleBackend,
+  onBackendToggle,
 }: {
   model: string;
   effort: EffortLevel;
@@ -553,6 +623,10 @@ function TileControlsDropdown({
   onConciseModeChange: (v: boolean) => void;
   onChatModeChange: (v: boolean) => void;
   onExtendedContextChange: (v: boolean) => void;
+  availableModels?: SupportedModel[];
+  isPiBackend?: boolean;
+  canToggleBackend?: boolean;
+  onBackendToggle?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -566,7 +640,8 @@ function TileControlsDropdown({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const supports1M = modelSupports1MContext(model);
+  const supports1M = !isPiBackend && modelSupports1MContext(model);
+  const effortLevels = isPiBackend ? PI_EFFORT_LEVELS : CLAUDE_EFFORT_LEVELS;
 
   return (
     <div className="relative self-stretch" ref={ref}>
@@ -589,43 +664,71 @@ function TileControlsDropdown({
 
       {open && (
         <div className="absolute bottom-full mb-1 left-0 min-w-[200px] bg-bg-secondary border border-border-primary rounded-lg shadow-lg overflow-hidden z-50">
+          {/* Backend toggle */}
+          <div className="px-3 py-2 border-b border-border-primary">
+            <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Backend</div>
+            <div className="flex rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
+              {(["claude", "pi"] as const).map((b) => {
+                const isActive = isPiBackend ? b === "pi" : b === "claude";
+                return (
+                  <button
+                    key={b}
+                    disabled={!canToggleBackend}
+                    className={`flex-1 px-2 py-0.5 text-[10px] font-semibold uppercase transition-colors ${
+                      isActive
+                        ? b === "pi"
+                          ? "bg-purple-500/20 text-purple-400"
+                          : "bg-sky-500/20 text-sky-400"
+                        : canToggleBackend
+                          ? "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                          : "text-text-tertiary opacity-50"
+                    } ${!canToggleBackend ? "cursor-default" : "cursor-pointer"}`}
+                    onClick={() => {
+                      if (!isActive && canToggleBackend && onBackendToggle) {
+                        onBackendToggle();
+                        setOpen(false);
+                      }
+                    }}
+                  >
+                    {b === "claude" ? "Cl" : "Pi"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Model */}
           <div className="px-3 py-2 border-b border-border-primary">
             <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Model</div>
-            <div className="flex flex-wrap gap-1">
-              {SUPPORTED_MODELS.map((m) => (
-                <button
-                  key={m.value}
-                  className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
-                    m.value === model
-                      ? "bg-accent/15 text-accent"
-                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                  }`}
-                  onClick={() => onModelChange(m.value)}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+            <ModelPicker
+              model={model}
+              onModelChange={(m) => { onModelChange(m); setOpen(false); }}
+              availableModels={availableModels}
+              isPiBackend={isPiBackend}
+              inline
+            />
           </div>
 
           {/* Effort */}
           <div className="px-3 py-2 border-b border-border-primary">
             <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Effort</div>
             <div className="flex rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
-              {EFFORT_LEVELS.map((level) => (
-                <button
-                  key={level}
-                  className={`flex-1 px-1.5 py-0.5 text-[10px] capitalize transition-colors ${
-                    effort === level
-                      ? "bg-accent text-white"
-                      : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-                  }`}
-                  onClick={() => onEffortChange(level)}
-                >
-                  {level}
-                </button>
-              ))}
+              {effortLevels.map((level) => {
+                const isActive = effort === level.value || (isPiBackend && effort === "max" && level.value === "xhigh");
+                return (
+                  <button
+                    key={level.value}
+                    className={`flex-1 px-1.5 py-0.5 text-[10px] transition-colors ${
+                      isActive
+                        ? "bg-accent text-white"
+                        : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                    }`}
+                    onClick={() => onEffortChange(level.value)}
+                  >
+                    {level.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
