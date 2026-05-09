@@ -39,16 +39,6 @@ export function ProjectTree() {
       return result;
     })
   );
-  // Derive which worktrees have at least one pinned tab.
-  const hasPinnedByWorktree = useAppStore(
-    useShallow((s) => {
-      const result: Record<string, boolean> = {};
-      for (const [wtId, tabs] of Object.entries(s.tabsByWorktree)) {
-        result[wtId] = tabs.some((t) => t.pinned);
-      }
-      return result;
-    })
-  );
   // Derive tab count per worktree — use live tabs if loaded, otherwise
   // fall back to the eagerly-fetched cached count from the DB.
   const tabCountByWorktree = useAppStore(
@@ -96,7 +86,6 @@ export function ProjectTree() {
           deletingIds={deletingWorktreeIds}
           runnersByWorktree={runnersByWorktree}
           claudeStatusByWorktree={claudeStatusByWorktree}
-          hasPinnedByWorktree={hasPinnedByWorktree}
           tabCountByWorktree={tabCountByWorktree}
           onDeleteWorktree={(wt) => {
             setWorktreeToDelete({ worktree: wt, projectId: project.id });
@@ -134,7 +123,6 @@ function ProjectNode({
   deletingIds,
   runnersByWorktree,
   claudeStatusByWorktree,
-  hasPinnedByWorktree,
   tabCountByWorktree,
   onSelectWorktree,
   onDeleteWorktree,
@@ -149,7 +137,6 @@ function ProjectNode({
   deletingIds: Set<string>;
   runnersByWorktree: Record<string, Record<string, import("../../stores/appStore").RunnerInfo>>;
   claudeStatusByWorktree: Record<string, ClaudeStatus | null>;
-  hasPinnedByWorktree: Record<string, boolean>;
   tabCountByWorktree: Record<string, number>;
   onSelectWorktree: (wt: Worktree) => void;
   onDeleteWorktree: (wt: Worktree) => void;
@@ -299,7 +286,6 @@ function ProjectNode({
                 {(tabCountByWorktree[wt.id] ?? 0) >= 1 && !isDeleting && (
                   <TabCountIndicator count={tabCountByWorktree[wt.id]} />
                 )}
-                {hasPinnedByWorktree[wt.id] && !isDeleting && <PinnedIndicator />}
                 {claudeStatus && !isDeleting && <ClaudeIndicator status={claudeStatus} />}
                 {hasRunningRunner && !isDeleting && <RunningIndicator />}
                 {!isDeleting && <span
@@ -332,17 +318,6 @@ function TabCountIndicator({ count }: { count: number }) {
       title={`${count} tabs open`}
     >
       {count}
-    </span>
-  );
-}
-
-function PinnedIndicator() {
-  return (
-    <span className="shrink-0 text-accent" title="Has pinned tiles">
-      <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M9 1L5 5l-3 1 4 4 1-3 4-4z" />
-        <path d="M5 11L1 15" />
-      </svg>
     </span>
   );
 }

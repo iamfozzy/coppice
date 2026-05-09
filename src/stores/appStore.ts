@@ -111,8 +111,8 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
       created_at: new Date().toISOString(),
       last_turn_cost_json: session.lastTurnCost ? JSON.stringify(session.lastTurnCost) : null,
       sdk_context_window: session.sdkContextWindow,
-      pinned: tabInfo.pinned ?? false,
-      pinned_at: tabInfo.pinnedAt ?? null,
+      pinned: false,
+      pinned_at: null,
     };
     commands.saveAgentTabCache(cache).catch(() => {});
   };
@@ -165,8 +165,8 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         created_at: new Date().toISOString(),
         last_turn_cost_json: session.lastTurnCost ? JSON.stringify(session.lastTurnCost) : null,
         sdk_context_window: session.sdkContextWindow,
-        pinned: tab.pinned ?? false,
-        pinned_at: tab.pinnedAt ?? null,
+        pinned: false,
+        pinned_at: null,
       };
       saves.push(commands.saveAgentTabCache(cache));
     }
@@ -183,8 +183,6 @@ export interface TabInfo {
   label: string;
   command?: string;
   cwd: string;
-  pinned?: boolean;
-  pinnedAt?: number;
   // For diff tabs
   diffFile?: string;
   diffMode?: "uncommitted" | "pr";
@@ -302,7 +300,6 @@ interface AppState {
 
   // Actions — tile view
   toggleTileView: () => void;
-  toggleTabPin: (worktreeId: string, tabId: string) => void;
 
   // Actions — tabs
   restoreAgentTabs: (worktreeId: string) => Promise<void>;
@@ -315,7 +312,6 @@ interface AppState {
   newTerminalTab: (worktreeId: string) => void;
   newClaudeTab: (worktreeId: string) => void;
   addAgentTab: (worktreeId: string, cwd: string, prompt?: string, model?: string) => void;
-  addPinnedAgentTab: (worktreeId: string, cwd: string) => void;
   newAgentTab: (worktreeId: string) => void;
   renameTab: (worktreeId: string, tabId: string, newLabel: string) => void;
 
@@ -478,12 +474,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Eagerly load cached tab counts so the sidebar shows them before
     // the user clicks into each worktree.
     commands.countAgentTabCaches()
-      .then((counts) => set({ cachedTabCountByWorktree: counts }))
-      .catch(() => {});
-    // Eagerly restore tabs for worktrees that have pinned tabs so they
-    // appear in tile view immediately without clicking each worktree.
-    commands.listPinnedWorktreeIds()
-      .then((ids) => { for (const id of ids) get().restoreAgentTabs(id); })
+      .then((counts) => {
+        set({ cachedTabCountByWorktree: counts });
+        // Eagerly restore cached agent tabs so tile view can show all
+        // agent sessions without requiring each worktree to be opened first.
+        for (const id of Object.keys(counts)) get().restoreAgentTabs(id);
+      })
       .catch(() => {});
   },
 
@@ -622,30 +618,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   toggleTileView: () => set((s) => ({ showTileView: !s.showTileView })),
 
-  toggleTabPin: (worktreeId, tabId) => {
-    set((s) => {
-      const tabs = s.tabsByWorktree[worktreeId];
-      if (!tabs) return s;
-      return {
-        tabsByWorktree: {
-          ...s.tabsByWorktree,
-          [worktreeId]: tabs.map((t) =>
-            t.id === tabId
-              ? {
-                  ...t,
-                  pinned: !t.pinned,
-                  pinnedAt: t.pinned ? undefined : Date.now(),
-                }
-              : t
-          ),
-        },
-      };
-    });
-    // Persist pinned state to DB for agent tabs
-    persistAgentTabDebounced(tabId, true);
-  },
-
-
   // ── Claude status ──
 
   setClaudeStatus: (tabId, status) => {
@@ -766,8 +738,6 @@ export const useAppStore = create<AppState>((set, get) => ({
           type: "agent",
           label: cached.label,
           cwd: cached.cwd,
-          pinned: cached.pinned || false,
-          pinnedAt: cached.pinned_at ?? undefined,
           // command is intentionally omitted — restored tabs should NOT auto-start
         };
         restoredTabs.push(tab);
@@ -1003,8 +973,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       label,
       command: prompt,
       cwd,
-      pinned: true,
-      pinnedAt: Date.now(),
     };
     const backend = s.appSettings?.agent_backend || "claude";
     const sessionState: AgentSessionState = {
@@ -1047,11 +1015,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         [tab.id]: sessionState,
       },
     }));
-  },
-
-  addPinnedAgentTab: (worktreeId, cwd) => {
-    // addAgentTab already pins by default, so just delegate
-    get().addAgentTab(worktreeId, cwd);
   },
 
   newAgentTab: (worktreeId) => {

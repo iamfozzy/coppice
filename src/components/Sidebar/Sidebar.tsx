@@ -150,19 +150,15 @@ export function Sidebar() {
             Coppice
           </span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           <div className="relative" ref={backendMenuRef}>
             <Tooltip text={`Default agent: ${currentBackend === "pi" ? "Pi" : "Claude"}`} align="right">
               <button
                 onClick={() => setBackendMenuOpen((open) => !open)}
                 disabled={!appSettings || switchingBackend}
-                className={`h-6 min-w-6 px-1.5 flex items-center justify-center gap-1 rounded transition-colors ${currentBackend === "pi" ? "text-accent bg-accent/10 hover:bg-accent/15" : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"} disabled:opacity-50`}
+                className={`h-6 min-w-7 px-2 flex items-center justify-center rounded-md text-[11px] font-semibold uppercase border transition-colors ${currentBackend === "pi" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"} ${appSettings && !switchingBackend ? "hover:brightness-125" : ""} disabled:opacity-50`}
               >
-                <svg width="14" height="14" viewBox="0 -1.5 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5.2 3.2a2.7 2.7 0 0 1 5.6 0 2.2 2.2 0 0 1 1.9 2.6 2.7 2.7 0 0 1-.6 5.3H3.9a2.7 2.7 0 0 1-.6-5.3 2.2 2.2 0 0 1 1.9-2.6Z" />
-                  <path d="M6 6.4c.5.5.9 1.1 1 1.9M10 6.4c-.5.5-.9 1.1-1 1.9M8 8.5v2.1" />
-                </svg>
-                <span className="text-[9px] font-semibold uppercase leading-none">{currentBackend === "pi" ? "Pi" : "Cl"}</span>
+                {currentBackend === "pi" ? "Pi" : "Cl"}
               </button>
             </Tooltip>
             {backendMenuOpen && (
@@ -176,7 +172,7 @@ export function Sidebar() {
                     <button
                       key={option.value}
                       onClick={() => handleBackendSelect(option.value)}
-                      className={`w-full text-left rounded px-2 py-1.5 transition-colors ${active ? "bg-accent/10 text-accent" : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"}`}
+                      className={`w-full text-left rounded px-2 py-1.5 transition-colors ${active ? option.value === "pi" ? "bg-purple-500/10 text-purple-400" : "bg-orange-500/10 text-orange-400" : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"}`}
                     >
                       <div className="text-[11px] font-medium">{option.label}</div>
                       <div className="text-[10px] text-text-tertiary truncate">{option.hint}</div>

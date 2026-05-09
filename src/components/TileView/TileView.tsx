@@ -14,14 +14,14 @@ import { PermissionDialog } from "../AgentView/PermissionDialog";
 import { AskUserDialog } from "../AgentView/AskUserDialog";
 import { isPlanPermission } from "../AgentView/PlanApprovalDialog";
 
-interface PinnedTab {
+interface TileTab {
   tab: TabInfo;
   worktreeId: string;
   worktreeName: string;
   projectName: string;
 }
 
-/** Compute grid columns based on pinned tile count only. */
+/** Compute grid columns based on tile count. */
 function computeCols(count: number): number {
   if (count <= 1) return 1;
   if (count <= 2) return 2;
@@ -43,14 +43,14 @@ export function TileView() {
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree);
   const worktreesByProject = useAppStore((s) => s.worktreesByProject);
   const projects = useAppStore((s) => s.projects);
-  const addPinnedAgentTab = useAppStore((s) => s.addPinnedAgentTab);
+  const addAgentTab = useAppStore((s) => s.addAgentTab);
 
   const [creatingForProject, setCreatingForProject] = useState<string | null>(null);
 
-  // Add a pinned agent tab to an existing worktree
+  // Add an agent tab to an existing worktree
   const handleAddExisting = useCallback((worktreeId: string, worktreePath: string) => {
-    addPinnedAgentTab(worktreeId, worktreePath);
-  }, [addPinnedAgentTab]);
+    addAgentTab(worktreeId, worktreePath);
+  }, [addAgentTab]);
 
   // Open CreateWorktreeModal for a project
   const handleCreateNew = useCallback((projectId: string) => {
@@ -62,23 +62,21 @@ export function TileView() {
   }, []);
 
   // Called by CreateWorktreeModal after a worktree is successfully created
-  // and selected. Immediately creates a pinned agent tab for the tile view.
+  // and selected. Immediately creates an agent tab for the tile view.
   const handleWorktreeCreated = useCallback((worktreeId: string) => {
     const state = useAppStore.getState();
     const path = state.getWorktreePath(worktreeId);
     if (path) {
-      state.addPinnedAgentTab(worktreeId, path);
+      state.addAgentTab(worktreeId, path);
     }
   }, []);
 
-  const scratchpadWorktree = useAppStore((s) => s.scratchpadWorktree);
-
-  const pinnedTabs = useMemo<PinnedTab[]>(() => {
-    const result: PinnedTab[] = [];
-    // Include scratchpad pinned tabs
+  const tileTabs = useMemo<TileTab[]>(() => {
+    const result: TileTab[] = [];
+    // Include scratchpad agent tabs
     const spTabs = tabsByWorktree[SCRATCHPAD_WORKTREE_ID] ?? [];
     for (const tab of spTabs) {
-      if (tab.pinned && tab.type === "agent") {
+      if (tab.type === "agent") {
         result.push({
           tab,
           worktreeId: SCRATCHPAD_WORKTREE_ID,
@@ -92,7 +90,7 @@ export function TileView() {
       for (const wt of worktrees) {
         const tabs = tabsByWorktree[wt.id] ?? [];
         for (const tab of tabs) {
-          if (tab.pinned && tab.type === "agent") {
+          if (tab.type === "agent") {
             result.push({
               tab,
               worktreeId: wt.id,
@@ -103,14 +101,13 @@ export function TileView() {
         }
       }
     }
-    result.sort((left, right) => (left.tab.pinnedAt ?? 0) - (right.tab.pinnedAt ?? 0));
     return result;
-  }, [tabsByWorktree, worktreesByProject, projects, scratchpadWorktree]);
+  }, [tabsByWorktree, worktreesByProject, projects]);
 
-  const cols = computeCols(pinnedTabs.length);
-  const rows = Math.ceil(pinnedTabs.length / cols) || 1;
+  const cols = computeCols(tileTabs.length);
+  const rows = Math.ceil(tileTabs.length / cols) || 1;
   const totalSlots = cols * rows;
-  const hasEmptySlot = totalSlots > pinnedTabs.length;
+  const hasEmptySlot = totalSlots > tileTabs.length;
 
   return (
     <div className="fixed inset-0 z-[100] bg-bg-primary overflow-hidden flex flex-col">
@@ -127,8 +124,8 @@ export function TileView() {
           background: "var(--color-border-primary, #333)",
         }}
       >
-        {pinnedTabs.map((pinned) => (
-          <Tile key={pinned.tab.id} pinned={pinned} />
+        {tileTabs.map((tile) => (
+          <Tile key={tile.tab.id} tile={tile} />
         ))}
         {hasEmptySlot && <AddTileCell onAddExisting={handleAddExisting} onCreateNew={handleCreateNew} />}
       </div>
@@ -215,14 +212,13 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
 
 // ── Individual tile ──
 
-function Tile({ pinned }: { pinned: PinnedTab }) {
-  const { tab, worktreeName, projectName } = pinned;
+function Tile({ tile }: { tile: TileTab }) {
+  const { tab, worktreeId, worktreeName, projectName } = tile;
   const session = useAppStore((s) => s.agentSessionByTab[tab.id]);
   const claudeStatus = useAppStore((s) => s.claudeStatusByTab[tab.id] ?? null);
   const appSettings = useAppStore((s) => s.appSettings);
   const piAvailableModels = useAppStore((s) => s.piAvailableModels);
   const ensurePiModelsLoaded = useAppStore((s) => s.ensurePiModelsLoaded);
-  const [dotHovered, setDotHovered] = useState(false);
   const setAgentBackend = useAppStore((s) => s.setAgentBackend);
 
   const selectProject = useAppStore((s) => s.selectProject);
@@ -230,7 +226,6 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const clearClaudeIdleStatus = useAppStore((s) => s.clearClaudeIdleStatus);
   const toggleTileView = useAppStore((s) => s.toggleTileView);
-  const toggleTabPin = useAppStore((s) => s.toggleTabPin);
   const { requestCloseTab, closeConfirmation } = useAgentTabCloseConfirmation();
   const appendMessage = useAppStore((s) => s.appendAgentMessage);
   const setStatus = useAppStore((s) => s.setAgentStatus);
@@ -259,15 +254,15 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const handleNavigate = useCallback(() => {
     const store = useAppStore.getState();
     for (const [projectId, worktrees] of Object.entries(store.worktreesByProject)) {
-      if (worktrees.some((w) => w.id === pinned.worktreeId)) {
+      if (worktrees.some((w) => w.id === worktreeId)) {
         selectProject(projectId);
         break;
       }
     }
-    selectWorktree(pinned.worktreeId);
-    setActiveTab(pinned.worktreeId, tab.id);
+    selectWorktree(worktreeId);
+    setActiveTab(worktreeId, tab.id);
     toggleTileView();
-  }, [pinned.worktreeId, tab.id, selectProject, selectWorktree, setActiveTab, toggleTileView]);
+  }, [worktreeId, tab.id, selectProject, selectWorktree, setActiveTab, toggleTileView]);
 
   const handleSend = useCallback((text: string, images?: ImageAttachment[]) => {
     if (!session) return;
@@ -395,7 +390,6 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   const isInputDisabled = session.status === "waiting_permission";
   const isAgentBusy = session.status === "thinking" || session.status === "tool_use";
 
-  // Status dot — same fixed-width hover-to-pin pattern as the tab bar
   let dotInner: React.ReactNode;
   if (claudeStatus === "active") {
     dotInner = (
@@ -409,13 +403,6 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
   } else {
     dotInner = <span className="w-2 h-2 rounded-full bg-accent shrink-0" />;
   }
-
-  const pinIcon = (
-    <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 1L5 5l-3 1 4 4 1-3 4-4z" />
-      <path d="M5 11L1 15" />
-    </svg>
-  );
 
   const placeholder =
     session.status === "done"
@@ -432,16 +419,9 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
     >
       {/* Tile header */}
       <div className="flex items-center gap-2 px-3 h-8 shrink-0 border-b border-border-primary bg-bg-secondary">
-        <Tooltip text="Unpin from tiles" align="left">
-          <span
-            className={`w-4 h-4 flex items-center justify-center shrink-0 rounded-sm cursor-pointer transition-colors ${dotHovered ? "text-accent hover:bg-accent/10" : ""}`}
-            onMouseEnter={() => setDotHovered(true)}
-            onMouseLeave={() => setDotHovered(false)}
-            onClick={() => toggleTabPin(pinned.worktreeId, tab.id)}
-          >
-            {dotHovered ? pinIcon : dotInner}
-          </span>
-        </Tooltip>
+        <span className="w-4 h-4 flex items-center justify-center shrink-0">
+          {dotInner}
+        </span>
         <span className="text-[11px] text-text-secondary truncate min-w-0">
           {projectName}
           <span className="text-text-tertiary mx-1">/</span>
@@ -471,15 +451,15 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
                   className={`flex items-center gap-0.5 px-1 h-4 rounded text-[9px] font-semibold uppercase transition-colors ${
                     isPi
                       ? "bg-purple-500/10 text-purple-400 border border-purple-500/20"
-                      : "bg-bg-tertiary text-text-tertiary border border-border-primary"
-                  } ${canSwitch ? "hover:bg-bg-hover cursor-pointer" : "opacity-60 cursor-default"}`}
+                      : "bg-orange-500/10 text-orange-400 border border-orange-500/20"
+                  } ${canSwitch ? "hover:brightness-125 cursor-pointer" : "opacity-60 cursor-default"}`}
                 >
                   {isPi ? "Pi" : "Cl"}
                 </button>
               </Tooltip>
             );
           })()}
-          <TileRunnerButtons worktreeId={pinned.worktreeId} />
+          <TileRunnerButtons worktreeId={worktreeId} />
           <Tooltip text="Go to tab" align="right">
             <button
               className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
@@ -493,7 +473,7 @@ function Tile({ pinned }: { pinned: PinnedTab }) {
           <Tooltip text="Close tab" align="right">
             <button
               className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
-              onClick={(event) => requestCloseTab(pinned.worktreeId, tab.id, event)}
+              onClick={(event) => requestCloseTab(worktreeId, tab.id, event)}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -665,7 +645,7 @@ function TileControlsDropdown({
                       isActive
                         ? b === "pi"
                           ? "bg-purple-500/20 text-purple-400"
-                          : "bg-sky-500/20 text-sky-400"
+                          : "bg-orange-500/20 text-orange-400"
                         : canToggleBackend
                           ? "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
                           : "text-text-tertiary opacity-50"

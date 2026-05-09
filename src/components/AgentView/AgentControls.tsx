@@ -105,7 +105,7 @@ export function AgentControls({
           className={`px-2 py-1 rounded-md text-[11px] font-semibold uppercase border transition-colors ${
             isPiBackend
               ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
-              : "bg-sky-500/10 text-sky-400 border-sky-500/20"
+              : "bg-orange-500/10 text-orange-400 border-orange-500/20"
           } ${canToggleBackend ? "cursor-pointer hover:brightness-125" : "cursor-default opacity-75"}`}
           onClick={canToggleBackend ? onBackendToggle : undefined}
           disabled={!canToggleBackend}
