@@ -8,7 +8,7 @@ import { TileViewToggleButton } from "../ui/TileViewToggleButton";
 import { ModelConfigPopover, formatPiProvider, getPiModelsForProvider, stripPiProviderPrefix, type HeaderOption } from "../ui/AgentHeaderControls";
 import { useAgentTabCloseConfirmation } from "../ui/useAgentTabCloseConfirmation";
 import { CLAUDE_MODELS, modelSupports1MContext, type SupportedModel } from "../../lib/supportedModels";
-import { EffortPicker, ModelPicker } from "../AgentView/AgentControls";
+import { CLAUDE_EFFORT_LEVELS, EffortPicker, ModelPicker, PI_EFFORT_LEVELS } from "../AgentView/AgentControls";
 import * as commands from "../../lib/commands";
 import type { AgentBackend, ImageAttachment, EffortLevel, AgentPermissionMode, Project } from "../../lib/types";
 import { SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
@@ -357,11 +357,15 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
             modelOptions={currentBackend === "pi" ? piModelOptions : claudeModelOptions}
             onModelSelect={currentBackend === "pi" ? handlePiModelSelect : handleClaudeModelSelect}
           />
+        </div>
 
+        <div className="w-px h-5 bg-border-primary/70 shrink-0" />
+
+        <div className="flex items-center gap-1.5 shrink-0">
           <Tooltip text="Settings">
             <button
               onClick={openAppSettings}
-              className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/60 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
@@ -377,7 +381,7 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
           <Tooltip text="Add project">
             <button
               onClick={() => openProjectSettings("new")}
-              className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/60 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -391,7 +395,7 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
         <Tooltip text="Add tile" align="right">
           <button
             onClick={() => setPickerOpen((v) => !v)}
-            className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/60 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -631,35 +635,6 @@ function Tile({ tile }: { tile: TileTab }) {
           <span className="font-semibold">{tab.label}</span>
         </span>
         <div className="ml-auto flex items-center gap-2.5">
-          {/* Backend toggle — only for idle empty sessions */}
-          {(() => {
-            const canSwitch = session.status === "idle" && session.messages.length === 0 && !session.sdkSessionId;
-            const isPi = session.backend === "pi";
-            return (
-              <Tooltip text={canSwitch ? `Switch to ${isPi ? "Claude" : "Pi"}` : `Using ${isPi ? "Pi" : "Claude"}`} align="right">
-                <button
-                  disabled={!canSwitch}
-                  onClick={() => {
-                    const next = isPi ? "claude" as const : "pi" as const;
-                    const settings = useAppStore.getState().appSettings;
-                    setAgentBackend(
-                      tab.id,
-                      next,
-                      next === "pi" ? settings?.pi_default_model || "" : settings?.agent_default_model || "",
-                    );
-                    if (next === "pi") ensurePiModelsLoaded().catch(() => {});
-                  }}
-                  className={`flex items-center gap-0.5 px-1 h-4 rounded text-[9px] font-semibold uppercase transition-colors ${
-                    isPi
-                      ? "bg-purple-500/10 text-purple-400 border border-purple-500/20"
-                      : "bg-orange-500/10 text-orange-400 border border-orange-500/20"
-                  } ${canSwitch ? "hover:brightness-125 cursor-pointer" : "opacity-60 cursor-default"}`}
-                >
-                  {isPi ? "Pi" : "Cl"}
-                </button>
-              </Tooltip>
-            );
-          })()}
           <TileRunnerButtons worktreeId={worktreeId} />
           <Tooltip text="Go to tab" align="right">
             <button
@@ -728,24 +703,29 @@ function Tile({ tile }: { tile: TileTab }) {
           onSend={handleSend}
           onInterrupt={handleInterrupt}
           leftAddon={
-            <TileControlsDropdown
-              model={session.model}
-              effort={session.effort}
-              permissionMode={session.permissionMode}
-              conciseMode={session.conciseMode}
-              chatMode={session.chatMode}
-              extendedContext={session.extendedContext}
-              onModelChange={handleModelChange}
-              onEffortChange={handleEffortChange}
-              onPermissionModeChange={handlePermissionModeChange}
-              onConciseModeChange={handleConciseModeChange}
-              onChatModeChange={handleChatModeChange}
-              onExtendedContextChange={handleExtendedContextChange}
-              availableModels={session.backend === "pi" ? piAvailableModels : undefined}
-              isPiBackend={session.backend === "pi"}
-              canToggleBackend={session.status === "idle"}
-              onBackendToggle={handleBackendToggle}
-            />
+            <div className="flex self-stretch items-stretch gap-2 shrink-0">
+              <TileBackendToggle
+                isPiBackend={session.backend === "pi"}
+                canToggleBackend={session.status === "idle"}
+                onToggle={handleBackendToggle}
+              />
+              <TileControlsDropdown
+                model={session.model}
+                effort={session.effort}
+                permissionMode={session.permissionMode}
+                conciseMode={session.conciseMode}
+                chatMode={session.chatMode}
+                extendedContext={session.extendedContext}
+                onModelChange={handleModelChange}
+                onEffortChange={handleEffortChange}
+                onPermissionModeChange={handlePermissionModeChange}
+                onConciseModeChange={handleConciseModeChange}
+                onChatModeChange={handleChatModeChange}
+                onExtendedContextChange={handleExtendedContextChange}
+                availableModels={session.backend === "pi" ? piAvailableModels : undefined}
+                isPiBackend={session.backend === "pi"}
+              />
+            </div>
           }
         />
       </div>
@@ -762,6 +742,69 @@ const PERMISSION_MODES: { value: AgentPermissionMode; label: string }[] = [
   { value: "plan", label: "Plan Only" },
 ];
 
+function TileBackendToggle({
+  isPiBackend,
+  canToggleBackend,
+  onToggle,
+}: {
+  isPiBackend?: boolean;
+  canToggleBackend?: boolean;
+  onToggle?: () => void;
+}) {
+  const isPi = !!isPiBackend;
+
+  return (
+    <Tooltip
+      text={
+        canToggleBackend
+          ? `Switch to ${isPi ? "Claude" : "Pi"} backend`
+          : `Using ${isPi ? "Pi" : "Claude"} backend`
+      }
+      side="top"
+      align="left"
+    >
+      <button
+        type="button"
+        className={`shrink-0 self-stretch flex items-center justify-center min-w-8 px-2 rounded-lg border text-[10px] font-semibold uppercase transition-colors ${
+          isPi
+            ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
+            : "bg-orange-500/10 text-orange-400 border-orange-500/20"
+        } ${canToggleBackend ? "hover:brightness-125" : "opacity-60 cursor-default"}`}
+        onClick={canToggleBackend ? onToggle : undefined}
+        disabled={!canToggleBackend}
+      >
+        {isPi ? "Pi" : "Cl"}
+      </button>
+    </Tooltip>
+  );
+}
+
+function TileSettingsRow({
+  label,
+  value,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="w-full flex items-center gap-2 rounded-md border border-border-primary bg-bg-tertiary/60 px-2.5 py-2 text-left transition-colors hover:bg-bg-hover"
+      onClick={onClick}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="text-[9px] uppercase tracking-wide text-text-tertiary">{label}</div>
+        <div className="truncate text-[11px] text-text-primary">{value}</div>
+      </div>
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="shrink-0 text-text-tertiary">
+        <path d="M3.5 2l3 3-3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
 function TileControlsDropdown({
   model,
   effort,
@@ -777,8 +820,6 @@ function TileControlsDropdown({
   onExtendedContextChange,
   availableModels,
   isPiBackend,
-  canToggleBackend,
-  onBackendToggle,
 }: {
   model: string;
   effort: EffortLevel;
@@ -794,11 +835,11 @@ function TileControlsDropdown({
   onExtendedContextChange: (v: boolean) => void;
   availableModels?: SupportedModel[];
   isPiBackend?: boolean;
-  canToggleBackend?: boolean;
-  onBackendToggle?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [panel, setPanel] = useState<"main" | "provider" | "model" | "effort" | "permission">("main");
   const ref = useRef<HTMLDivElement>(null);
+  const configuredProviders = useAppStore((s) => s.appSettings?.pi_configured_providers ?? []);
 
   useEffect(() => {
     if (!open) return;
@@ -809,10 +850,90 @@ function TileControlsDropdown({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
+  useEffect(() => {
+    if (!open) setPanel("main");
+  }, [open]);
+
   const supports1M = !isPiBackend && modelSupports1MContext(model);
 
+  const piProviders = useMemo(() => {
+    const fromSettings = configuredProviders.filter((provider): provider is string => Boolean(provider));
+    if (fromSettings.length > 0) return fromSettings;
+    const fromModels = [...new Set((availableModels ?? [])
+      .map((candidate) => candidate.provider)
+      .filter((provider): provider is string => Boolean(provider)))];
+    return fromModels.length > 0 ? fromModels : ["anthropic"];
+  }, [configuredProviders, availableModels]);
+
+  const currentPiProvider = useMemo(() => {
+    if (!isPiBackend) return "";
+    if (model.includes("/")) return model.split("/")[0];
+    const matched = (availableModels ?? []).find((candidate) => candidate.value === model);
+    return matched?.provider ?? piProviders[0] ?? "anthropic";
+  }, [availableModels, isPiBackend, model, piProviders]);
+
+  const currentModelId = isPiBackend ? stripPiProviderPrefix(model) : model;
+  const currentProviderModels = useMemo(
+    () => (isPiBackend ? getPiModelsForProvider(currentPiProvider, availableModels ?? []) : []),
+    [availableModels, currentPiProvider, isPiBackend],
+  );
+
+  const currentModelLabel = useMemo(() => {
+    const pool = isPiBackend
+      ? currentProviderModels
+      : (availableModels && availableModels.length > 0 ? availableModels : CLAUDE_MODELS);
+    const matched = pool.find((candidate) =>
+      candidate.value === currentModelId || (candidate.provider && `${candidate.provider}/${candidate.value}` === model)
+    );
+    return matched?.label ?? (currentModelId || "SDK default");
+  }, [availableModels, currentModelId, currentProviderModels, isPiBackend, model]);
+
+  const currentEffortLabel = useMemo(() => {
+    const levels = isPiBackend ? PI_EFFORT_LEVELS : CLAUDE_EFFORT_LEVELS;
+    const selected = levels.find((level) =>
+      effort === level.value || (isPiBackend && effort === "max" && level.value === "xhigh")
+    );
+    return selected?.label ?? effort;
+  }, [effort, isPiBackend]);
+
+  const currentPermissionLabel = useMemo(
+    () => PERMISSION_MODES.find((candidate) => candidate.value === permissionMode)?.label ?? "Default",
+    [permissionMode],
+  );
+
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setPanel("main");
+  }, []);
+
+  const handleProviderChange = useCallback((provider: string) => {
+    const nextModels = getPiModelsForProvider(provider, availableModels ?? []);
+    const nextModelId = nextModels.find((candidate) => candidate.value === currentModelId)?.value
+      ?? nextModels[0]?.value
+      ?? currentModelId;
+    if (nextModelId) onModelChange(`${provider}/${nextModelId}`);
+    closeMenu();
+  }, [availableModels, closeMenu, currentModelId, onModelChange]);
+
+  const handleModelSelect = useCallback((value: string) => {
+    if (isPiBackend && !value.includes("/")) {
+      onModelChange(`${currentPiProvider}/${value}`);
+    } else {
+      onModelChange(value);
+    }
+    closeMenu();
+  }, [closeMenu, currentPiProvider, isPiBackend, onModelChange]);
+
+  const panelTitle = panel === "provider"
+    ? "Provider"
+    : panel === "model"
+      ? "Model"
+      : panel === "effort"
+        ? "Effort"
+        : "Permissions";
+
   return (
-    <div className="relative self-stretch" ref={ref}>
+    <div className="relative flex self-stretch" ref={ref}>
       <Tooltip text="Agent settings" side="top" align="left">
         <button
           type="button"
@@ -821,7 +942,7 @@ function TileControlsDropdown({
               ? "border-accent bg-accent/10 text-accent"
               : "border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary"
           }`}
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setOpen((value) => !value)}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="8" cy="8" r="2.5" />
@@ -831,118 +952,156 @@ function TileControlsDropdown({
       </Tooltip>
 
       {open && (
-        <div className="absolute bottom-full mb-1 left-0 min-w-[200px] bg-bg-secondary border border-border-primary rounded-lg shadow-lg overflow-hidden z-50">
-          {/* Backend toggle */}
-          <div className="px-3 py-2 border-b border-border-primary">
-            <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Backend</div>
-            <div className="flex rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
-              {(["claude", "pi"] as const).map((b) => {
-                const isActive = isPiBackend ? b === "pi" : b === "claude";
-                return (
+        <div className="absolute bottom-full mb-1 left-0 w-56 bg-bg-secondary border border-border-primary rounded-lg shadow-lg overflow-hidden z-50">
+          {panel === "main" ? (
+            <>
+              <div className="p-1.5 space-y-1.5 border-b border-border-primary">
+                {isPiBackend && piProviders.length > 0 && (
+                  <TileSettingsRow
+                    label="Provider"
+                    value={formatPiProvider(currentPiProvider)}
+                    onClick={() => setPanel("provider")}
+                  />
+                )}
+                <TileSettingsRow
+                  label="Model"
+                  value={currentModelLabel}
+                  onClick={() => setPanel("model")}
+                />
+                <TileSettingsRow
+                  label="Effort"
+                  value={currentEffortLabel}
+                  onClick={() => setPanel("effort")}
+                />
+                <TileSettingsRow
+                  label="Permissions"
+                  value={currentPermissionLabel}
+                  onClick={() => setPanel("permission")}
+                />
+              </div>
+
+              <div className="px-3 py-2 flex flex-wrap gap-1.5">
+                {supports1M && (
                   <button
-                    key={b}
-                    disabled={!canToggleBackend}
-                    className={`flex-1 px-2 py-0.5 text-[10px] font-semibold uppercase transition-colors ${
-                      isActive
-                        ? b === "pi"
-                          ? "bg-purple-500/20 text-purple-400"
-                          : "bg-orange-500/20 text-orange-400"
-                        : canToggleBackend
-                          ? "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-                          : "text-text-tertiary opacity-50"
-                    } ${!canToggleBackend ? "cursor-default" : "cursor-pointer"}`}
-                    onClick={() => {
-                      if (!isActive && canToggleBackend && onBackendToggle) {
-                        onBackendToggle();
-                        setOpen(false);
-                      }
-                    }}
+                    type="button"
+                    className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                      extendedContext
+                        ? "bg-accent/15 text-accent"
+                        : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                    }`}
+                    onClick={() => onExtendedContextChange(!extendedContext)}
                   >
-                    {b === "claude" ? "Cl" : "Pi"}
+                    1M
                   </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Model */}
-          <div className="px-3 py-2 border-b border-border-primary">
-            <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Model</div>
-            <ModelPicker
-              model={model}
-              onModelChange={(m) => { onModelChange(m); setOpen(false); }}
-              availableModels={availableModels}
-              isPiBackend={isPiBackend}
-              inline
-            />
-          </div>
-
-          {/* Effort */}
-          <div className="px-3 py-2 border-b border-border-primary">
-            <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Effort</div>
-            <EffortPicker
-              effort={effort}
-              onEffortChange={(e) => { onEffortChange(e); setOpen(false); }}
-              isPiBackend={isPiBackend}
-              inline
-            />
-          </div>
-
-          {/* Permission mode */}
-          <div className="px-3 py-2 border-b border-border-primary">
-            <div className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Permissions</div>
-            <div className="flex flex-wrap gap-1">
-              {PERMISSION_MODES.map((m) => (
+                )}
                 <button
-                  key={m.value}
+                  type="button"
                   className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
-                    m.value === permissionMode
+                    conciseMode
                       ? "bg-accent/15 text-accent"
                       : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                   }`}
-                  onClick={() => onPermissionModeChange(m.value)}
+                  onClick={() => onConciseModeChange(!conciseMode)}
                 >
-                  {m.label}
+                  Concise
                 </button>
-              ))}
-            </div>
-          </div>
+                <button
+                  type="button"
+                  className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                    chatMode
+                      ? "bg-accent/15 text-accent"
+                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  }`}
+                  onClick={() => onChatModeChange(!chatMode)}
+                >
+                  Chat
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 border-b border-border-primary px-2 py-1.5">
+                <button
+                  type="button"
+                  className="flex items-center justify-center w-6 h-6 rounded-md text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
+                  onClick={() => setPanel("main")}
+                  aria-label="Back"
+                >
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <path d="M6.5 2L3.5 5l3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                <div className="min-w-0 flex-1 text-[11px] font-medium text-text-primary">{panelTitle}</div>
+                {panel === "model" && isPiBackend && (
+                  <div className="max-w-[96px] truncate text-[10px] text-text-tertiary">
+                    {formatPiProvider(currentPiProvider)}
+                  </div>
+                )}
+              </div>
 
-          {/* Toggles */}
-          <div className="px-3 py-2 flex flex-wrap gap-1.5">
-            {supports1M && (
-              <button
-                className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
-                  extendedContext
-                    ? "bg-accent/15 text-accent"
-                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                }`}
-                onClick={() => onExtendedContextChange(!extendedContext)}
-              >
-                1M
-              </button>
-            )}
-            <button
-              className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
-                conciseMode
-                  ? "bg-accent/15 text-accent"
-                  : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-              }`}
-              onClick={() => onConciseModeChange(!conciseMode)}
-            >
-              Concise
-            </button>
-            <button
-              className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
-                chatMode
-                  ? "bg-accent/15 text-accent"
-                  : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-              }`}
-              onClick={() => onChatModeChange(!chatMode)}
-            >
-              Chat
-            </button>
-          </div>
+              {panel === "provider" ? (
+                <div className="max-h-[240px] overflow-y-auto p-1.5">
+                  {piProviders.map((provider) => {
+                    const active = provider === currentPiProvider;
+                    return (
+                      <button
+                        key={provider}
+                        type="button"
+                        className={`w-full rounded-md px-2.5 py-2 text-left text-[11px] transition-colors ${
+                          active
+                            ? "bg-accent/10 text-accent"
+                            : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                        }`}
+                        onClick={() => handleProviderChange(provider)}
+                      >
+                        {formatPiProvider(provider)}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : panel === "model" ? (
+                <ModelPicker
+                  model={model}
+                  onModelChange={handleModelSelect}
+                  availableModels={isPiBackend ? currentProviderModels : availableModels}
+                  inline
+                />
+              ) : panel === "effort" ? (
+                <EffortPicker
+                  effort={effort}
+                  onEffortChange={(value) => {
+                    onEffortChange(value);
+                    closeMenu();
+                  }}
+                  isPiBackend={isPiBackend}
+                  inline
+                />
+              ) : (
+                <div className="max-h-[240px] overflow-y-auto p-1.5">
+                  {PERMISSION_MODES.map((mode) => {
+                    const active = mode.value === permissionMode;
+                    return (
+                      <button
+                        key={mode.value}
+                        type="button"
+                        className={`w-full rounded-md px-2.5 py-2 text-left text-[11px] transition-colors ${
+                          active
+                            ? "bg-accent/10 text-accent"
+                            : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                        }`}
+                        onClick={() => {
+                          onPermissionModeChange(mode.value);
+                          closeMenu();
+                        }}
+                      >
+                        {mode.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

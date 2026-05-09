@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAppStore } from "../../stores/appStore";
 
@@ -20,6 +20,57 @@ interface PendingClose {
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(value, max));
 }
+
+const CloseConfirmationPopover = memo(function CloseConfirmationPopover({
+  pendingClose,
+  onCancel,
+  onConfirm,
+}: {
+  pendingClose: PendingClose;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100]"
+      onClick={onCancel}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onCancel();
+      }}
+    >
+      <div
+        className="absolute w-[244px] rounded-md border border-border-primary bg-bg-secondary p-3 shadow-xl"
+        style={{
+          left: clamp(pendingClose.x + POINTER_OFFSET, VIEWPORT_MARGIN, window.innerWidth - POPOVER_WIDTH - VIEWPORT_MARGIN),
+          top: clamp(pendingClose.y + POINTER_OFFSET, VIEWPORT_MARGIN, window.innerHeight - POPOVER_HEIGHT - VIEWPORT_MARGIN),
+        }}
+        onClick={(event) => event.stopPropagation()}
+        onContextMenu={(event) => event.preventDefault()}
+      >
+        <div className="text-xs font-semibold text-text-primary">Agent is still working</div>
+        <p className="mt-1 text-[11px] leading-4 text-text-tertiary">
+          Close “{pendingClose.label}” and stop this active session?
+        </p>
+        <div className="mt-3 flex justify-end gap-2">
+          <button
+            className="rounded px-2 py-1 text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button
+            className="rounded bg-error/15 px-2 py-1 text-[11px] text-error transition-colors hover:bg-error/25"
+            onClick={onConfirm}
+          >
+            Close tab
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+});
 
 /**
  * Returns a close-tab requester that asks for confirmation near the pointer
@@ -85,48 +136,16 @@ export function useAgentTabCloseConfirmation() {
     };
   }, [confirmClose, pendingClose]);
 
-  const closeConfirmation = pendingClose
-    ? createPortal(
-      <div
-        className="fixed inset-0 z-[100]"
-        onClick={cancelClose}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          cancelClose();
-        }}
-      >
-        <div
-          className="absolute w-[244px] rounded-md border border-border-primary bg-bg-secondary p-3 shadow-xl"
-          style={{
-            left: clamp(pendingClose.x + POINTER_OFFSET, VIEWPORT_MARGIN, window.innerWidth - POPOVER_WIDTH - VIEWPORT_MARGIN),
-            top: clamp(pendingClose.y + POINTER_OFFSET, VIEWPORT_MARGIN, window.innerHeight - POPOVER_HEIGHT - VIEWPORT_MARGIN),
-          }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          <div className="text-xs font-semibold text-text-primary">Agent is still working</div>
-          <p className="mt-1 text-[11px] leading-4 text-text-tertiary">
-            Close “{pendingClose.label}” and stop this active session?
-          </p>
-          <div className="mt-3 flex justify-end gap-2">
-            <button
-              className="rounded px-2 py-1 text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
-              onClick={cancelClose}
-            >
-              Cancel
-            </button>
-            <button
-              className="rounded bg-error/15 px-2 py-1 text-[11px] text-error transition-colors hover:bg-error/25"
-              onClick={confirmClose}
-            >
-              Close tab
-            </button>
-          </div>
-        </div>
-      </div>,
-      document.body,
-    )
-    : null;
+  const closeConfirmation = useMemo(() => {
+    if (!pendingClose) return null;
+    return (
+      <CloseConfirmationPopover
+        pendingClose={pendingClose}
+        onCancel={cancelClose}
+        onConfirm={confirmClose}
+      />
+    );
+  }, [cancelClose, confirmClose, pendingClose]);
 
   return { requestCloseTab, closeConfirmation };
 }

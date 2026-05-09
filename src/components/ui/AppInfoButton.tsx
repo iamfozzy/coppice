@@ -1,20 +1,48 @@
 import { useEffect, useState } from "react";
-import { getIdentifier, getName, getTauriVersion, getVersion } from "@tauri-apps/api/app";
+import { getName, getVersion } from "@tauri-apps/api/app";
+import { formatAppVersion, openAppReleasePage, useAppUpdateInfo } from "../../lib/appUpdate";
+import { agentSdkVersions } from "../../lib/agentSdkVersions";
 import { Tooltip } from "./Tooltip";
 
 interface AppInfoState {
   name: string;
   version: string;
-  tauriVersion: string;
-  identifier: string;
 }
 
 const DEFAULT_INFO: AppInfoState = {
   name: "Coppice",
   version: "—",
-  tauriVersion: "—",
-  identifier: "com.coppice.app",
 };
+
+export function AppUpdateButton({
+  align = "left",
+}: {
+  align?: "center" | "left" | "right";
+}) {
+  const appUpdate = useAppUpdateInfo();
+
+  if (appUpdate?.status !== "available") return null;
+
+  const latestVersion = formatAppVersion(appUpdate.latestVersion);
+
+  return (
+    <Tooltip text={`New version available: ${latestVersion}`} align={align}>
+      <button
+        type="button"
+        onClick={() => void openAppReleasePage(appUpdate.releaseUrl)}
+        className="relative w-7 h-7 flex items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/15 transition-colors"
+        aria-label={`Open GitHub Releases to download ${latestVersion}`}
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M7 2.25v5.25" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          <path d="M4.9 5.6L7 7.7l2.1-2.1" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M3 10.25h8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+        </svg>
+        <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400 ring-2 ring-bg-secondary" />
+      </button>
+    </Tooltip>
+  );
+}
 
 export function AppInfoButton({
   align = "left",
@@ -29,7 +57,7 @@ export function AppInfoButton({
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="w-7 h-7 flex items-center justify-center rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/60 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
           aria-label="About Coppice"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -47,6 +75,7 @@ export function AppInfoButton({
 
 function AppInfoModal({ onClose }: { onClose: () => void }) {
   const [info, setInfo] = useState<AppInfoState>(DEFAULT_INFO);
+  const appUpdate = useAppUpdateInfo();
 
   useEffect(() => {
     let cancelled = false;
@@ -54,15 +83,11 @@ function AppInfoModal({ onClose }: { onClose: () => void }) {
     Promise.allSettled([
       getName(),
       getVersion(),
-      getTauriVersion(),
-      getIdentifier(),
     ]).then((results) => {
       if (cancelled) return;
       setInfo({
         name: results[0].status === "fulfilled" ? results[0].value : DEFAULT_INFO.name,
         version: results[1].status === "fulfilled" ? results[1].value : DEFAULT_INFO.version,
-        tauriVersion: results[2].status === "fulfilled" ? results[2].value : DEFAULT_INFO.tauriVersion,
-        identifier: results[3].status === "fulfilled" ? results[3].value : DEFAULT_INFO.identifier,
       });
     }).catch(() => {});
 
@@ -110,9 +135,27 @@ function AppInfoModal({ onClose }: { onClose: () => void }) {
 
           <div className="mt-5 rounded-lg border border-border-primary overflow-hidden">
             <InfoRow label="Version" value={info.version} />
-            <InfoRow label="Tauri" value={info.tauriVersion} />
-            <InfoRow label="Identifier" value={info.identifier} mono />
+            <InfoRow label="Claude Agent SDK" value={agentSdkVersions.claudeAgentSdk} />
+            <InfoRow label="Pi SDK" value={agentSdkVersions.piSdk} />
           </div>
+
+          {appUpdate?.status === "available" && (
+            <button
+              type="button"
+              onClick={() => void openAppReleasePage(appUpdate.releaseUrl)}
+              className="mt-4 w-full rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-left hover:bg-amber-500/15 transition-colors"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-text-primary">Update available</div>
+                  <div className="mt-0.5 text-xs text-text-secondary">
+                    {formatAppVersion(appUpdate.currentVersion || info.version)} → {formatAppVersion(appUpdate.latestVersion)}
+                  </div>
+                </div>
+                <span className="shrink-0 text-xs font-medium text-amber-200">View</span>
+              </div>
+            </button>
+          )}
 
           <div className="mt-5 flex justify-end">
             <button

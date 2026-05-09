@@ -8,7 +8,7 @@ import { ChangesPanel } from "./ChangesPanel";
 import { SidebarRunners } from "./SidebarRunners";
 import { Tooltip } from "../ui/Tooltip";
 import { TileViewToggleButton } from "../ui/TileViewToggleButton";
-import { AppInfoButton } from "../ui/AppInfoButton";
+import { AppInfoButton, AppUpdateButton } from "../ui/AppInfoButton";
 import { ModelConfigPopover, formatPiProvider, getPiModelsForProvider, stripPiProviderPrefix, type HeaderOption } from "../ui/AgentHeaderControls";
 
 export function Sidebar() {
@@ -274,7 +274,7 @@ export function Sidebar() {
           <Tooltip text="Add project" align="right">
             <button
               onClick={() => openProjectSettings("new")}
-              className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/60 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
@@ -289,11 +289,12 @@ export function Sidebar() {
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          <AppUpdateButton align="right" />
           <AppInfoButton align="right" />
           <Tooltip text="Settings" align="right">
             <button
               onClick={openAppSettings}
-              className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/60 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
