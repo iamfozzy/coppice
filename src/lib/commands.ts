@@ -278,6 +278,7 @@ export async function githubAuthLogout(): Promise<void> {
 
 // Agent commands
 export interface AgentStartOptions {
+  backend?: import("./types").AgentBackend;
   model?: string;
   effort?: string;
   permissionMode?: string;
@@ -305,6 +306,7 @@ export async function agentStart(
     sessionId,
     cwd,
     prompt,
+    backend: options?.backend,
     model: options?.model,
     effort: options?.effort,
     permissionMode: options?.permissionMode,
@@ -446,6 +448,7 @@ export interface AgentTabCache {
   label: string;
   cwd: string;
   sdk_session_id: string | null;
+  backend: string | null;
   model: string;
   effort: string;
   permission_mode: string;
@@ -488,10 +491,3 @@ export async function deleteAgentTabCacheForWorktree(worktreeId: string): Promis
   return invoke("delete_agent_tab_cache_for_worktree", { worktreeId });
 }
 
-export async function loadAgentTabTrace(tabId: string): Promise<string> {
-  return invoke("load_agent_tab_trace", { tabId });
-}
-
-export async function saveAgentTabTrace(tabId: string, traceJson: string): Promise<void> {
-  return invoke("save_agent_tab_trace", { tabId, traceJson });
-}

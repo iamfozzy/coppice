@@ -210,7 +210,12 @@ impl AgentManager {
                 &event_name,
                 r#"{"type":"status","status":"exited"}"#,
             );
-            sessions_ref.lock().unwrap().remove(&sid);
+            // Remove session AND kill the process tree to prevent orphans.
+            // Without the explicit kill, the child process can linger as a
+            // zombie when the bridge crashes or closes unexpectedly.
+            if let Some(mut session) = sessions_ref.lock().unwrap().remove(&sid) {
+                kill_process_tree(&mut session.child);
+            }
         });
 
         // Stderr reader thread — log to eprintln AND forward to the UI as a
@@ -290,7 +295,6 @@ impl AgentManager {
     }
 
     /// Close all sessions — called on app exit.
-    #[allow(dead_code)]
     pub fn close_all(&self) {
         let mut sessions = self.sessions.lock().unwrap();
         for (_, mut session) in sessions.drain() {

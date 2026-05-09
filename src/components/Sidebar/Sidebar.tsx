@@ -1,5 +1,6 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { useAppStore } from "../../stores/appStore";
+import type { AgentBackend } from "../../lib/types";
 import { ProjectTree } from "./ProjectTree";
 import { ScratchpadNode } from "./ScratchpadNode";
 import { ChangesPanel } from "./ChangesPanel";
@@ -14,13 +15,71 @@ export function Sidebar() {
   const toggleTileView = useAppStore((s) => s.toggleTileView);
   const showTileView = useAppStore((s) => s.showTileView);
   const loadProjects = useAppStore((s) => s.loadProjects);
+  const appSettings = useAppStore((s) => s.appSettings);
+  const setDefaultAgentBackend = useAppStore((s) => s.setDefaultAgentBackend);
+  const setAgentBackend = useAppStore((s) => s.setAgentBackend);
 
   const isResizing = useRef(false);
   const sidebarRef = useRef<HTMLElement>(null);
+  const backendMenuRef = useRef<HTMLDivElement>(null);
+  const [backendMenuOpen, setBackendMenuOpen] = useState(false);
+  const [switchingBackend, setSwitchingBackend] = useState(false);
 
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    if (!backendMenuOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (backendMenuRef.current && !backendMenuRef.current.contains(e.target as Node)) {
+        setBackendMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setBackendMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [backendMenuOpen]);
+
+  const handleBackendSelect = useCallback(async (backend: AgentBackend) => {
+    const settings = useAppStore.getState().appSettings;
+    if (!settings || settings.agent_backend === backend) {
+      setBackendMenuOpen(false);
+      return;
+    }
+    setSwitchingBackend(true);
+    try {
+      await setDefaultAgentBackend(backend);
+      const s = useAppStore.getState();
+      const wtId = s.selectedWorktreeId;
+      const activeTabId = wtId ? s.activeTabByWorktree[wtId] : null;
+      const activeTab = wtId && activeTabId ? s.tabsByWorktree[wtId]?.find((tab) => tab.id === activeTabId) : null;
+      const activeSession = activeTabId ? s.agentSessionByTab[activeTabId] : null;
+      if (
+        activeTabId
+        && activeTab?.type === "agent"
+        && activeSession
+        && activeSession.status === "idle"
+        && activeSession.messages.length === 0
+        && !activeSession.sdkSessionId
+      ) {
+        setAgentBackend(
+          activeTabId,
+          backend,
+          backend === "pi" ? settings.pi_default_model || "" : settings.agent_default_model || "",
+        );
+      }
+    } finally {
+      setSwitchingBackend(false);
+      setBackendMenuOpen(false);
+    }
+  }, [setDefaultAgentBackend, setAgentBackend]);
 
   const onMouseDown = useCallback(() => {
     isResizing.current = true;
@@ -75,6 +134,8 @@ export function Sidebar() {
     document.addEventListener("mouseup", onMouseUp);
   }, [setSidebarWidth]);
 
+  const currentBackend = appSettings?.agent_backend ?? "claude";
+
   return (
     <aside
       ref={sidebarRef}
@@ -90,6 +151,42 @@ export function Sidebar() {
           </span>
         </div>
         <div className="flex items-center gap-1">
+          <div className="relative" ref={backendMenuRef}>
+            <Tooltip text={`Default agent: ${currentBackend === "pi" ? "Pi" : "Claude"}`} align="right">
+              <button
+                onClick={() => setBackendMenuOpen((open) => !open)}
+                disabled={!appSettings || switchingBackend}
+                className={`h-6 min-w-6 px-1.5 flex items-center justify-center gap-1 rounded transition-colors ${currentBackend === "pi" ? "text-accent bg-accent/10 hover:bg-accent/15" : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"} disabled:opacity-50`}
+              >
+                <svg width="14" height="14" viewBox="0 -1.5 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5.2 3.2a2.7 2.7 0 0 1 5.6 0 2.2 2.2 0 0 1 1.9 2.6 2.7 2.7 0 0 1-.6 5.3H3.9a2.7 2.7 0 0 1-.6-5.3 2.2 2.2 0 0 1 1.9-2.6Z" />
+                  <path d="M6 6.4c.5.5.9 1.1 1 1.9M10 6.4c-.5.5-.9 1.1-1 1.9M8 8.5v2.1" />
+                </svg>
+                <span className="text-[9px] font-semibold uppercase leading-none">{currentBackend === "pi" ? "Pi" : "Cl"}</span>
+              </button>
+            </Tooltip>
+            {backendMenuOpen && (
+              <div className="absolute right-0 top-8 z-20 w-44 rounded-md border border-border-primary bg-bg-secondary shadow-xl p-1.5">
+                {([
+                  { value: "claude", label: "Claude agent", hint: appSettings?.agent_default_model || "Default model" },
+                  { value: "pi", label: "Pi agent", hint: appSettings?.pi_default_model || "Default model" },
+                ] as const).map((option) => {
+                  const active = currentBackend === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleBackendSelect(option.value)}
+                      className={`w-full text-left rounded px-2 py-1.5 transition-colors ${active ? "bg-accent/10 text-accent" : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"}`}
+                    >
+                      <div className="text-[11px] font-medium">{option.label}</div>
+                      <div className="text-[10px] text-text-tertiary truncate">{option.hint}</div>
+                    </button>
+                  );
+                })}
+                <div className="px-2 pt-1 text-[10px] text-text-tertiary">New agent tabs use this.</div>
+              </div>
+            )}
+          </div>
           <Tooltip text="Tile view">
             <button
               onClick={toggleTileView}

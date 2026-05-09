@@ -75,8 +75,8 @@ impl Default for AppSettings {
             agent_api_key_custom_only: false,
             agent_small_fast_model: String::new(),
             agent_subagent_model: String::new(),
-            agent_bash_max_output: 0,
-            agent_task_max_output: 0,
+            agent_bash_max_output: 15000,
+            agent_task_max_output: 15000,
             mcp_servers: HashMap::new(),
 
             agent_backend: "claude".to_string(),

@@ -61,6 +61,7 @@ pub fn agent_start(
     session_id: String,
     cwd: String,
     prompt: String,
+    backend: Option<String>,
     model: Option<String>,
     effort: Option<String>,
     permission_mode: Option<String>,
@@ -78,13 +79,13 @@ pub fn agent_start(
     settings: State<'_, crate::settings::SettingsState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    // Select bridge script based on backend setting
-    let bridge_path = {
-        let s = settings.inner().get();
-        match s.agent_backend.as_str() {
-            "pi" => resolve_bridge_path_for(&app, "pi-bridge.mjs")?,
-            _ => resolve_bridge_path_for(&app, "bridge.mjs")?,
-        }
+    let settings_snapshot = settings.inner().get();
+    let selected_backend = backend.unwrap_or_else(|| settings_snapshot.agent_backend.clone());
+
+    // Select bridge script based on the session backend
+    let bridge_path = match selected_backend.as_str() {
+        "pi" => resolve_bridge_path_for(&app, "pi-bridge.mjs")?,
+        _ => resolve_bridge_path_for(&app, "bridge.mjs")?,
     };
 
     // Build the start command JSON
@@ -142,12 +143,11 @@ pub fn agent_start(
     // for non-Claude models (custom models like openai/gpt-4o). Claude models
     // fall back to the default SDK key.
     let resolved_api_key = api_key.or_else(|| {
-        let s = settings.inner().get();
-        let k = s.agent_api_key.clone();
+        let k = settings_snapshot.agent_api_key.clone();
         if k.is_empty() {
             return None;
         }
-        if s.agent_api_key_custom_only {
+        if settings_snapshot.agent_api_key_custom_only {
             let is_claude = model
                 .as_ref()
                 .map_or(true, |m| m.starts_with("claude"));
@@ -167,12 +167,11 @@ pub fn agent_start(
     // for non-Claude models (custom models like openai/gpt-4o). Claude models
     // go direct to the Anthropic API.
     {
-        let s = settings.inner().get();
-        if !s.agent_base_url.is_empty() {
+        if !settings_snapshot.agent_base_url.is_empty() {
             let is_claude = model
                 .as_ref()
                 .map_or(true, |m| m.starts_with("claude"));
-            let use_base_url = if s.agent_base_url_custom_only {
+            let use_base_url = if settings_snapshot.agent_base_url_custom_only {
                 !is_claude
             } else {
                 true
@@ -180,7 +179,7 @@ pub fn agent_start(
             if use_base_url {
                 options.insert(
                     "baseUrl".into(),
-                    serde_json::Value::String(s.agent_base_url.clone()),
+                    serde_json::Value::String(settings_snapshot.agent_base_url.clone()),
                 );
             }
         }
@@ -188,39 +187,37 @@ pub fn agent_start(
 
     // Pass token-saving env overrides from settings
     {
-        let s = settings.inner().get();
-        if !s.agent_small_fast_model.is_empty() {
+        if !settings_snapshot.agent_small_fast_model.is_empty() {
             options.insert(
                 "smallFastModel".into(),
-                serde_json::Value::String(s.agent_small_fast_model.clone()),
+                serde_json::Value::String(settings_snapshot.agent_small_fast_model.clone()),
             );
         }
-        if !s.agent_subagent_model.is_empty() {
+        if !settings_snapshot.agent_subagent_model.is_empty() {
             options.insert(
                 "subagentModel".into(),
-                serde_json::Value::String(s.agent_subagent_model.clone()),
+                serde_json::Value::String(settings_snapshot.agent_subagent_model.clone()),
             );
         }
-        if s.agent_bash_max_output > 0 {
+        if settings_snapshot.agent_bash_max_output > 0 {
             options.insert(
                 "bashMaxOutputLength".into(),
-                serde_json::Value::Number(s.agent_bash_max_output.into()),
+                serde_json::Value::Number(settings_snapshot.agent_bash_max_output.into()),
             );
         }
-        if s.agent_task_max_output > 0 {
+        if settings_snapshot.agent_task_max_output > 0 {
             options.insert(
                 "taskMaxOutputLength".into(),
-                serde_json::Value::Number(s.agent_task_max_output.into()),
+                serde_json::Value::Number(settings_snapshot.agent_task_max_output.into()),
             );
         }
     }
 
     // Pass MCP servers from settings
     {
-        let s = settings.inner().get();
-        if !s.mcp_servers.is_empty() {
+        if !settings_snapshot.mcp_servers.is_empty() {
             let mut servers = serde_json::Map::new();
-            for (name, entry) in &s.mcp_servers {
+            for (name, entry) in &settings_snapshot.mcp_servers {
                 let mut obj = serde_json::Map::new();
                 if entry.server_type == "stdio" {
                     if let Some(ref cmd) = entry.command {
@@ -258,64 +255,70 @@ pub fn agent_start(
     }
 
     // Pass Pi-specific options when using the Pi backend
-    {
-        let s = settings.inner().get();
-        if s.agent_backend == "pi" {
-            // pi_default_model may be "provider/modelId" or just "modelId".
-            // Parse it and use the provider from the model string if present,
-            // falling back to pi_default_provider.
-            let (pi_provider, pi_model_id) = if s.pi_default_model.contains('/') {
-                let parts: Vec<&str> = s.pi_default_model.splitn(2, '/').collect();
+    if selected_backend == "pi" {
+        // Prefer the session model when present so restored tabs keep using
+        // the backend/model they were created with.
+        let (pi_provider, pi_model_id) = if let Some(ref m) = model {
+            if m.contains('/') {
+                let parts: Vec<&str> = m.splitn(2, '/').collect();
                 (parts[0].to_string(), parts[1].to_string())
             } else {
-                (s.pi_default_provider.clone(), s.pi_default_model.clone())
-            };
-            options.insert(
-                "piProvider".into(),
-                serde_json::Value::String(pi_provider.clone()),
-            );
-            options.insert(
-                "piModelId".into(),
-                serde_json::Value::String(pi_model_id),
-            );
-            options.insert(
-                "enableWebAccess".into(),
-                serde_json::Value::Bool(s.pi_enable_web_access),
-            );
-            // Pass per-provider API keys so the bridge can set env vars
-            if !s.pi_api_keys.is_empty() {
-                let keys_obj: serde_json::Map<String, serde_json::Value> = s
-                    .pi_api_keys
-                    .iter()
-                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                    .collect();
-                options.insert(
-                    "piApiKeys".into(),
-                    serde_json::Value::Object(keys_obj),
-                );
+                (settings_snapshot.pi_default_provider.clone(), m.clone())
             }
-            // For Pi mode, if no apiKey was resolved above (e.g. agent_api_key
-            // is empty), fall back to the Pi provider-specific key for the
-            // selected provider so the bridge always has credentials.
-            if resolved_api_key.is_none() {
-                let provider = pi_provider.as_str();
-                if let Some(k) = s.pi_api_keys.get(provider) {
-                    if !k.is_empty() {
-                        options.insert(
-                            "apiKey".into(),
-                            serde_json::Value::String(k.clone()),
-                        );
-                    }
-                }
-                // Also fall back to the main agent_api_key for Anthropic
-                if !s.agent_api_key.is_empty()
-                    && (provider == "anthropic" || provider.is_empty())
-                {
+        } else if settings_snapshot.pi_default_model.contains('/') {
+            let parts: Vec<&str> = settings_snapshot.pi_default_model.splitn(2, '/').collect();
+            (parts[0].to_string(), parts[1].to_string())
+        } else {
+            (
+                settings_snapshot.pi_default_provider.clone(),
+                settings_snapshot.pi_default_model.clone(),
+            )
+        };
+        options.insert(
+            "piProvider".into(),
+            serde_json::Value::String(pi_provider.clone()),
+        );
+        options.insert(
+            "piModelId".into(),
+            serde_json::Value::String(pi_model_id),
+        );
+        options.insert(
+            "enableWebAccess".into(),
+            serde_json::Value::Bool(settings_snapshot.pi_enable_web_access),
+        );
+        // Pass per-provider API keys so the bridge can set env vars
+        if !settings_snapshot.pi_api_keys.is_empty() {
+            let keys_obj: serde_json::Map<String, serde_json::Value> = settings_snapshot
+                .pi_api_keys
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            options.insert(
+                "piApiKeys".into(),
+                serde_json::Value::Object(keys_obj),
+            );
+        }
+        // For Pi mode, if no apiKey was resolved above (e.g. agent_api_key
+        // is empty), fall back to the Pi provider-specific key for the
+        // selected provider so the bridge always has credentials.
+        if resolved_api_key.is_none() {
+            let provider = pi_provider.as_str();
+            if let Some(k) = settings_snapshot.pi_api_keys.get(provider) {
+                if !k.is_empty() {
                     options.insert(
                         "apiKey".into(),
-                        serde_json::Value::String(s.agent_api_key.clone()),
+                        serde_json::Value::String(k.clone()),
                     );
                 }
+            }
+            // Also fall back to the main agent_api_key for Anthropic
+            if !settings_snapshot.agent_api_key.is_empty()
+                && (provider == "anthropic" || provider.is_empty())
+            {
+                options.insert(
+                    "apiKey".into(),
+                    serde_json::Value::String(settings_snapshot.agent_api_key.clone()),
+                );
             }
         }
     }
@@ -888,11 +891,16 @@ pub fn get_project_commands(cwd: String) -> Result<Vec<ProjectSlashCommand>, Str
     let home = dirs::home_dir().unwrap_or_default();
     let project_claude = Path::new(&cwd).join(".claude");
     let user_claude = home.join(".claude");
+    let project_pi = Path::new(&cwd).join(".pi");
+    let user_pi = home.join(".pi").join("agent");
 
-    // Scan .claude/commands/ directories for flat *.md files (project-local first)
+    // Scan commands/prompts directories for flat *.md files (project-local first).
+    // Covers both Claude (.claude/commands/) and Pi (.pi/prompts/) conventions.
     let command_dirs: Vec<PathBuf> = vec![
         project_claude.join("commands"),
+        project_pi.join("prompts"),
         user_claude.join("commands"),
+        user_pi.join("prompts"),
     ];
 
     for dir in &command_dirs {
@@ -933,10 +941,13 @@ pub fn get_project_commands(cwd: String) -> Result<Vec<ProjectSlashCommand>, Str
         }
     }
 
-    // Scan .claude/skills/ directories for <name>/SKILL.md (project-local first)
+    // Scan skills directories for <name>/SKILL.md (project-local first).
+    // Covers both Claude (.claude/skills/) and Pi (.pi/skills/) conventions.
     let skill_dirs: Vec<PathBuf> = vec![
         project_claude.join("skills"),
+        project_pi.join("skills"),
         user_claude.join("skills"),
+        user_pi.join("skills"),
     ];
 
     for dir in &skill_dirs {

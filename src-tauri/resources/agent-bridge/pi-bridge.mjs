@@ -1,31 +1,32 @@
 /**
  * Coppice Pi Agent Bridge
  *
- * Drives @earendil-works/pi-agent-core + pi-ai + pi-coding-agent via the
- * same JSON-line stdin/stdout protocol as bridge.mjs. One process per
+ * Drives @earendil-works/pi-coding-agent AgentSession via the same
+ * JSON-line stdin/stdout protocol as bridge.mjs. One process per
  * agent session.
  *
  * Stdin (Rust → Node): one JSON object per line
  * Stdout (Node → Rust): one JSON object per line
  * Stderr: debug/error logging (forwarded by Rust to app logs)
  *
- * Uses Pi's SDK libraries directly (not the RPC mode) so that Coppice
- * retains full control over events, permissions, and session state.
+ * Uses Pi's AgentSession (via createAgentSession) for full feature
+ * support: compaction, slash commands, prompt templates, skills,
+ * auto-retry, model management, and session statistics.
  */
 
-import { Agent } from "@earendil-works/pi-agent-core";
 import { getModel, getProviders, getModels } from "@earendil-works/pi-ai";
 import {
-  createCodingTools,
-  createReadOnlyTools,
+  createAgentSession,
+  SessionManager,
   AuthStorage,
+  defineTool,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createInterface } from "readline";
 import { readFile, readdir, access } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { homedir } from "node:os";
-import { constants as fsConstants } from "node:fs";
+import { join } from "node:path";
+import { homedir, platform } from "node:os";
+import { constants as fsConstants, mkdirSync } from "node:fs";
 
 // ── Helpers ──
 
@@ -75,11 +76,9 @@ const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
  * Returns a valid Pi ThinkingLevel.
  */
 function resolveThinkingLevel(opts) {
-  // Pi native thinking level takes priority
   if (opts.thinkingLevel && PI_THINKING_LEVELS.includes(opts.thinkingLevel)) {
     return opts.thinkingLevel;
   }
-  // Map Coppice effort → Pi thinking
   switch (opts.effort) {
     case "low":
       return "low";
@@ -97,86 +96,16 @@ function resolveThinkingLevel(opts) {
 }
 
 // ── Coppice system prompt appendages ──
+// These are injected into the system prompt AgentSession builds, via
+// promptGuidelines on Coppice tool definitions and a post-creation append.
 
 const CONCISE_MODE_INSTRUCTION = `CONCISE MODE: no preamble, no filler, no restating plans or summaries. Execute multi-step tasks silently; report only final outcome. Sentence fragments ok. Errors: state failure + fix only. No apologies, hedges, unrequested alternatives, or explanatory code comments.`;
 
 const TOOL_FRUGALITY_INSTRUCTION = `Keep tool outputs small: they persist in context for every later turn. Prefer grep with path filters over wide searches; read files with offset/limit when you know the region; pipe noisy commands through head/tail. Don't cat whole large files or directories to browse — target what you need.`;
 
-const COPPICE_TOOLS_INSTRUCTION = `You are running inside the Coppice desktop IDE. You have access to Coppice-specific tools (prefixed "coppice_") that interact directly with the IDE:
-- Use coppice_create_worktree instead of git worktree commands — it registers the worktree in the IDE's project model and copies env files. When you need to do work in the new worktree, pass the task as the 'prompt' parameter — Coppice will switch to the new worktree and spawn a separate agent tab to execute it. NEVER cd into the new worktree yourself after creating it.
-- Use coppice_spawn_terminal to open new terminal tabs in the IDE, optionally running a command.
-- Use coppice_open_file to surface files in the IDE's editor tabs so the user can see them.
-- Use coppice_notify_user for important events (task completion, errors needing attention) instead of just printing a message.
-- Use coppice_open_url for links the user should visit (PR URLs, documentation).
-- Use coppice_open_scratchpad to create a scratchpad with notes, plans, or generated content.
-Don't use these for routine intermediate steps — only when IDE integration genuinely helps.`;
+const COPPICE_TOOLS_INSTRUCTION = `You are running inside the Coppice desktop IDE. Prefer coppice_ prefixed tools over shell equivalents when IDE integration helps. Only use IDE tools when it genuinely helps, not for routine intermediate steps.`;
 
-// ── System prompt builder ──
-
-/**
- * Build the Coppice system prompt. Pi's buildSystemPrompt() is not
- * exported from the package, so we construct our own tailored version.
- * This is intentionally model-agnostic — it works with any provider.
- */
-function buildCoppiceSystemPrompt({ cwd, tools, contextFiles, conciseMode, chatMode }) {
-  const now = new Date();
-  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  const promptCwd = cwd.replace(/\\/g, "/");
-
-  if (chatMode) {
-    const parts = [
-      "You are a helpful coding assistant. Answer questions clearly and concisely.",
-    ];
-    if (conciseMode) parts.push(CONCISE_MODE_INSTRUCTION);
-    parts.push(`\nCurrent date: ${date}`);
-    parts.push(`Current working directory: ${promptCwd}`);
-    return parts.join("\n\n");
-  }
-
-  // Tool list with short descriptions
-  const toolsList = tools
-    .map((t) => `- ${t.name}: ${(t.promptSnippet || t.description || "").slice(0, 100)}`)
-    .join("\n");
-
-  // Guidelines
-  const guidelines = [
-    "Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)",
-    "Be concise in your responses",
-    "Show file paths clearly when working with files",
-  ];
-
-  let prompt = `You are an expert coding assistant operating inside Coppice, a desktop IDE for Git worktrees and dev workflows. You help users by reading files, executing commands, editing code, and writing new files.
-
-Available tools:
-${toolsList}
-
-In addition to the tools above, you may have access to other custom tools depending on the project.
-
-Guidelines:
-${guidelines.map((g) => `- ${g}`).join("\n")}`;
-
-  // Coppice-specific instructions
-  prompt += "\n\n---\n\n" + TOOL_FRUGALITY_INSTRUCTION;
-  prompt += "\n\n---\n\n" + COPPICE_TOOLS_INSTRUCTION;
-  if (conciseMode) {
-    prompt += "\n\n---\n\n" + CONCISE_MODE_INSTRUCTION;
-  }
-
-  // Project context files
-  if (contextFiles && contextFiles.length > 0) {
-    prompt += "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
-    for (const { path: filePath, content } of contextFiles) {
-      prompt += `## ${filePath}\n\n${content}\n\n`;
-    }
-  }
-
-  prompt += `\nCurrent date: ${date}`;
-  prompt += `\nCurrent working directory: ${promptCwd}`;
-
-  return prompt;
-}
-
-// ── Coppice IDE tools (TypeBox schemas) ──
+// ── Coppice IDE tools (ToolDefinition format for AgentSession) ──
 
 /** Monotonically increasing call ID for coppice tool round-trips. */
 let callIdCounter = 0;
@@ -208,14 +137,34 @@ function callCoppice(toolName, args) {
   });
 }
 
-/** Build the 7 Coppice IDE tools as Pi AgentTool definitions. */
-function buildCoppiceTools() {
+/** Helper: build a Coppice tool execute function. */
+function coppiceExecute(toolName) {
+  return async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+    const result = await callCoppice(toolName, params);
+    return {
+      content: [
+        { type: "text", text: result.result || JSON.stringify(result) },
+      ],
+      details: {},
+    };
+  };
+}
+
+/**
+ * Build the 7 Coppice IDE tools as ToolDefinition[] for AgentSession.
+ * These are passed via the `customTools` option to createAgentSession().
+ */
+function buildCoppiceToolDefinitions() {
   return [
-    {
+    defineTool({
       name: "coppice_create_worktree",
       label: "Create Worktree",
       description:
         "Create a new git worktree in the Coppice IDE. Registers it in the project model and copies env files. Provide an existing branch name to check out, OR set new_branch + base_branch to create a new branch. When you have a task to perform in the new worktree, pass it as 'prompt' — Coppice will switch to the new worktree and spawn a new agent tab with that task. Do NOT cd into the worktree yourself after creating it.",
+      promptSnippet: "Create a git worktree registered in the Coppice IDE",
+      promptGuidelines: [
+        "Use coppice_create_worktree instead of raw git worktree commands — it registers the worktree in the IDE and copies env files. Pass work as the 'prompt' parameter; NEVER cd into the new worktree yourself.",
+      ],
       parameters: Type.Object({
         branch: Type.Optional(
           Type.String({ description: "Existing branch to check out" }),
@@ -241,37 +190,26 @@ function buildCoppiceTools() {
         ),
       }),
       executionMode: "sequential",
-      async execute(_toolCallId, params) {
-        const result = await callCoppice("create_worktree", params);
-        return {
-          content: [
-            { type: "text", text: result.result || JSON.stringify(result) },
-          ],
-          details: {},
-        };
-      },
-    },
-    {
+      execute: coppiceExecute("create_worktree"),
+    }),
+    defineTool({
       name: "coppice_list_worktrees",
       label: "List Worktrees",
       description:
         "List all worktrees registered in the current Coppice project.",
+      promptSnippet: "List IDE-registered worktrees",
       parameters: Type.Object({}),
-      async execute() {
-        const result = await callCoppice("list_worktrees", {});
-        return {
-          content: [
-            { type: "text", text: result.result || JSON.stringify(result) },
-          ],
-          details: {},
-        };
-      },
-    },
-    {
+      execute: coppiceExecute("list_worktrees"),
+    }),
+    defineTool({
       name: "coppice_spawn_terminal",
       label: "Spawn Terminal",
       description:
         "Open a new terminal tab in the Coppice IDE, optionally running a command in it.",
+      promptSnippet: "Open a terminal tab in the Coppice IDE",
+      promptGuidelines: [
+        "Use coppice_spawn_terminal to open new terminal tabs in the IDE, optionally running a command.",
+      ],
       parameters: Type.Object({
         cwd: Type.Optional(
           Type.String({
@@ -285,42 +223,31 @@ function buildCoppiceTools() {
           }),
         ),
       }),
-      async execute(_toolCallId, params) {
-        const result = await callCoppice("spawn_terminal", params);
-        return {
-          content: [
-            { type: "text", text: result.result || JSON.stringify(result) },
-          ],
-          details: {},
-        };
-      },
-    },
-    {
+      execute: coppiceExecute("spawn_terminal"),
+    }),
+    defineTool({
       name: "coppice_open_file",
       label: "Open File",
       description:
         "Open a file in the Coppice IDE's editor/diff tab so the user can see it.",
+      promptSnippet: "Open a file in the Coppice IDE editor",
+      promptGuidelines: [
+        "Use coppice_open_file to surface files in the IDE's editor tabs so the user can see them.",
+      ],
       parameters: Type.Object({
         path: Type.String({
           description:
             "Absolute path or path relative to the worktree root",
         }),
       }),
-      async execute(_toolCallId, params) {
-        const result = await callCoppice("open_file", params);
-        return {
-          content: [
-            { type: "text", text: result.result || JSON.stringify(result) },
-          ],
-          details: {},
-        };
-      },
-    },
-    {
+      execute: coppiceExecute("open_file"),
+    }),
+    defineTool({
       name: "coppice_open_scratchpad",
       label: "Open Scratchpad",
       description:
         "Create a new agent tab in the Coppice scratchpad with pre-filled content. Useful for plans, notes, or generated content.",
+      promptSnippet: "Create a scratchpad with notes or generated content",
       parameters: Type.Object({
         content: Type.String({
           description: "Content to pre-fill as the initial prompt",
@@ -329,21 +256,17 @@ function buildCoppiceTools() {
           Type.String({ description: "Label for the scratchpad tab" }),
         ),
       }),
-      async execute(_toolCallId, params) {
-        const result = await callCoppice("open_scratchpad", params);
-        return {
-          content: [
-            { type: "text", text: result.result || JSON.stringify(result) },
-          ],
-          details: {},
-        };
-      },
-    },
-    {
+      execute: coppiceExecute("open_scratchpad"),
+    }),
+    defineTool({
       name: "coppice_notify_user",
       label: "Notify User",
       description:
         "Show a system notification to the user via the Coppice IDE. Use for important events like task completion or errors that need attention.",
+      promptSnippet: "Show a system notification to the user",
+      promptGuidelines: [
+        "Use coppice_notify_user for important events (task completion, errors needing attention) instead of just printing a message.",
+      ],
       parameters: Type.Object({
         message: Type.String({ description: "Notification body text" }),
         title: Type.Optional(
@@ -352,80 +275,30 @@ function buildCoppiceTools() {
           }),
         ),
       }),
-      async execute(_toolCallId, params) {
-        const result = await callCoppice("notify_user", params);
-        return {
-          content: [
-            { type: "text", text: result.result || JSON.stringify(result) },
-          ],
-          details: {},
-        };
-      },
-    },
-    {
+      execute: coppiceExecute("notify_user"),
+    }),
+    defineTool({
       name: "coppice_open_url",
       label: "Open URL",
       description:
         "Open a URL in the user's system browser. Use for PR links, documentation, or other web pages the user should see.",
+      promptSnippet: "Open a URL in the user's browser",
+      promptGuidelines: [
+        "Use coppice_open_url for links the user should visit (PR URLs, documentation).",
+      ],
       parameters: Type.Object({
         url: Type.String({ description: "The URL to open" }),
       }),
-      async execute(_toolCallId, params) {
-        const result = await callCoppice("open_url", params);
-        return {
-          content: [
-            { type: "text", text: result.result || JSON.stringify(result) },
-          ],
-          details: {},
-        };
-      },
-    },
+      execute: coppiceExecute("open_url"),
+    }),
   ];
-}
-
-// ── Context file loading ──
-
-/** Check if a file exists. */
-async function fileExists(path) {
-  try {
-    await access(path, fsConstants.R_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Load project context files (CLAUDE.md, AGENTS.md) for the system prompt.
- * Returns array of { path, content } suitable for buildSystemPrompt().
- */
-async function loadContextFiles(cwd) {
-  const candidates = [
-    "CLAUDE.md",
-    "AGENTS.md",
-    ".claude/CLAUDE.md",
-    ".pi/AGENTS.md",
-  ];
-  const files = [];
-  for (const name of candidates) {
-    const fullPath = join(cwd, name);
-    if (await fileExists(fullPath)) {
-      try {
-        const content = await readFile(fullPath, "utf-8");
-        files.push({ path: name, content });
-      } catch {
-        /* skip unreadable files */
-      }
-    }
-  }
-  return files;
 }
 
 // ── Web access tool loading ──
 
 /**
  * Load pi-web-access tools by importing the package and intercepting
- * its registerTool() calls. Returns AgentTool[] on success, [] on failure.
+ * its registerTool() calls. Returns ToolDefinition[] on success, [] on failure.
  *
  * pi-web-access ships as raw .ts source (it's a Pi extension package,
  * not a compiled npm module), so we use jiti to transpile it on the fly —
@@ -456,10 +329,6 @@ async function loadWebAccessTools() {
     // Pi extensions import from the old @mariozechner/* package names —
     // alias them to the current @earendil-works/* packages (same as Pi's
     // own extension loader does via virtualModules/alias).
-    //
-    // jiti aliases need package directory paths. These ESM-only packages
-    // have strict exports that block require.resolve(), so we resolve
-    // from the top-level node_modules directory.
     const nmDir = join(pkgDir, "..");
     const resolvePkgDir = (pkg) => join(nmDir, pkg);
     const { createJiti } = await import("jiti/static");
@@ -480,6 +349,7 @@ async function loadWebAccessTools() {
       return [];
     }
 
+    // Collect tools from the extension's registerTool() calls
     const tools = [];
     const noOp = () => {};
     const mockApi = {
@@ -525,11 +395,74 @@ async function loadWebAccessTools() {
 
     await factory(mockApi);
     log(`pi-web-access: loaded ${tools.length} tools`);
-    return tools;
+
+    // Web access tools arrive as AgentTool-shaped objects from the extension.
+    // Wrap them as ToolDefinitions so they work with createAgentSession's
+    // customTools option. The shape is close enough that we just need to add
+    // the signal/onUpdate/ctx params to the execute signature.
+    return tools.map((t) =>
+      defineTool({
+        name: t.name,
+        label: t.label || t.name,
+        description: t.description || "",
+        parameters: t.parameters || Type.Object({}),
+        executionMode: t.executionMode || "parallel",
+        execute: async (toolCallId, params, _signal, _onUpdate, _ctx) => {
+          // The extension tool execute has the old (toolCallId, params) signature
+          return t.execute(toolCallId, params);
+        },
+      }),
+    );
   } catch (err) {
     log("pi-web-access not available:", err.message);
     return [];
   }
+}
+
+/** Check if a file exists. */
+async function fileExists(path) {
+  try {
+    await access(path, fsConstants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get the platform-specific app data directory, matching Rust's dirs::data_dir().
+ */
+function getAppDataDir() {
+  switch (platform()) {
+    case "darwin":
+      return join(homedir(), "Library", "Application Support");
+    case "win32":
+      return process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+    default:
+      return process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+  }
+}
+
+/**
+ * Get the path to a Pi session JSONL file for a given session ID.
+ * Creates the parent directory if it doesn't exist.
+ */
+function getSessionFilePath(sessionId) {
+  const dir = join(getAppDataDir(), "coppice", "pi-sessions");
+  mkdirSync(dir, { recursive: true });
+  return join(dir, `${sessionId}.jsonl`);
+}
+
+let cachedWebAccessToolsPromise = null;
+
+async function getCachedWebAccessTools() {
+  if (!cachedWebAccessToolsPromise) {
+    cachedWebAccessToolsPromise = loadWebAccessTools().catch((err) => {
+      cachedWebAccessToolsPromise = null;
+      throw err;
+    });
+  }
+  return cachedWebAccessToolsPromise;
 }
 
 // ── Permission system ──
@@ -606,9 +539,11 @@ async function handlePermission(toolCall, args, permissionMode) {
   });
 }
 
-// ── Agent state ──
+// ── Session state ──
 
-let agent = null;
+/** @type {import("@earendil-works/pi-coding-agent").AgentSession | null} */
+let session = null;
+let sessionUnsubscribe = null;
 let authStorage = null;
 let currentCwd = process.cwd();
 let currentPermissionMode = "default";
@@ -652,6 +587,52 @@ function getEnvApiKey(providerName) {
   return undefined;
 }
 
+/** Session-scoped env vars we override and must reset between queries. */
+const SESSION_OVERRIDE_ENV_VARS = [
+  ...new Set(Object.values(PROVIDER_ENV_VARS)),
+  "BASH_MAX_OUTPUT_LENGTH",
+  "TASK_MAX_OUTPUT_LENGTH",
+];
+
+/** Snapshot inherited env so a reused bridge can return to a clean baseline. */
+const BASE_SESSION_ENV = Object.fromEntries(
+  SESSION_OVERRIDE_ENV_VARS.map((name) => [name, process.env[name]]),
+);
+
+function resetSessionEnv() {
+  for (const name of SESSION_OVERRIDE_ENV_VARS) {
+    const value = BASE_SESSION_ENV[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+}
+
+function applySessionEnvOverrides(opts) {
+  resetSessionEnv();
+
+  if (opts.apiKey) {
+    process.env.ANTHROPIC_API_KEY = opts.apiKey;
+  }
+
+  if (opts.piApiKeys && typeof opts.piApiKeys === "object") {
+    for (const [prov, key] of Object.entries(opts.piApiKeys)) {
+      if (key && typeof key === "string") {
+        const envVar = PROVIDER_ENV_VARS[prov] || PROVIDER_ENV_VARS[prov.toLowerCase()];
+        if (envVar) {
+          process.env[envVar] = key;
+        }
+      }
+    }
+  }
+
+  if (opts.bashMaxOutputLength) {
+    process.env.BASH_MAX_OUTPUT_LENGTH = String(opts.bashMaxOutputLength);
+  }
+  if (opts.taskMaxOutputLength) {
+    process.env.TASK_MAX_OUTPUT_LENGTH = String(opts.taskMaxOutputLength);
+  }
+}
+
 /** Cumulative session cost totals. */
 let sessionTotals = {
   inputTokens: 0,
@@ -668,12 +649,18 @@ let lastTurnUsage = null;
 // ── Event subscription ──
 
 /**
- * Subscribe to Agent events and emit them in Coppice's event format.
- * This maps Pi's AgentEvent types to the same JSON events that
- * bridge.mjs emits, so the frontend needs no changes.
+ * Subscribe to AgentSession events and emit them in Coppice's event format.
+ * AgentSession emits the same core Agent events (message_start, message_end,
+ * etc.) PLUS session-specific events (compaction_start, compaction_end,
+ * auto_retry_start, auto_retry_end, thinking_level_changed).
  */
-function subscribeToEvents(agentInstance) {
-  agentInstance.subscribe((event) => {
+function subscribeToSessionEvents(agentSession) {
+  if (sessionUnsubscribe) {
+    sessionUnsubscribe();
+    sessionUnsubscribe = null;
+  }
+
+  sessionUnsubscribe = agentSession.subscribe((event) => {
     log(`event: ${event.type}${event.type === "message_update" ? "" : " " + JSON.stringify(event).slice(0, 120)}`);
     switch (event.type) {
       case "message_start":
@@ -702,11 +689,16 @@ function subscribeToEvents(agentInstance) {
         const msg = event.message;
         if (!msg || msg.role !== "assistant") break;
 
-        // Surface API errors (auth failures, rate limits, etc.)
-        if (msg.stopReason === "error" || msg.stopReason === "aborted") {
+        // Surface real API errors (auth failures, rate limits, etc.).
+        // Aborts are normal interrupts and should not appear as chat errors.
+        if (msg.stopReason === "error") {
           const errMsg = msg.errorMessage || `Request failed: ${msg.stopReason}`;
           log(`API error: ${errMsg}`);
           emit({ type: "error", message: errMsg });
+          break;
+        }
+        if (msg.stopReason === "aborted") {
+          log(`request interrupted: ${msg.errorMessage || "aborted"}`);
           break;
         }
 
@@ -806,12 +798,18 @@ function subscribeToEvents(agentInstance) {
         }
 
         // Context window from model metadata
-        const model = agentInstance.state?.model;
-        const contextWindow = model?.contextWindow || 0;
+        const currentModel = agentSession.model;
+        const contextWindow = currentModel?.contextWindow || 0;
+
+        const subtype = lastAssistant?.stopReason === "aborted"
+          ? "interrupted"
+          : lastAssistant?.stopReason === "error"
+            ? "error"
+            : "success";
 
         emit({
           type: "result",
-          subtype: "success",
+          subtype,
           sessionId: "",
           cost: { ...sessionTotals },
           lastTurnCost: {
@@ -836,10 +834,203 @@ function subscribeToEvents(agentInstance) {
         break;
       }
 
+      // ── AgentSession-specific events ──
+
+      case "compaction_start":
+        log(`compaction started: reason=${event.reason}`);
+        // Only emit status — do NOT emit slash_output here because
+        // the frontend's slash_output handler calls setStatus("done"),
+        // which would corrupt state mid-stream.
+        emit({ type: "status", status: "thinking" });
+        break;
+
+      case "compaction_end":
+        if (event.result && !event.aborted) {
+          log(`compaction complete: ${event.result.tokensBefore} tokens before`);
+          emit({
+            type: "compact_boundary",
+            summary: event.result.summary || "",
+          });
+        } else if (event.aborted) {
+          log("compaction aborted");
+        } else if (event.errorMessage) {
+          log(`compaction failed: ${event.errorMessage}`);
+          emit({ type: "error", message: `Compaction failed: ${event.errorMessage}` });
+        }
+        break;
+
+      case "auto_retry_start":
+        // Log only — do NOT emit slash_output (frontend handler calls setStatus("done"),
+        // corrupting state during an active retry cycle).
+        log(`auto-retry: attempt ${event.attempt}/${event.maxAttempts} delay=${event.delayMs}ms: ${event.errorMessage}`);
+        break;
+
+      case "auto_retry_end":
+        log(`auto-retry ended: success=${event.success} attempt=${event.attempt}${event.finalError ? ` error=${event.finalError}` : ""}`);
+        if (!event.success && event.finalError) {
+          emit({ type: "error", message: event.finalError });
+        }
+        break;
+
+      case "thinking_level_changed":
+        log(`thinking level changed to: ${event.level}`);
+        break;
+
       default:
         break;
     }
   });
+}
+
+/**
+ * Load project commands from .claude/commands/ and .claude/skills/ directories.
+ * These are cross-SDK — they work in both Claude and Pi modes.
+ * Pi has its own prompt templates from .pi/prompts/ handled by AgentSession.
+ */
+async function loadClaudeProjectCommands(cwd) {
+  const commands = [];
+  const seen = new Set();
+
+  // Scan .claude/commands/ for flat *.md files (project-local first, then user-global)
+  const commandDirs = [
+    join(cwd, ".claude", "commands"),
+    join(homedir(), ".claude", "commands"),
+  ];
+  for (const dir of commandDirs) {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const name = entry.name.slice(0, -3);
+      if (seen.has(name)) continue;
+      try {
+        const content = await readFile(join(dir, entry.name), "utf8");
+        const firstLine = content.split("\n").find((l) => l.trim()) || "";
+        seen.add(name);
+        commands.push({ name, description: firstLine.trim(), argumentHint: "$ARGUMENTS" });
+      } catch {
+        // Unreadable file — skip
+      }
+    }
+  }
+
+  // Scan .claude/skills/ for <name>/SKILL.md
+  const skillDirs = [
+    join(cwd, ".claude", "skills"),
+    join(homedir(), ".claude", "skills"),
+  ];
+  for (const dir of skillDirs) {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const name = entry.name;
+      if (seen.has(name)) continue;
+      try {
+        const content = await readFile(join(dir, name, "SKILL.md"), "utf8");
+        const firstLine = content.split("\n").find((l) => l.trim()) || "";
+        seen.add(name);
+        commands.push({ name, description: firstLine.trim(), argumentHint: "$ARGUMENTS" });
+      } catch {
+        // SKILL.md missing or unreadable — skip
+      }
+    }
+  }
+
+  return commands;
+}
+
+/**
+ * Expand a .claude/commands/ or .claude/skills/ slash command.
+ * Returns the expanded content or null if no match.
+ * This handles commands that Pi's AgentSession won't know about
+ * (since Pi only expands .pi/prompts/ templates internally).
+ */
+async function expandClaudeCommand(prompt, cwd) {
+  if (!prompt || !prompt.startsWith("/")) return null;
+  const match = prompt.match(/^\/(\S+)(?:\s+(.*))?$/s);
+  if (!match) return null;
+  const [, name, args] = match;
+  const candidates = [
+    join(cwd, ".claude", "commands", `${name}.md`),
+    join(homedir(), ".claude", "commands", `${name}.md`),
+    join(cwd, ".claude", "skills", name, "SKILL.md"),
+    join(homedir(), ".claude", "skills", name, "SKILL.md"),
+  ];
+  for (const filePath of candidates) {
+    try {
+      let content = await readFile(filePath, "utf8");
+      if (args !== undefined) {
+        content = content.replaceAll("$ARGUMENTS", args);
+      } else {
+        content = content.replaceAll("$ARGUMENTS", "");
+      }
+      return content.trim();
+    } catch {
+      // File not found — try next candidate
+    }
+  }
+  return null;
+}
+
+/**
+ * Emit the slash command list for the frontend command picker.
+ * Includes: allowed Pi builtins + prompt templates from .pi/prompts/
+ * + cross-SDK commands from .claude/commands/ and .claude/skills/.
+ */
+async function emitSlashCommands() {
+  if (!session) return;
+
+  const commands = [];
+  const seen = new Set();
+
+  // Add allowed built-in commands
+  commands.push(
+    { name: "compact", description: "Compact the conversation history", argumentHint: "[instructions]" },
+    { name: "model", description: "Change the model", argumentHint: "[model]" },
+    { name: "session", description: "Show session info and stats", argumentHint: "" },
+  );
+  for (const c of commands) seen.add(c.name);
+
+  // Add prompt templates from AgentSession's resource loader (.pi/prompts/)
+  try {
+    const templates = session.promptTemplates;
+    if (templates && templates.length > 0) {
+      for (const t of templates) {
+        if (seen.has(t.name)) continue;
+        seen.add(t.name);
+        commands.push({
+          name: t.name,
+          description: t.description || "",
+          argumentHint: t.argumentHint || "$ARGUMENTS",
+        });
+      }
+    }
+  } catch (err) {
+    log("Failed to load prompt templates:", err.message);
+  }
+
+  // Add cross-SDK commands from .claude/commands/ and .claude/skills/
+  try {
+    const claudeCommands = await loadClaudeProjectCommands(currentCwd);
+    for (const c of claudeCommands) {
+      if (seen.has(c.name)) continue;
+      seen.add(c.name);
+      commands.push(c);
+    }
+  } catch (err) {
+    log("Failed to load .claude/ commands:", err.message);
+  }
+
+  emit({ type: "commands", commands });
 }
 
 // ── Session handler ──
@@ -876,155 +1067,168 @@ async function startSession(msg) {
 
   log(`session start provider=${provider} model=${modelId}`);
 
-  // Build tools
-  log("step: creating coding tools...");
-  const codingTools = createCodingTools(currentCwd);
-  log(`step: coding tools OK (${codingTools.length})`);
-  const readOnlyExtras = createReadOnlyTools(currentCwd);
-  log(`step: read-only tools OK (${readOnlyExtras.length})`);
-  const coppiceTools = buildCoppiceTools();
-  log(`step: coppice tools OK (${coppiceTools.length})`);
-
-  // Merge coding + read-only extras (avoid duplicates by name)
-  const codingNames = new Set(codingTools.map((t) => t.name));
-  const extras = readOnlyExtras.filter((t) => !codingNames.has(t.name));
-  let allTools = [...codingTools, ...extras, ...coppiceTools];
-
-  // Load web access tools if enabled
-  if (opts.enableWebAccess !== false) {
-    log("step: loading web access tools...");
-    const webTools = await loadWebAccessTools();
-    log(`step: web access tools done (${webTools.length})`);
-    allTools = [...allTools, ...webTools];
-  }
-
-  // No tools in chat mode
-  if (opts.chatMode) {
-    allTools = [];
-  }
-
-  // Build system prompt
-  log("step: loading context files...");
-  const contextFiles = await loadContextFiles(currentCwd);
-  log(`step: context files OK (${contextFiles.length})`);
-  log("step: building system prompt...");
-  const systemPrompt = buildCoppiceSystemPrompt({
-    cwd: currentCwd,
-    tools: allTools,
-    contextFiles,
-    conciseMode: opts.conciseMode,
-    chatMode: opts.chatMode,
-  });
-
   // Resolve thinking level (accepts both Pi native and Coppice effort levels)
   const thinkingLevel = resolveThinkingLevel(opts);
 
-  // Set API key via env var if provided
-  if (opts.apiKey) {
-    process.env.ANTHROPIC_API_KEY = opts.apiKey;
-  }
+  // Reset any previous per-session overrides before applying the latest auth
+  // and tool-output settings. Reused bridge processes must not keep stale
+  // API keys or output limits from an earlier failed run.
+  applySessionEnvOverrides(opts);
 
-  // Set per-provider API keys from Pi settings.
-  // Uses the same PROVIDER_ENV_VARS map as getEnvApiKey() so all providers
-  // are handled consistently.
-  if (opts.piApiKeys && typeof opts.piApiKeys === "object") {
-    for (const [prov, key] of Object.entries(opts.piApiKeys)) {
-      if (key && typeof key === "string") {
-        const envVar = PROVIDER_ENV_VARS[prov] || PROVIDER_ENV_VARS[prov.toLowerCase()];
-        if (envVar) {
-          process.env[envVar] = key;
-        }
-      }
-    }
-  }
-
-  // Token-saving env overrides
-  if (opts.bashMaxOutputLength) {
-    process.env.BASH_MAX_OUTPUT_LENGTH = String(opts.bashMaxOutputLength);
-  }
-  if (opts.taskMaxOutputLength) {
-    process.env.TASK_MAX_OUTPUT_LENGTH = String(opts.taskMaxOutputLength);
-  }
-
-  // Initialize auth storage for OAuth credential resolution.
-  // Reads ~/.pi/agent/auth.json — the same file created by `pi login`.
-  // This lets Coppice use existing Pi OAuth sessions (Anthropic, GitHub
-  // Copilot, OpenAI Codex) without requiring a raw API key.
-  if (!authStorage) {
-    try {
+  // Refresh auth storage on every start so an existing session picks up new
+  // OAuth credentials written by a separate login flow.
+  try {
+    if (!authStorage) {
       authStorage = AuthStorage.create();
-      const hasAnthropicAuth = !!(await authStorage.getApiKey("anthropic"));
-      log(`auth storage: loaded (anthropic=${hasAnthropicAuth})`);
+    } else {
+      authStorage.reload?.();
+    }
+    const hasAnthropicAuth = typeof authStorage.hasAuth === "function"
+      ? authStorage.hasAuth("anthropic")
+      : !!(await authStorage.getApiKey("anthropic"));
+    log(`auth storage: loaded (anthropic=${hasAnthropicAuth})`);
+  } catch (err) {
+    log(`auth storage: failed to init (${err.message}), falling back to env vars`);
+  }
+
+  // Build custom tools (Coppice IDE tools + web access)
+  log("step: building custom tools...");
+  const coppiceTools = buildCoppiceToolDefinitions();
+  let customTools = [...coppiceTools];
+
+  if (opts.enableWebAccess !== false) {
+    log("step: loading web access tools...");
+    try {
+      const webTools = await getCachedWebAccessTools();
+      log(`step: web access tools done (${webTools.length})`);
+      customTools = [...customTools, ...webTools];
     } catch (err) {
-      log(`auth storage: failed to init (${err.message}), falling back to env vars`);
+      log(`step: web access tools failed: ${err.message}`);
     }
   }
 
-  log(`step: creating agent (tools=${allTools.length} thinking=${thinkingLevel})...`);
-  if (!agent) {
-    // First start — create the Agent
-    agent = new Agent({
-      initialState: {
-        systemPrompt,
-        model,
-        tools: allTools,
-        thinkingLevel,
-      },
-      // Dynamic API key resolution: checks env vars first (set from
-      // Coppice settings), then falls back to Pi's auth.json OAuth
-      // tokens. This enables zero-config auth if the user has done
-      // `pi login anthropic` (or any other provider).
-      getApiKey: async (providerName) => {
-        // OAuth tokens take priority (auto-refresh, subscription-based)
-        if (authStorage) {
-          try {
-            const oauthKey = await authStorage.getApiKey(providerName);
-            if (oauthKey) return oauthKey;
-          } catch {
-            // OAuth refresh failed — fall through to env vars
-          }
-        }
-        // Fall back to env vars (set from Coppice settings API key fields)
-        const envKey = getEnvApiKey(providerName);
-        if (envKey) return envKey;
-        return undefined;
-      },
-      beforeToolCall: async ({ toolCall, args }) => {
-        const result = await handlePermission(
-          toolCall,
-          args,
-          currentPermissionMode,
-        );
-        if (result && result.block) {
-          return { block: true, reason: result.reason || "Denied by user" };
-        }
-        return undefined; // allow
-      },
-      toolExecution: "parallel",
+  // Dispose previous session. The file-backed SessionManager has already
+  // written all messages to disk via appendFileSync, so no data is lost.
+  if (session) {
+    try {
+      session.dispose();
+    } catch {
+      /* ignore */
+    }
+    session = null;
+    sessionUnsubscribe = null;
+  }
+
+  // Use file-backed SessionManager so the SDK handles message persistence
+  // and restoration automatically. The JSONL file is created lazily on the
+  // first assistant response and read back on subsequent startSession calls.
+  const sessionId = msg.sessionId || `unnamed-${Date.now()}`;
+  const sessionFilePath = getSessionFilePath(sessionId);
+  const sessionManager = SessionManager.open(sessionFilePath, undefined, currentCwd);
+  const existingCtx = sessionManager.buildSessionContext();
+  const resumeCount = existingCtx.messages.length;
+
+  log(`step: creating AgentSession (tools=${customTools.length} thinking=${thinkingLevel} resume=${resumeCount} file=${sessionFilePath})...`);
+
+  try {
+    const { session: newSession } = await createAgentSession({
+      cwd: currentCwd,
+      model,
+      thinkingLevel,
+      authStorage,
+      sessionManager,
+      customTools,
+      // No tools in chat mode
+      ...(opts.chatMode ? { noTools: "all" } : {}),
     });
 
-    log("step: agent created, subscribing to events...");
-    subscribeToEvents(agent);
-  } else {
-    // Subsequent start — update state for new query
-    agent.state.systemPrompt = systemPrompt;
-    agent.state.model = model;
-    agent.state.tools = allTools;
-    agent.state.thinkingLevel = thinkingLevel;
+    session = newSession;
+
+    // Install permission hook on the underlying Agent.
+    // Chain with any existing hook installed by createAgentSession() (e.g. _installAgentToolHooks).
+    const originalBeforeToolCall = session.agent.beforeToolCall;
+    session.agent.beforeToolCall = async (context, signal) => {
+      const result = await handlePermission(
+        context.toolCall,
+        context.args,
+        currentPermissionMode,
+      );
+      if (result && result.block) {
+        return { block: true, reason: result.reason || "Denied by user" };
+      }
+      // Delegate to the SDK's original hook (handles tool registry dispatch, etc.)
+      if (originalBeforeToolCall) {
+        return originalBeforeToolCall(context, signal);
+      }
+      return undefined; // allow
+    };
+
+    // Keep parallel tool execution
+    session.agent.toolExecution = "parallel";
+
+    // Filter out error/aborted assistant messages from restored context.
+    // The JSONL file persists all messages including failures; clean them
+    // out so they don't confuse the model or waste context tokens.
+    const restoredMessages = session.agent.state.messages;
+    const cleanMessages = restoredMessages.filter((m) => {
+      if (m?.role !== "assistant") return true;
+      return m.stopReason !== "error" && m.stopReason !== "aborted";
+    });
+    if (cleanMessages.length !== restoredMessages.length) {
+      log(
+        `filtered ${restoredMessages.length - cleanMessages.length} error/aborted message(s) from restored context`,
+      );
+      session.agent.state.messages = cleanMessages;
+    }
+
+    // Append Coppice-specific instructions to the system prompt.
+    // Per-tool guidance is handled by promptGuidelines on each tool definition;
+    // only general context and frugality instructions are appended here.
+    const basePrompt = session.systemPrompt || "";
+    const coppiceAppend = [
+      "",
+      "---",
+      "",
+      TOOL_FRUGALITY_INSTRUCTION,
+      "",
+      "---",
+      "",
+      COPPICE_TOOLS_INSTRUCTION,
+    ];
+    if (opts.conciseMode) {
+      coppiceAppend.push("", "---", "", CONCISE_MODE_INSTRUCTION);
+    }
+    session.agent.state.systemPrompt = basePrompt + "\n" + coppiceAppend.join("\n");
+  } catch (err) {
+    log(`createAgentSession failed: ${err.message}`, err.stack);
+    emit({
+      type: "error",
+      message: `Failed to create agent session: ${err.message}`,
+    });
+    return;
   }
+
+  log("step: session created, subscribing to events...");
+  subscribeToSessionEvents(session);
+
+  // Collect tool names from the session's active tools
+  const activeToolNames = session.getActiveToolNames();
 
   // Emit init event (same shape as bridge.mjs)
   log("step: emitting init event...");
   emit({
     type: "init",
     sessionId: msg.sessionId || "",
-    tools: allTools.map((t) => t.name),
+    tools: activeToolNames,
     model: `${provider}/${modelId}`,
     permissionMode: currentPermissionMode,
     mcpServers: [],
-    slashCommands: [],
+    slashCommands: ["compact", "model", "session"],
     isResume: !!opts.resume,
   });
+
+  // Emit slash commands with full details
+  emitSlashCommands();
 
   // Emit available models for the frontend
   try {
@@ -1055,25 +1259,25 @@ async function startSession(msg) {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(() => emit({ type: "heartbeat" }), 10_000);
 
-  // Run the prompt
-  log(`prompting model=${provider}/${modelId} tools=${allTools.length} prompt="${msg.prompt.slice(0, 80)}..."`);
+  // Run the prompt — expand .claude/commands/ templates first (Pi SDK
+  // only expands .pi/prompts/ internally via session.prompt()).
+  let promptText = msg.prompt;
+  if (promptText.startsWith("/")) {
+    const expanded = await expandClaudeCommand(promptText, currentCwd);
+    if (expanded) {
+      log(`expanded .claude/ command: /${promptText.split(/\s/)[0].slice(1)}`);
+      promptText = expanded;
+    }
+  }
+  log(`prompting model=${provider}/${modelId} tools=${activeToolNames.length} prompt="${promptText.slice(0, 80)}..."`);
   log(`ANTHROPIC_API_KEY set: ${!!process.env.ANTHROPIC_API_KEY}, length: ${(process.env.ANTHROPIC_API_KEY || "").length}`);
   try {
-    if (msg.images && msg.images.length > 0) {
-      const imageBlocks = msg.images
-        .filter((img) => img.data && img.mediaType)
-        .map((img) => ({
-          type: "image",
-          data: img.data,
-          mimeType: img.mediaType,
-        }));
-      await agent.prompt(msg.prompt, imageBlocks);
-    } else {
-      await agent.prompt(msg.prompt);
-    }
-    log("agent.prompt() resolved");
+    const images = parseImages(msg.images);
+    const promptOpts = images.length > 0 ? { images } : {};
+    await session.prompt(promptText, promptOpts);
+    log("session.prompt() resolved");
   } catch (err) {
-    log("Agent error:", err.message, err.stack);
+    log("Session error:", err.message, err.stack);
     emit({ type: "error", message: err.message || String(err) });
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
@@ -1114,77 +1318,72 @@ async function handleCommand(msg) {
       break;
 
     case "input":
-      if (!agent) break;
-      if (agent.state.isStreaming) {
-        // Agent is busy — steer (redirect without losing work)
-        if (msg.images && msg.images.length > 0) {
-          const imageBlocks = msg.images
-            .filter((img) => img.data && img.mediaType)
-            .map((img) => ({
-              type: "image",
-              data: img.data,
-              mimeType: img.mediaType,
-            }));
-          agent.steer({
-            role: "user",
-            content: [
-              { type: "text", text: msg.text },
-              ...imageBlocks,
-            ],
-            timestamp: Date.now(),
-          });
-        } else {
-          agent.steer({
-            role: "user",
-            content: msg.text,
-            timestamp: Date.now(),
-          });
+      if (!session) break;
+      if (session.isStreaming) {
+        // Agent is busy — steer (redirect without losing work).
+        // AgentSession.steer() handles slash command validation (throws
+        // if it's an extension command) and prompt template expansion.
+        try {
+          const images = parseImages(msg.images);
+          await session.steer(msg.text, images.length > 0 ? images : undefined);
+        } catch (err) {
+          // Extension commands can't be steered — try as follow-up
+          log("steer failed, trying followUp:", err.message);
+          try {
+            const images = parseImages(msg.images);
+            await session.followUp(msg.text, images.length > 0 ? images : undefined);
+          } catch (err2) {
+            log("followUp also failed:", err2.message);
+          }
         }
       } else {
-        // Agent is idle — new prompt
+        // Agent is idle — new prompt. Expand .claude/commands/ templates first
+        // (Pi SDK only handles .pi/prompts/ templates internally).
+        let inputText = msg.text;
+        if (inputText.startsWith("/")) {
+          const expanded = await expandClaudeCommand(inputText, currentCwd);
+          if (expanded) {
+            log(`expanded .claude/ command: /${inputText.split(/\s/)[0].slice(1)}`);
+            inputText = expanded;
+          }
+        }
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         heartbeatTimer = setInterval(() => emit({ type: "heartbeat" }), 10_000);
         try {
-          if (msg.images && msg.images.length > 0) {
-            const imageBlocks = msg.images
-              .filter((img) => img.data && img.mediaType)
-              .map((img) => ({
-                type: "image",
-                data: img.data,
-                mimeType: img.mediaType,
-              }));
-            await agent.prompt(msg.text, imageBlocks);
-          } else {
-            await agent.prompt(msg.text);
+          const promptOpts = {};
+          const images = parseImages(msg.images);
+          if (images.length > 0) {
+            promptOpts.images = images;
           }
+          await session.prompt(inputText, promptOpts);
         } catch (err) {
-          log("Agent prompt error:", err.message);
+          log("Session prompt error:", err.message);
           emit({ type: "error", message: err.message });
         }
       }
       break;
 
     case "interrupt":
-      if (agent) {
-        agent.abort();
+      if (session) {
+        await session.abort().catch(() => {});
         emit({ type: "result", subtype: "interrupted" });
       }
       break;
 
     case "set_model":
-      if (agent && msg.model) {
+      if (session && msg.model) {
         try {
           // Parse "provider/modelId" format or just modelId
-          let provider, modelId;
+          let newProvider, newModelId;
           if (msg.model.includes("/")) {
-            [provider, modelId] = msg.model.split("/", 2);
+            [newProvider, newModelId] = msg.model.split("/", 2);
           } else {
-            provider = "anthropic";
-            modelId = msg.model;
+            newProvider = "anthropic";
+            newModelId = msg.model;
           }
-          const newModel = getModel(provider, modelId);
-          agent.state.model = newModel;
-          log(`Model switched to ${provider}/${modelId}`);
+          const newModel = getModel(newProvider, newModelId);
+          await session.setModel(newModel);
+          log(`Model switched to ${newProvider}/${newModelId}`);
         } catch (err) {
           log("setModel error:", err.message);
         }
@@ -1193,6 +1392,10 @@ async function handleCommand(msg) {
 
     case "set_permission_mode":
       currentPermissionMode = msg.mode || "default";
+      break;
+
+    case "list_commands":
+      emitSlashCommands();
       break;
 
     case "tool_response": {
@@ -1242,6 +1445,18 @@ async function handleCommand(msg) {
   }
 }
 
+/** Parse image attachments from a message into Pi's ImageContent format. */
+function parseImages(images) {
+  if (!images || !Array.isArray(images)) return [];
+  return images
+    .filter((img) => img.data && img.mediaType)
+    .map((img) => ({
+      type: "image",
+      data: img.data,
+      mimeType: img.mediaType,
+    }));
+}
+
 // ── Cleanup ──
 
 function cleanup() {
@@ -1249,8 +1464,17 @@ function cleanup() {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
   }
-  if (agent) {
-    agent.abort();
+  if (sessionUnsubscribe) {
+    sessionUnsubscribe();
+    sessionUnsubscribe = null;
+  }
+  if (session) {
+    try {
+      session.abort().catch(() => {});
+      session.dispose();
+    } catch {
+      /* ignore */
+    }
   }
 }
 

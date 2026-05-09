@@ -140,10 +140,13 @@ async function loadProjectCommands(cwd) {
   const commands = [];
   const seen = new Set();
 
-  // Scan .claude/commands/ for flat *.md files
+  // Scan commands directories for flat *.md files (project-local first, then user-global).
+  // Covers both Claude (.claude/commands/) and Pi (.pi/prompts/) conventions.
   const commandDirs = [
     join(cwd, ".claude", "commands"),
+    join(cwd, ".pi", "prompts"),
     join(homedir(), ".claude", "commands"),
+    join(homedir(), ".pi", "agent", "prompts"),
   ];
   for (const dir of commandDirs) {
     let entries;
@@ -171,10 +174,13 @@ async function loadProjectCommands(cwd) {
     }
   }
 
-  // Scan .claude/skills/ for <name>/SKILL.md
+  // Scan skills directories for <name>/SKILL.md (project-local first, then user-global).
+  // Covers both Claude (.claude/skills/) and Pi (.pi/skills/) conventions.
   const skillDirs = [
     join(cwd, ".claude", "skills"),
+    join(cwd, ".pi", "skills"),
     join(homedir(), ".claude", "skills"),
+    join(homedir(), ".pi", "agent", "skills"),
   ];
   for (const dir of skillDirs) {
     let entries;
@@ -219,9 +225,13 @@ async function expandProjectCommand(prompt, cwd) {
   const [, name, args] = match;
   const candidates = [
     join(cwd, ".claude", "commands", `${name}.md`),
+    join(cwd, ".pi", "prompts", `${name}.md`),
     join(homedir(), ".claude", "commands", `${name}.md`),
+    join(homedir(), ".pi", "agent", "prompts", `${name}.md`),
     join(cwd, ".claude", "skills", name, "SKILL.md"),
+    join(cwd, ".pi", "skills", name, "SKILL.md"),
     join(homedir(), ".claude", "skills", name, "SKILL.md"),
+    join(homedir(), ".pi", "agent", "skills", name, "SKILL.md"),
   ];
   for (const filePath of candidates) {
     try {
@@ -755,6 +765,11 @@ async function startSession(msg) {
       type: "preset",
       preset: "claude_code",
       append: appendParts.length ? appendParts.join("\n\n---\n\n") : undefined,
+      // Move dynamic sections (cwd, git status, date, memory path) out of
+      // the system prompt into the first user message. The static system
+      // prompt then becomes cacheable across sessions — ~20K tokens served
+      // from prompt cache at 1/10th cost instead of full input price.
+      excludeDynamicSections: true,
     };
   }
 

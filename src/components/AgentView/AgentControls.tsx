@@ -21,9 +21,28 @@ interface Props {
   availableModels?: SupportedModel[];
   /** Whether using Pi agent backend (affects which controls are shown). */
   isPiBackend?: boolean;
+  /** Whether the backend badge is toggleable (true when session hasn't started). */
+  canToggleBackend?: boolean;
+  /** Callback to toggle between Pi and Claude backends. */
+  onBackendToggle?: () => void;
 }
 
-const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+const CLAUDE_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+  { value: "xhigh", label: "xhigh" },
+  { value: "max", label: "max" },
+];
+
+const PI_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
+  { value: "off", label: "Off" },
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Max" },
+];
 
 const PERMISSION_MODES: {
   value: AgentPermissionMode;
@@ -67,10 +86,35 @@ export function AgentControls({
   onExtendedContextChange,
   availableModels,
   isPiBackend,
+  canToggleBackend,
+  onBackendToggle,
 }: Props) {
   const supports1M = !isPiBackend && modelSupports1MContext(model);
+  const effortLevels = isPiBackend ? PI_EFFORT_LEVELS : CLAUDE_EFFORT_LEVELS;
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 pb-0 pt-2 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
+      {/* Backend badge — always visible, toggleable before session starts */}
+      <Tooltip
+        text={
+          canToggleBackend
+            ? `Switch to ${isPiBackend ? "Claude" : "Pi"} backend`
+            : `Using ${isPiBackend ? "Pi" : "Claude"} backend`
+        }
+        side="top"
+      >
+        <button
+          className={`px-2 py-1 rounded-md text-[11px] font-semibold uppercase border transition-colors ${
+            isPiBackend
+              ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
+              : "bg-sky-500/10 text-sky-400 border-sky-500/20"
+          } ${canToggleBackend ? "cursor-pointer hover:brightness-125" : "cursor-default opacity-75"}`}
+          onClick={canToggleBackend ? onBackendToggle : undefined}
+          disabled={!canToggleBackend}
+        >
+          {isPiBackend ? "Pi" : "Cl"}
+        </button>
+      </Tooltip>
+
       {/* Model selector — custom dropdown */}
       <ModelPicker model={model} onModelChange={onModelChange} availableModels={availableModels} isPiBackend={isPiBackend} />
 
@@ -92,20 +136,23 @@ export function AgentControls({
 
       {/* Effort selector */}
       <div className="flex items-center rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
-        {EFFORT_LEVELS.map((level) => (
-          <Tooltip key={level} text={`Set effort to ${level}`} side="top">
-            <button
-              className={`px-2 py-1 text-[11px] capitalize transition-colors ${
-                effort === level
-                  ? "bg-accent text-white"
-                  : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-              }`}
-              onClick={() => onEffortChange(level)}
-            >
-              {level}
-            </button>
-          </Tooltip>
-        ))}
+        {effortLevels.map((level) => {
+          const isActive = effort === level.value || (isPiBackend && effort === "max" && level.value === "xhigh");
+          return (
+            <Tooltip key={level.value} text={`Set effort to ${level.label}`} side="top">
+              <button
+                className={`px-2 py-1 text-[11px] transition-colors ${
+                  isActive
+                    ? "bg-accent text-white"
+                    : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                }`}
+                onClick={() => onEffortChange(level.value)}
+              >
+                {level.label}
+              </button>
+            </Tooltip>
+          );
+        })}
       </div>
 
       {/* Permission mode picker */}
@@ -171,16 +218,19 @@ function fmtProvider(slug: string) {
   return PROVIDER_LABELS[slug] || slug.charAt(0).toUpperCase() + slug.slice(1);
 }
 
-function ModelPicker({
+export function ModelPicker({
   model,
   onModelChange,
   availableModels,
   isPiBackend,
+  inline,
 }: {
   model: string;
   onModelChange: (model: string) => void;
   availableModels?: SupportedModel[];
   isPiBackend?: boolean;
+  /** Render the list directly without a trigger button / dropdown wrapper. */
+  inline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
@@ -197,8 +247,10 @@ function ModelPicker({
   );
   const displayLabel = matchedPreset?.label ?? model ?? MODELS[0].label;
 
+  const showList = inline || open;
+
   useEffect(() => {
-    if (!open) return;
+    if (!open || inline) return;
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
@@ -208,7 +260,7 @@ function ModelPicker({
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
+  }, [open, inline]);
 
   useEffect(() => {
     if (customInput && inputRef.current) inputRef.current.focus();
@@ -226,8 +278,116 @@ function ModelPicker({
   const currentProvider = model.includes("/") ? model.split("/")[0] : matchedPreset?.provider;
 
   useEffect(() => {
-    if (open && usePiGrouped && currentProvider) setExpandedProvider(currentProvider);
-  }, [open]);
+    if (showList && usePiGrouped && currentProvider) setExpandedProvider(currentProvider);
+  }, [showList]);
+
+  const handleSelect = (value: string) => {
+    onModelChange(value);
+    if (!inline) {
+      setOpen(false);
+      setExpandedProvider(null);
+    }
+  };
+
+  const listContent = (
+    <>
+      {usePiGrouped ? (
+        <>
+          {providerGroups.map((g) => {
+            const isExpanded = expandedProvider === g.provider;
+            return (
+              <div key={g.provider}>
+                <button
+                  className={`w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                    currentProvider === g.provider
+                      ? "text-accent"
+                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  }`}
+                  onClick={() => setExpandedProvider(isExpanded ? null : g.provider)}
+                >
+                  <span>{fmtProvider(g.provider)}</span>
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}>
+                    <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                {isExpanded && (
+                  <div className="pb-1">
+                    {g.models.map((m) => {
+                      const isActive = m.value === model || `${m.provider}/${m.value}` === model;
+                      return (
+                        <button
+                          key={m.value}
+                          className={`w-full text-left pl-6 pr-3 py-1 text-[11px] transition-colors ${
+                            isActive ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                          }`}
+                          onClick={() => handleSelect(isPiBackend && m.provider ? `${m.provider}/${m.value}` : m.value)}
+                        >
+                          {m.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>
+      ) : (
+        MODELS.map((m) => (
+          <button
+            key={m.value}
+            className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
+              (m.value === model || (m.provider && `${m.provider}/${m.value}` === model))
+                ? "bg-accent/10 text-accent"
+                : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+            }`}
+            onClick={() => handleSelect(isPiBackend && m.provider ? `${m.provider}/${m.value}` : m.value)}
+          >
+            {m.label}
+          </button>
+        ))
+      )}
+      <div className="border-t border-border-primary my-0.5" />
+      {customInput ? (
+        <div className="px-2 py-1.5">
+          <input
+            ref={inputRef}
+            type="text"
+            value={customValue}
+            onChange={(e) => setCustomValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && customValue.trim()) {
+                handleSelect(customValue.trim());
+                setCustomInput(false);
+                setCustomValue("");
+              }
+              if (e.key === "Escape") {
+                setCustomInput(false);
+                setCustomValue("");
+              }
+            }}
+            placeholder="provider/model-id"
+            className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+          />
+          <p className="mt-1 text-[9px] text-text-tertiary">Enter to confirm</p>
+        </div>
+      ) : (
+        <button
+          className="w-full text-left px-3 py-1.5 text-[11px] text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+          onClick={() => {
+            setCustomInput(true);
+            setCustomValue(matchedPreset ? "" : model);
+          }}
+        >
+          Custom model...
+        </button>
+      )}
+    </>
+  );
+
+  if (inline) {
+    return <div className="max-h-[240px] overflow-y-auto">{listContent}</div>;
+  }
 
   return (
     <div className="relative" ref={ref}>
@@ -245,105 +405,7 @@ function ModelPicker({
       </button>
       {open && (
         <div className="absolute bottom-full mb-1 left-0 min-w-[200px] max-h-[320px] overflow-y-auto bg-bg-secondary border border-border-primary rounded-md shadow-lg z-50">
-          {usePiGrouped ? (
-            <>
-              {providerGroups.map((g) => {
-                const isExpanded = expandedProvider === g.provider;
-                return (
-                  <div key={g.provider}>
-                    <button
-                      className={`w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium transition-colors ${
-                        currentProvider === g.provider
-                          ? "text-accent"
-                          : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                      }`}
-                      onClick={() => setExpandedProvider(isExpanded ? null : g.provider)}
-                    >
-                      <span>{fmtProvider(g.provider)}</span>
-                      <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}>
-                        <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </button>
-                    {isExpanded && (
-                      <div className="pb-1">
-                        {g.models.map((m) => {
-                          const isActive = m.value === model || `${m.provider}/${m.value}` === model;
-                          return (
-                            <button
-                              key={m.value}
-                              className={`w-full text-left pl-6 pr-3 py-1 text-[11px] transition-colors ${
-                                isActive ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                              }`}
-                              onClick={() => {
-                                onModelChange(m.provider ? `${m.provider}/${m.value}` : m.value);
-                                setOpen(false);
-                                setExpandedProvider(null);
-                              }}
-                            >
-                              {m.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </>
-          ) : (
-            MODELS.map((m) => (
-              <button
-                key={m.value}
-                className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
-                  (m.value === model || (m.provider && `${m.provider}/${m.value}` === model))
-                    ? "bg-accent/10 text-accent"
-                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                }`}
-                onClick={() => {
-                  onModelChange(m.provider ? `${m.provider}/${m.value}` : m.value);
-                  setOpen(false);
-                }}
-              >
-                {m.label}
-              </button>
-            ))
-          )}
-          <div className="border-t border-border-primary my-0.5" />
-          {customInput ? (
-            <div className="px-2 py-1.5">
-              <input
-                ref={inputRef}
-                type="text"
-                value={customValue}
-                onChange={(e) => setCustomValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && customValue.trim()) {
-                    onModelChange(customValue.trim());
-                    setOpen(false);
-                    setCustomInput(false);
-                    setCustomValue("");
-                  }
-                  if (e.key === "Escape") {
-                    setCustomInput(false);
-                    setCustomValue("");
-                  }
-                }}
-                placeholder="provider/model-id"
-                className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
-              />
-              <p className="mt-1 text-[9px] text-text-tertiary">Enter to confirm</p>
-            </div>
-          ) : (
-            <button
-              className="w-full text-left px-3 py-1.5 text-[11px] text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
-              onClick={() => {
-                setCustomInput(true);
-                setCustomValue(matchedPreset ? "" : model);
-              }}
-            >
-              Custom model...
-            </button>
-          )}
+          {listContent}
         </div>
       )}
     </div>

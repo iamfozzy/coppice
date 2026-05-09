@@ -6,7 +6,7 @@ import * as commands from "../../lib/commands";
 import type { PrComment } from "../../lib/commands";
 import {
   resolveTheme,
-  MONACO_DARK_RULES, MONACO_DARK_COLORS,
+  MONACO_DARK_RULES, MONACO_DARK_COLORS, MONACO_DIM_COLORS, MONACO_ATOM_COLORS,
   MONACO_LIGHT_RULES, MONACO_LIGHT_COLORS,
 } from "../../lib/theme";
 
@@ -149,7 +149,7 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
   const appSettings = useAppStore((s) => s.appSettings);
   const themeMode = appSettings?.theme ?? "dark";
   const resolved = resolveTheme(themeMode);
-  const monacoThemeName = resolved === "light" ? "coppice-light" : "coppice-dark";
+  const monacoThemeName = { light: "coppice-light", dim: "coppice-dim", atom: "coppice-atom", dark: "coppice-dark" }[resolved];
   const [original, setOriginal] = useState<string>("");
   const [modified, setModified] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -388,6 +388,18 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
               inherit: true,
               rules: MONACO_DARK_RULES,
               colors: MONACO_DARK_COLORS,
+            });
+            monaco.editor.defineTheme("coppice-dim", {
+              base: "vs-dark",
+              inherit: true,
+              rules: MONACO_DARK_RULES,
+              colors: MONACO_DIM_COLORS,
+            });
+            monaco.editor.defineTheme("coppice-atom", {
+              base: "vs-dark",
+              inherit: true,
+              rules: MONACO_DARK_RULES,
+              colors: MONACO_ATOM_COLORS,
             });
             monaco.editor.defineTheme("coppice-light", {
               base: "vs",

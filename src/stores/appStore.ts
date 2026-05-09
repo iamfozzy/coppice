@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment, QueuedMessage, TraceEvent, TraceMode } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment, QueuedMessage, AgentBackend } from "../lib/types";
 import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID } from "../lib/types";
-import { DEFAULT_SLASH_COMMANDS } from "../lib/slashCommandDefaults";
+import { getDefaultSlashCommands } from "../lib/slashCommandDefaults";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
 import { isWindowFocused } from "../lib/windowFocus";
@@ -97,6 +97,7 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
       label: tabInfo.label,
       cwd: tabInfo.cwd,
       sdk_session_id: session.sdkSessionId,
+      backend: session.backend,
       model: session.model,
       effort: session.effort,
       permission_mode: session.permissionMode,
@@ -124,77 +125,13 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
   }
 }
 
-// ── Trace persistence (separate from main tab persist) ──
-// Trace events are lazily loaded and persisted independently so that:
-//  1. Startup doesn't pay the cost of loading megabytes of trace JSON
-//  2. Normal tab persists (which run on every keystroke/message) don't
-//     need to serialize the entire trace array
-
-/** Tracks which tabs have had their DB trace data loaded into memory. */
-const _traceLoadedTabs = new Set<string>();
-
-/** Debounce timers for trace-specific persistence. */
-const _traceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-/** Persist trace events for a single tab (debounced, separate from main tab persist). */
-function persistTraceDebounced(tabId: string) {
-  if (_traceTimers.has(tabId)) clearTimeout(_traceTimers.get(tabId)!);
-  _traceTimers.set(tabId, setTimeout(async () => {
-    _traceTimers.delete(tabId);
-    const liveEvents = useAppStore.getState().traceEventsByTab[tabId];
-    if (!liveEvents || liveEvents.length === 0) return;
-
-    if (_traceLoadedTabs.has(tabId)) {
-      // Full data in memory — save directly
-      commands.saveAgentTabTrace(tabId, JSON.stringify(liveEvents)).catch(() => {});
-    } else {
-      // Only live (new) events in memory — merge with historical DB data
-      try {
-        const dbJson = await commands.loadAgentTabTrace(tabId);
-        const dbEvents: TraceEvent[] = dbJson ? JSON.parse(dbJson) : [];
-        const merged = [...dbEvents, ...liveEvents];
-        _traceLoadedTabs.add(tabId);
-        // Update store so future persists use the full set
-        useAppStore.setState((s) => ({
-          traceEventsByTab: { ...s.traceEventsByTab, [tabId]: merged },
-        }));
-        commands.saveAgentTabTrace(tabId, JSON.stringify(merged)).catch(() => {});
-      } catch {
-        // DB read failed — save what we have
-        commands.saveAgentTabTrace(tabId, JSON.stringify(liveEvents)).catch(() => {});
-      }
-    }
-  }, 2000));
-}
-
-/** Load trace events from DB for a tab on demand (e.g. when trace panel opens). */
-async function loadTraceForTab(tabId: string) {
-  if (_traceLoadedTabs.has(tabId)) return;
-  _traceLoadedTabs.add(tabId);
-  try {
-    const json = await commands.loadAgentTabTrace(tabId);
-    const dbEvents: TraceEvent[] = json ? JSON.parse(json) : [];
-    if (dbEvents.length > 0) {
-      // Prepend historical DB events before any live events that accumulated
-      useAppStore.setState((s) => {
-        const live = s.traceEventsByTab[tabId] ?? [];
-        return {
-          traceEventsByTab: { ...s.traceEventsByTab, [tabId]: [...dbEvents, ...live] },
-        };
-      });
-    }
-  } catch (e) {
-    console.error("Failed to load trace events:", e);
-  }
-}
+let _piModelsLoadPromise: Promise<void> | null = null;
 
 /** Flush all pending agent tab saves immediately. Returns a promise that resolves when all saves complete. */
 export async function flushAllAgentTabCaches(): Promise<void> {
-  // Clear all pending debounce timers (both main and trace)
+  // Clear all pending debounce timers
   for (const [, timer] of _persistTimers) clearTimeout(timer);
   _persistTimers.clear();
-  for (const [, timer] of _traceTimers) clearTimeout(timer);
-  _traceTimers.clear();
 
   const s = useAppStore.getState();
   const saves: Promise<void>[] = [];
@@ -214,6 +151,7 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         label: tab.label,
         cwd: tab.cwd,
         sdk_session_id: session.sdkSessionId,
+        backend: session.backend,
         model: session.model,
         effort: session.effort,
         permission_mode: session.permissionMode,
@@ -231,24 +169,6 @@ export async function flushAllAgentTabCaches(): Promise<void> {
         pinned_at: tab.pinnedAt ?? null,
       };
       saves.push(commands.saveAgentTabCache(cache));
-
-      // Flush trace events separately — merge with DB if not yet loaded
-      const liveEvents = s.traceEventsByTab[tab.id];
-      if (liveEvents && liveEvents.length > 0) {
-        if (_traceLoadedTabs.has(tab.id)) {
-          saves.push(commands.saveAgentTabTrace(tab.id, JSON.stringify(liveEvents)));
-        } else {
-          saves.push((async () => {
-            try {
-              const dbJson = await commands.loadAgentTabTrace(tab.id);
-              const dbEvents: TraceEvent[] = dbJson ? JSON.parse(dbJson) : [];
-              await commands.saveAgentTabTrace(tab.id, JSON.stringify([...dbEvents, ...liveEvents]));
-            } catch {
-              await commands.saveAgentTabTrace(tab.id, JSON.stringify(liveEvents));
-            }
-          })());
-        }
-      }
     }
   }
 
@@ -313,13 +233,6 @@ interface AppState {
   // Agent session state (keyed by tab ID)
   agentSessionByTab: Record<string, AgentSessionState>;
 
-  // Trace events per agent tab (separate from session to avoid re-rendering
-  // conversation UI on every trace event)
-  traceEventsByTab: Record<string, TraceEvent[]>;
-
-  // Trace panel mode per agent tab
-  traceModeByTab: Record<string, TraceMode>;
-
   // Cached tab counts from DB (for worktrees not yet loaded into memory)
   cachedTabCountByWorktree: Record<string, number>;
 
@@ -335,6 +248,8 @@ interface AppState {
   // Actions — settings
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
+  ensurePiModelsLoaded: () => Promise<void>;
+  setDefaultAgentBackend: (backend: AgentBackend) => Promise<void>;
 
   // Actions — general
   loadProjects: () => Promise<void>;
@@ -402,6 +317,7 @@ interface AppState {
   updateAgentStreamingThinking: (tabId: string, text: string) => void;
   clearAgentStreamingThinking: (tabId: string) => void;
   setAgentStatus: (tabId: string, status: AgentStatus) => void;
+  setAgentBackend: (tabId: string, backend: AgentBackend, model?: string) => void;
   setAgentModel: (tabId: string, model: string) => void;
   setAgentEffort: (tabId: string, effort: EffortLevel) => void;
   setAgentExtendedContext: (tabId: string, enabled: boolean) => void;
@@ -423,12 +339,6 @@ interface AppState {
   cancelQueuedAgentMessage: (tabId: string, messageId: string) => void;
   shiftQueuedMessage: (tabId: string) => void;
   promoteAllQueuedMessages: (tabId: string) => void;
-
-  // Actions — trace / observability
-  appendTraceEvent: (tabId: string, event: TraceEvent) => void;
-  appendTraceEvents: (tabId: string, events: TraceEvent[]) => void;
-  toggleTracePanel: (tabId: string) => void;
-  toggleTraceMaximized: (tabId: string) => void;
 
   // Actions — dropped images for agent input
   pushDroppedImages: (tabId: string, images: ImageAttachment[]) => void;
@@ -466,8 +376,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   runnersByWorktree: {},
   claudeStatusByTab: {},
   agentSessionByTab: {},
-  traceEventsByTab: {},
-  traceModeByTab: {},
   cachedTabCountByWorktree: {},
   showTileView: false,
   pendingDroppedImages: {},
@@ -479,11 +387,37 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadSettings: async () => {
     const settings = await commands.getSettings();
     set({ appSettings: settings });
+    if (settings.agent_backend === "pi") {
+      get().ensurePiModelsLoaded().catch(() => {});
+    }
   },
 
   saveSettings: async (settings) => {
     await commands.updateSettings(settings);
     set({ appSettings: settings });
+    if (settings.agent_backend === "pi") {
+      await get().ensurePiModelsLoaded();
+    }
+  },
+
+  ensurePiModelsLoaded: async () => {
+    if (get().piAvailableModels.length > 0) return;
+    if (_piModelsLoadPromise) return _piModelsLoadPromise;
+    _piModelsLoadPromise = commands.piGetModels()
+      .then((models) => {
+        if (models && models.length > 0) set({ piAvailableModels: models });
+      })
+      .catch((err) => console.warn("Failed to load Pi models:", err))
+      .finally(() => {
+        _piModelsLoadPromise = null;
+      });
+    return _piModelsLoadPromise;
+  },
+
+  setDefaultAgentBackend: async (backend) => {
+    const settings = get().appSettings;
+    if (!settings || settings.agent_backend === backend) return;
+    await get().saveSettings({ ...settings, agent_backend: backend });
   },
 
   openAppSettings: () => set({ editingAppSettings: true }),
@@ -831,11 +765,13 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? cached.status as AgentStatus
           : "done";
 
+        const backend = (cached.backend || get().appSettings?.agent_backend || "claude") as AgentBackend;
         restoredSessions[cached.tab_id] = {
           messages,
           status,
+          backend,
           model: cached.model || (
-            get().appSettings?.agent_backend === "pi"
+            backend === "pi"
               ? get().appSettings?.pi_default_model || ""
               : get().appSettings?.agent_default_model || ""
           ),
@@ -853,7 +789,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           pendingQuestion: null,
           streamingText: "",
           streamingThinkingText: "",
-          slashCommands: DEFAULT_SLASH_COMMANDS,
+          slashCommands: getDefaultSlashCommands(backend),
           queuedMessages: [],
         };
       }
@@ -875,12 +811,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         agentSessionByTab: {
           ...s.agentSessionByTab,
           ...restoredSessions,
-        },
-        // Initialize empty trace arrays — historical events are lazy-loaded
-        // from DB when the trace panel is first opened
-        traceEventsByTab: {
-          ...s.traceEventsByTab,
-          ...Object.fromEntries(restoredTabs.map((t) => [t.id, []])),
         },
       }));
     } catch (err) {
@@ -968,23 +898,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const agentSession = tabId in s.agentSessionByTab
       ? (() => { const { [tabId]: _, ...rest } = s.agentSessionByTab; return rest; })()
       : s.agentSessionByTab;
-    const traceEvents = tabId in s.traceEventsByTab
-      ? (() => { const { [tabId]: _, ...rest } = s.traceEventsByTab; return rest; })()
-      : s.traceEventsByTab;
-    const traceMode = tabId in s.traceModeByTab
-      ? (() => { const { [tabId]: _, ...rest } = s.traceModeByTab; return rest; })()
-      : s.traceModeByTab;
     set({
       tabsByWorktree: { ...s.tabsByWorktree, [worktreeId]: next },
       activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: newActive },
       claudeStatusByTab: claudeStatus,
       agentSessionByTab: agentSession,
-      traceEventsByTab: traceEvents,
-      traceModeByTab: traceMode,
     });
     // Close the agent bridge process and remove cached state if this was an agent tab
     if (closedTab?.type === "agent") {
-      _traceLoadedTabs.delete(tabId);
       commands.agentClose(tabId).catch(() => {});
       commands.deleteAgentTabCache(tabId).catch(() => {});
     }
@@ -1070,11 +991,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       pinned: true,
       pinnedAt: Date.now(),
     };
+    const backend = s.appSettings?.agent_backend || "claude";
     const sessionState: AgentSessionState = {
       messages: [],
       status: "idle",
+      backend,
       model: model || (
-        s.appSettings?.agent_backend === "pi"
+        backend === "pi"
           ? s.appSettings?.pi_default_model || ""
           : s.appSettings?.agent_default_model || ""
       ),
@@ -1092,7 +1015,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingQuestion: null,
       streamingText: "",
       streamingThinkingText: "",
-      slashCommands: DEFAULT_SLASH_COMMANDS,
+      slashCommands: getDefaultSlashCommands(backend),
       queuedMessages: [],
     };
     set((state) => ({
@@ -1108,13 +1031,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...state.agentSessionByTab,
         [tab.id]: sessionState,
       },
-      traceEventsByTab: {
-        ...state.traceEventsByTab,
-        [tab.id]: [],
-      },
     }));
-    // New tabs have no DB trace data to load
-    _traceLoadedTabs.add(tab.id);
   },
 
   addPinnedAgentTab: (worktreeId, cwd) => {
@@ -1288,6 +1205,26 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
     }
+  },
+
+  setAgentBackend: (tabId, backend, model) => {
+    set((s) => {
+      const session = s.agentSessionByTab[tabId];
+      if (!session) return s;
+      let effort = session.effort;
+      if (backend === "pi" && effort === "max") effort = "xhigh";
+      if (backend === "claude" && (effort === "off" || effort === "minimal")) effort = "low";
+      // Reset slash commands to the new backend's defaults when session hasn't started yet
+      const slashCommands = session.status === "idle"
+        ? getDefaultSlashCommands(backend)
+        : session.slashCommands;
+      return {
+        agentSessionByTab: {
+          ...s.agentSessionByTab,
+          [tabId]: { ...session, backend, model: model ?? session.model, effort, slashCommands },
+        },
+      };
+    });
   },
 
   setAgentModel: (tabId, model) => {
@@ -1489,11 +1426,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeAgentSession: (tabId) => {
-    _traceLoadedTabs.delete(tabId);
     set((s) => {
       const { [tabId]: _, ...restSessions } = s.agentSessionByTab;
-      const { [tabId]: __, ...restTrace } = s.traceEventsByTab;
-      return { agentSessionByTab: restSessions, traceEventsByTab: restTrace };
+      return { agentSessionByTab: restSessions };
     });
   },
 
@@ -1609,50 +1544,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     });
   },
-  // ── Trace / Observability ──
-
-  appendTraceEvent: (tabId, event) => {
-    set((s) => ({
-      traceEventsByTab: {
-        ...s.traceEventsByTab,
-        [tabId]: [...(s.traceEventsByTab[tabId] ?? []), event],
-      },
-    }));
-    persistTraceDebounced(tabId);
-  },
-
-  appendTraceEvents: (tabId, events) => {
-    if (events.length === 0) return;
-    set((s) => ({
-      traceEventsByTab: {
-        ...s.traceEventsByTab,
-        [tabId]: [...(s.traceEventsByTab[tabId] ?? []), ...events],
-      },
-    }));
-    persistTraceDebounced(tabId);
-  },
-
-  toggleTracePanel: (tabId) => {
-    const wasClosed = (get().traceModeByTab[tabId] ?? "closed") === "closed";
-    set((s) => {
-      const current = s.traceModeByTab[tabId] ?? "closed";
-      const next = current === "closed" ? "split" : "closed";
-      return { traceModeByTab: { ...s.traceModeByTab, [tabId]: next } };
-    });
-    // Lazy-load historical trace events from DB when opening the panel
-    if (wasClosed) loadTraceForTab(tabId);
-  },
-
-  toggleTraceMaximized: (tabId) => {
-    set((s) => {
-      const current = s.traceModeByTab[tabId] ?? "closed";
-      const next = current === "maximized" ? "split" : "maximized";
-      return { traceModeByTab: { ...s.traceModeByTab, [tabId]: next } };
-    });
-    // Ensure trace data is loaded (panel is always open when toggling maximize)
-    loadTraceForTab(tabId);
-  },
-
   // ── Dropped images for agent input ──
 
   pushDroppedImages: (tabId, images) => {

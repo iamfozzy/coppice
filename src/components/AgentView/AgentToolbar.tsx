@@ -2,27 +2,31 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentCost, TokenUsage, AgentSessionState } from "../../lib/types";
 import { useAppStore } from "../../stores/appStore";
-import { contextWindowFor } from "../../lib/traceUtils";
 import { Tooltip } from "../ui/Tooltip";
 
 interface Props {
   session: AgentSessionState;
-  sessionId: string;
   onInterrupt: () => void;
+}
+
+/** Resolve the effective context window size for a given model + extended-context flag. */
+function contextWindowFor(model: string, extendedContext: boolean, sdkContextWindow?: number | null): number {
+  const m = model.toLowerCase();
+  if (m.includes("opus-4-7")) return 1_000_000;
+  const supports1M = m.includes("opus-4") || m.includes("sonnet-4");
+  if (supports1M && extendedContext) return 1_000_000;
+  if (sdkContextWindow && sdkContextWindow > 0) return sdkContextWindow;
+  return 200_000;
 }
 
 export function AgentToolbar({
   session,
-  sessionId,
   onInterrupt,
 }: Props) {
   const hasApiKey = useAppStore((s) => !!s.appSettings?.agent_api_key);
-  const traceMode = useAppStore((s) => s.traceModeByTab[sessionId] ?? "closed");
-  const toggleTrace = useAppStore((s) => s.toggleTracePanel);
-  const hasTraceEvents = useAppStore((s) => (s.traceEventsByTab[sessionId]?.length ?? 0) > 0);
   const isWorking = session.status === "thinking" || session.status === "tool_use";
 
-  if (!session.cost && !isWorking && !hasTraceEvents) return null;
+  if (!session.cost && !isWorking) return null;
 
   return (
     <div className="flex items-center gap-3 px-4 py-1.5 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
@@ -39,25 +43,6 @@ export function AgentToolbar({
           sdkContextWindow={session.sdkContextWindow}
           queryOutputTokens={session.queryOutputTokens}
         />
-      )}
-
-      {/* Trace toggle button */}
-      {hasTraceEvents && (
-        <Tooltip text={traceMode !== "closed" ? "Close trace panel" : "Open trace panel"} side="top">
-          <button
-            className={`flex items-center gap-1 px-2 py-0.5 rounded border transition-colors ${
-              traceMode !== "closed"
-                ? "bg-accent/15 border-accent/40 text-accent"
-                : "bg-bg-tertiary border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary/80"
-            }`}
-            onClick={() => toggleTrace(sessionId)}
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 12h4l3-9 4 18 3-9h4" />
-            </svg>
-            Trace
-          </button>
-        </Tooltip>
       )}
 
       {/* Interrupt button */}

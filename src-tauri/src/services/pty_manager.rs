@@ -308,6 +308,21 @@ impl PtyManager {
                     Ok(n) => {
                         let mut buf = shared_buf_reader.lock().unwrap();
                         buf.extend_from_slice(&read_buf[..n]);
+                        // Cap buffer at 4 MB to prevent unbounded memory
+                        // growth when PTY output arrives faster than the
+                        // 50 ms flush cycle can drain it.  Drain to a
+                        // UTF-8 code-point boundary so the flusher never
+                        // sees orphaned continuation bytes at the start.
+                        const MAX_BUF_SIZE: usize = 4 * 1024 * 1024;
+                        if buf.len() > MAX_BUF_SIZE {
+                            let mut drain_to = buf.len() - MAX_BUF_SIZE;
+                            // Advance past any UTF-8 continuation bytes
+                            // (0b10xxxxxx) so we land on a leading byte.
+                            while drain_to < buf.len() && buf[drain_to] & 0xC0 == 0x80 {
+                                drain_to += 1;
+                            }
+                            buf.drain(..drain_to);
+                        }
                         drop(buf);
                         *last_output_reader.lock().unwrap() = Some(Instant::now());
                     }
@@ -436,6 +451,15 @@ impl PtyManager {
             let _ = session.child.wait();
         }
         Ok(())
+    }
+
+    /// Kill all PTY sessions — called on app exit.
+    pub fn close_all(&self) {
+        let mut sessions = self.sessions.lock().unwrap();
+        for (_, mut session) in sessions.drain() {
+            let _ = session.child.kill();
+            let _ = session.child.wait();
+        }
     }
 }
 

@@ -288,7 +288,7 @@ function Tab({
     setEditing(false);
   };
 
-  const isAgentType = type === "agent";
+  const isAgentType = type === "agent" || type === "claude";
   const agentActive = isAgentType && claudeStatus === "active";
   const agentIdle = isAgentType && claudeStatus === "idle";
   const canPin = !!onTogglePin;

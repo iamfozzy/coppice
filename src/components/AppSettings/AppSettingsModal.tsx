@@ -68,9 +68,9 @@ export function AppSettingsModal() {
         if (e.target === e.currentTarget) closeAppSettings();
       }}
     >
-      <div className="bg-bg-secondary border border-border-primary rounded-lg w-[520px] max-h-[85vh] overflow-y-auto shadow-2xl">
+      <div className="bg-bg-secondary border border-border-primary rounded-lg w-[640px] max-w-[calc(100vw-2rem)] max-h-[85vh] overflow-y-auto shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border-primary">
+        <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-border-primary bg-bg-secondary">
           <h2 className="text-sm font-semibold text-text-primary">App Settings</h2>
           <button
             onClick={closeAppSettings}
@@ -83,7 +83,7 @@ export function AppSettingsModal() {
         </div>
 
         {/* Form */}
-        <div className="px-5 py-4 space-y-4">
+        <div className="px-6 py-5 space-y-5">
           <p className="text-[11px] text-text-tertiary">
             Global defaults. Leave blank to use platform defaults. Per-project settings override these.
           </p>
@@ -135,20 +135,23 @@ export function AppSettingsModal() {
           <div>
             <label className="block text-xs text-text-secondary mb-1">Theme</label>
             <div className="flex gap-1">
-              {(["dark", "light", "system"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setForm({ ...form, theme: mode as ThemeMode })}
-                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                    form.theme === mode
-                      ? "bg-accent text-white"
-                      : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
-                  }`}
-                >
-                  {mode === "dark" ? "Dark" : mode === "light" ? "Light" : "System"}
-                </button>
-              ))}
+              {(["dark", "dim", "atom", "light", "system"] as const).map((mode) => {
+                const label = { dark: "Dark", dim: "Dim", atom: "Atom", light: "Light", system: "System" }[mode];
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setForm({ ...form, theme: mode as ThemeMode })}
+                    className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                      form.theme === mode
+                        ? "bg-accent text-white"
+                        : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
             <p className="mt-0.5 text-[10px] text-text-tertiary">
               {form.theme === "system"
@@ -176,7 +179,7 @@ export function AppSettingsModal() {
           />
 
           {/* Agent mode selector — three top-level options */}
-          <div className="pt-2 border-t border-border-primary">
+          <div className="pt-4 border-t border-border-primary">
             <label className="block text-xs text-text-secondary mb-1">Agent mode</label>
             <div className="flex gap-1">
               {([
@@ -214,7 +217,7 @@ export function AppSettingsModal() {
 
           {/* Claude Agent settings */}
           {form.default_claude_mode === "agent" && (form.agent_backend || "claude") === "claude" && (
-            <div className="space-y-4 pl-2 border-l-2 border-accent/30">
+            <div className="space-y-4 rounded-lg border border-accent/20 bg-accent/[0.03] p-4">
               <Field
                 label="Anthropic API key"
                 value={form.agent_api_key}
@@ -317,7 +320,7 @@ export function AppSettingsModal() {
 
           {/* Pi Agent settings */}
           {form.default_claude_mode === "agent" && form.agent_backend === "pi" && (
-            <div className="space-y-4 pl-2 border-l-2 border-purple-400/30">
+            <div className="space-y-5 rounded-lg border border-purple-400/20 bg-purple-500/[0.04] p-4">
               <PiSettingsSection form={form} setForm={setForm} />
               <McpServersEditor
                 servers={form.mcp_servers}
@@ -329,7 +332,7 @@ export function AppSettingsModal() {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end px-5 py-4 border-t border-border-primary gap-2">
+        <div className="sticky bottom-0 flex items-center justify-end px-6 py-4 border-t border-border-primary gap-2 bg-bg-secondary">
           <button
             onClick={closeAppSettings}
             className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
@@ -480,10 +483,10 @@ function PiAuthSection({ provider, form, setForm }: {
   };
 
   return (
-    <div>
+    <div className="space-y-3">
       {/* OAuth login button for supported providers */}
       {supportsOAuth && (
-        <div className="mb-2">
+        <div>
           <button
             type="button"
             onClick={handleOAuthLogin}
@@ -503,7 +506,7 @@ function PiAuthSection({ provider, form, setForm }: {
 
           {/* Device code — shown prominently for GitHub Copilot device flow */}
           {deviceCode && (
-            <div className="mt-2 p-2 rounded bg-bg-tertiary border border-purple-500/30">
+            <div className="mt-2.5 p-3 rounded bg-bg-tertiary border border-purple-500/30">
               <p className="text-[11px] text-text-secondary mb-1">
                 Enter this code in your browser:
               </p>
@@ -521,7 +524,7 @@ function PiAuthSection({ provider, form, setForm }: {
               {oauthMessage}
             </p>
           )}
-          <p className="mt-1 text-[10px] text-text-tertiary">
+          <p className="mt-1.5 text-[10px] text-text-tertiary">
             {oauthStatus === "idle"
               ? "Uses your existing subscription — no API key needed."
               : oauthStatus === "pending"
@@ -533,7 +536,7 @@ function PiAuthSection({ provider, form, setForm }: {
 
       {/* Divider between OAuth and API key */}
       {supportsOAuth && (
-        <div className="flex items-center gap-2 my-2">
+        <div className="flex items-center gap-2">
           <div className="flex-1 border-t border-border-primary" />
           <span className="text-[10px] text-text-tertiary">or use an API key</span>
           <div className="flex-1 border-t border-border-primary" />
@@ -541,27 +544,29 @@ function PiAuthSection({ provider, form, setForm }: {
       )}
 
       {/* Manual API key input */}
-      <input
-        type="password"
-        value={currentKey}
-        onChange={(e) => {
-          if (provider === "anthropic") {
-            setForm({ ...form, agent_api_key: e.target.value });
-          } else {
-            setForm({
-              ...form,
-              pi_api_keys: { ...(form.pi_api_keys || {}), [provider]: e.target.value },
-            });
-          }
-        }}
-        placeholder={API_KEY_PLACEHOLDERS[provider] || "API key"}
-        className="w-full px-2 py-1 text-xs bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary font-mono"
-      />
-      <p className="mt-0.5 text-[10px] text-text-tertiary">
-        {provider === "anthropic"
-          ? "Shared with Claude Agent mode. Also set via ANTHROPIC_API_KEY env var."
-          : `Set via ${API_KEY_ENV_VARS[provider] || "environment variable"} or enter here.`}
-      </p>
+      <div>
+        <input
+          type="password"
+          value={currentKey}
+          onChange={(e) => {
+            if (provider === "anthropic") {
+              setForm({ ...form, agent_api_key: e.target.value });
+            } else {
+              setForm({
+                ...form,
+                pi_api_keys: { ...(form.pi_api_keys || {}), [provider]: e.target.value },
+              });
+            }
+          }}
+          placeholder={API_KEY_PLACEHOLDERS[provider] || "API key"}
+          className="w-full px-2.5 py-1.5 text-xs bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary font-mono"
+        />
+        <p className="mt-1 text-[10px] text-text-tertiary">
+          {provider === "anthropic"
+            ? "Shared with Claude Agent mode. Also set via ANTHROPIC_API_KEY env var."
+            : `Set via ${API_KEY_ENV_VARS[provider] || "environment variable"} or enter here.`}
+        </p>
+      </div>
     </div>
   );
 }
@@ -690,42 +695,44 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {loading && (
         <p className="text-[10px] text-purple-400 animate-pulse">Loading models from Pi SDK...</p>
       )}
 
       {/* ── Default provider & model ── */}
-      <div>
-        <label className="block text-xs text-text-secondary mb-1.5">Default provider</label>
-        <PiProviderCombobox
-          providers={configured}
-          value={defaultProvider}
-          onChange={(p) => {
-            const firstModel = piModels.find((m) => m.provider === p);
-            setForm({
-              ...form,
-              pi_default_provider: p,
-              pi_default_model: firstModel ? `${p}/${firstModel.value}` : "",
-            });
-          }}
+      <div className="space-y-3">
+        <div>
+          <label className="block text-xs text-text-secondary mb-1.5">Default provider</label>
+          <PiProviderCombobox
+            providers={configured}
+            value={defaultProvider}
+            onChange={(p) => {
+              const firstModel = piModels.find((m) => m.provider === p);
+              setForm({
+                ...form,
+                pi_default_provider: p,
+                pi_default_model: firstModel ? `${p}/${firstModel.value}` : "",
+              });
+            }}
+          />
+        </div>
+
+        <PiModelCombobox
+          provider={defaultProvider}
+          models={providerModels}
+          value={form.pi_default_model}
+          onChange={(pi_default_model) => setForm({ ...form, pi_default_model })}
         />
       </div>
 
-      <PiModelCombobox
-        provider={defaultProvider}
-        models={providerModels}
-        value={form.pi_default_model}
-        onChange={(pi_default_model) => setForm({ ...form, pi_default_model })}
-      />
-
       {/* ── Configured providers with per-provider auth ── */}
-      <div className="pt-3 border-t border-border-primary">
+      <div className="pt-4 border-t border-border-primary">
         <label className="block text-xs text-text-secondary mb-1.5">Providers &amp; Authentication</label>
-        <p className="text-[10px] text-text-tertiary mb-2">
+        <p className="text-[10px] text-text-tertiary mb-3">
           Add providers you want to use. Each needs an API key or OAuth login.
         </p>
-        <div className="space-y-2 mb-2">
+        <div className="space-y-2.5 mb-3">
           {configured.map((p) => (
             <PiProviderCard
               key={p}
@@ -742,7 +749,7 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
           <button
             type="button"
             onClick={() => setAddProviderOpen(!addProviderOpen)}
-            className="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded bg-bg-tertiary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] rounded bg-bg-tertiary border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
               <path d="M5 1v8M1 5h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -781,9 +788,9 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
       </div>
 
       {/* Thinking level */}
-      <div className="pt-3 border-t border-border-primary">
-        <label className="block text-xs text-text-secondary mb-1.5">Thinking level</label>
-        <div className="flex flex-wrap gap-1">
+      <div className="pt-4 border-t border-border-primary">
+        <label className="block text-xs text-text-secondary mb-2">Thinking level</label>
+        <div className="flex flex-wrap gap-1.5">
           {([
             { value: "off", label: "Off" },
             { value: "minimal", label: "Minimal" },
@@ -810,14 +817,14 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
             );
           })}
         </div>
-        <p className="mt-0.5 text-[10px] text-text-tertiary">
+        <p className="mt-1 text-[10px] text-text-tertiary">
           Controls reasoning depth. "Off" disables extended thinking. Higher levels use more tokens but produce better results.
           {selectedModel?.reasoning === false ? " Current model does not support extended thinking." : ""}
         </p>
       </div>
 
       {/* Tools section */}
-      <div className="pt-3 border-t border-border-primary">
+      <div className="pt-4 border-t border-border-primary">
         <label className="block text-xs text-text-secondary mb-2">Tools</label>
         <Toggle
           label="Web access (search & fetch)"
@@ -860,17 +867,17 @@ function PiProviderCard({ provider, form, setForm, canRemove, onRemove }: {
       : null;
 
   return (
-    <div className="rounded border border-border-primary bg-bg-tertiary overflow-hidden">
+    <div className="rounded-md border border-border-primary bg-bg-tertiary overflow-hidden">
       {/* Header row — always visible */}
       <div
-        className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer hover:bg-bg-hover transition-colors"
+        className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-bg-hover transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
         <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform shrink-0 ${expanded ? "rotate-90" : ""}`}>
           <path d="M2.5 1L5.5 4 2.5 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        <span className="text-[11px] font-medium text-text-primary flex-1">{formatProvider(provider)}</span>
-        {authBadge && <span className="text-[9px] text-green-400 shrink-0">{authBadge}</span>}
+        <span className="text-xs font-medium text-text-primary flex-1">{formatProvider(provider)}</span>
+        {authBadge && <span className="rounded-full bg-green-500/10 px-1.5 py-0.5 text-[9px] text-green-400 shrink-0">{authBadge}</span>}
         {canRemove && (
           <button
             type="button"
@@ -886,7 +893,7 @@ function PiProviderCard({ provider, form, setForm, canRemove, onRemove }: {
       </div>
       {/* Expanded auth section */}
       {expanded && (
-        <div className="px-2.5 pb-2.5 pt-1 border-t border-border-primary">
+        <div className="px-3 pb-3 pt-3 border-t border-border-primary">
           <PiAuthSection provider={provider} form={form} setForm={setForm} />
         </div>
       )}
@@ -931,7 +938,7 @@ function PiProviderCombobox({ providers, value, onChange }: {
       <button
         type="button"
         onClick={() => { setOpen(!open); setFilter(""); }}
-        className={`w-full flex items-center justify-between px-3 py-1.5 text-sm bg-bg-tertiary border rounded text-text-primary transition-colors ${
+        className={`w-full flex items-center justify-between px-3 py-2 text-sm bg-bg-tertiary border rounded text-text-primary transition-colors ${
           open ? "border-purple-500/50" : "border-border-primary hover:border-border-secondary"
         }`}
       >
@@ -1013,7 +1020,7 @@ function PiModelCombobox({ provider, models, value, onChange }: {
 
   return (
     <div>
-      <label className="block text-xs text-text-secondary mb-1">Model</label>
+      <label className="block text-xs text-text-secondary mb-1.5">Model</label>
       <div className="relative" ref={wrapperRef}>
         <input
           ref={inputRef}
@@ -1031,7 +1038,7 @@ function PiModelCombobox({ provider, models, value, onChange }: {
           }}
           onBlur={() => setInputFocused(false)}
           placeholder={`${provider}/model-id`}
-          className={`w-full px-3 py-1.5 text-sm bg-bg-tertiary border rounded text-text-primary placeholder:text-text-tertiary focus:outline-none transition-colors font-mono ${
+          className={`w-full px-3 py-2 text-sm bg-bg-tertiary border rounded text-text-primary placeholder:text-text-tertiary focus:outline-none transition-colors font-mono ${
             open ? "border-purple-500/50" : "border-border-primary hover:border-border-secondary"
           }`}
         />
@@ -1061,7 +1068,7 @@ function PiModelCombobox({ provider, models, value, onChange }: {
           </div>
         )}
       </div>
-      <p className="mt-0.5 text-[10px] text-text-tertiary">
+      <p className="mt-1 text-[10px] text-text-tertiary">
         {models.length} models from {formatProvider(provider)}. Type to filter or enter a custom model ID.
       </p>
     </div>

@@ -79,6 +79,7 @@ impl Database {
                 label TEXT NOT NULL,
                 cwd TEXT NOT NULL,
                 sdk_session_id TEXT,
+                backend TEXT,
                 model TEXT NOT NULL DEFAULT '',
                 effort TEXT NOT NULL DEFAULT 'high',
                 permission_mode TEXT NOT NULL DEFAULT 'acceptEdits',
@@ -98,6 +99,7 @@ impl Database {
         let _ = conn.execute("ALTER TABLE worktrees ADD COLUMN target_branch TEXT", []);
         let _ = conn.execute("ALTER TABLE projects ADD COLUMN pr_create_skill TEXT NOT NULL DEFAULT ''", []);
         let _ = conn.execute("ALTER TABLE projects ADD COLUMN claude_command TEXT NOT NULL DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN backend TEXT", []);
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN extended_context INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN concise_mode INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE agent_tab_cache ADD COLUMN chat_mode INTEGER NOT NULL DEFAULT 0", []);
@@ -343,15 +345,13 @@ impl Database {
 
     pub fn save_agent_tab_cache(&self, tab: &AgentTabCache) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        // INSERT ... ON CONFLICT deliberately excludes trace_json so normal
-        // persists never overwrite trace data.  Trace events are saved
-        // independently via save_agent_tab_trace().
+        // INSERT ... ON CONFLICT excludes trace_json (legacy column).
         conn.execute(
-            "INSERT INTO agent_tab_cache (tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at, last_turn_cost_json, sdk_context_window, pinned, pinned_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+            "INSERT INTO agent_tab_cache (tab_id, worktree_id, label, cwd, sdk_session_id, backend, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at, last_turn_cost_json, sdk_context_window, pinned, pinned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
              ON CONFLICT(tab_id) DO UPDATE SET
                worktree_id=excluded.worktree_id, label=excluded.label, cwd=excluded.cwd,
-               sdk_session_id=excluded.sdk_session_id, model=excluded.model, effort=excluded.effort,
+               sdk_session_id=excluded.sdk_session_id, backend=excluded.backend, model=excluded.model, effort=excluded.effort,
                permission_mode=excluded.permission_mode, status=excluded.status, cost_json=excluded.cost_json,
                messages_json=excluded.messages_json, tab_order=excluded.tab_order,
                extended_context=excluded.extended_context, concise_mode=excluded.concise_mode,
@@ -364,6 +364,7 @@ impl Database {
                 tab.label,
                 tab.cwd,
                 tab.sdk_session_id,
+                tab.backend,
                 tab.model,
                 tab.effort,
                 tab.permission_mode,
@@ -386,9 +387,9 @@ impl Database {
 
     pub fn list_agent_tab_cache(&self, worktree_id: &str) -> Result<Vec<AgentTabCache>> {
         let conn = self.conn.lock().unwrap();
-        // Deliberately excludes trace_json — loaded lazily via load_agent_tab_trace()
+        // Excludes trace_json (legacy column)
         let mut stmt = conn.prepare(
-            "SELECT tab_id, worktree_id, label, cwd, sdk_session_id, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at, last_turn_cost_json, sdk_context_window, pinned, pinned_at
+            "SELECT tab_id, worktree_id, label, cwd, sdk_session_id, backend, model, effort, permission_mode, status, cost_json, messages_json, tab_order, extended_context, concise_mode, chat_mode, created_at, last_turn_cost_json, sdk_context_window, pinned, pinned_at
              FROM agent_tab_cache WHERE worktree_id=?1 ORDER BY tab_order ASC"
         )?;
 
@@ -399,44 +400,26 @@ impl Database {
                 label: row.get(2)?,
                 cwd: row.get(3)?,
                 sdk_session_id: row.get(4)?,
-                model: row.get(5)?,
-                effort: row.get(6)?,
-                permission_mode: row.get(7)?,
-                status: row.get(8)?,
-                cost_json: row.get(9)?,
-                messages_json: row.get(10)?,
-                tab_order: row.get(11)?,
-                extended_context: row.get(12)?,
-                concise_mode: row.get(13)?,
-                chat_mode: row.get(14)?,
-                created_at: row.get(15)?,
-                last_turn_cost_json: row.get(16)?,
-                sdk_context_window: row.get(17)?,
-                pinned: row.get(18)?,
-                pinned_at: row.get(19)?,
+                backend: row.get(5)?,
+                model: row.get(6)?,
+                effort: row.get(7)?,
+                permission_mode: row.get(8)?,
+                status: row.get(9)?,
+                cost_json: row.get(10)?,
+                messages_json: row.get(11)?,
+                tab_order: row.get(12)?,
+                extended_context: row.get(13)?,
+                concise_mode: row.get(14)?,
+                chat_mode: row.get(15)?,
+                created_at: row.get(16)?,
+                last_turn_cost_json: row.get(17)?,
+                sdk_context_window: row.get(18)?,
+                pinned: row.get(19)?,
+                pinned_at: row.get(20)?,
             })
         })?;
 
         rows.collect()
-    }
-
-    pub fn load_agent_tab_trace(&self, tab_id: &str) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
-        let trace: String = conn.query_row(
-            "SELECT trace_json FROM agent_tab_cache WHERE tab_id=?1",
-            params![tab_id],
-            |row| row.get(0),
-        )?;
-        Ok(trace)
-    }
-
-    pub fn save_agent_tab_trace(&self, tab_id: &str, trace_json: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE agent_tab_cache SET trace_json=?1 WHERE tab_id=?2",
-            params![trace_json, tab_id],
-        )?;
-        Ok(())
     }
 
     /// Return worktree IDs that have at least one pinned agent tab.

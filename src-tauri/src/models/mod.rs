@@ -56,6 +56,7 @@ pub struct AgentTabCache {
     pub label: String,
     pub cwd: String,
     pub sdk_session_id: Option<String>,
+    pub backend: Option<String>,
     pub model: String,
     pub effort: String,
     pub permission_mode: String,
