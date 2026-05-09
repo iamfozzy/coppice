@@ -27,7 +27,7 @@ interface Props {
   onBackendToggle?: () => void;
 }
 
-const CLAUDE_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
+export const CLAUDE_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
   { value: "low", label: "low" },
   { value: "medium", label: "medium" },
   { value: "high", label: "high" },
@@ -35,7 +35,7 @@ const CLAUDE_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
   { value: "max", label: "max" },
 ];
 
-const PI_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
+export const PI_EFFORT_LEVELS: Array<{ value: EffortLevel; label: string }> = [
   { value: "off", label: "Off" },
   { value: "minimal", label: "Minimal" },
   { value: "low", label: "Low" },
@@ -90,7 +90,6 @@ export function AgentControls({
   onBackendToggle,
 }: Props) {
   const supports1M = !isPiBackend && modelSupports1MContext(model);
-  const effortLevels = isPiBackend ? PI_EFFORT_LEVELS : CLAUDE_EFFORT_LEVELS;
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 pb-0 pt-2 border-t border-border-primary bg-bg-secondary text-xs shrink-0">
       {/* Backend badge — always visible, toggleable before session starts */}
@@ -106,7 +105,7 @@ export function AgentControls({
           className={`px-2 py-1 rounded-md text-[11px] font-semibold uppercase border transition-colors ${
             isPiBackend
               ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
-              : "bg-sky-500/10 text-sky-400 border-sky-500/20"
+              : "bg-orange-500/10 text-orange-400 border-orange-500/20"
           } ${canToggleBackend ? "cursor-pointer hover:brightness-125" : "cursor-default opacity-75"}`}
           onClick={canToggleBackend ? onBackendToggle : undefined}
           disabled={!canToggleBackend}
@@ -134,26 +133,8 @@ export function AgentControls({
         </Tooltip>
       )}
 
-      {/* Effort selector */}
-      <div className="flex items-center rounded-md overflow-hidden border border-border-primary bg-bg-tertiary">
-        {effortLevels.map((level) => {
-          const isActive = effort === level.value || (isPiBackend && effort === "max" && level.value === "xhigh");
-          return (
-            <Tooltip key={level.value} text={`Set effort to ${level.label}`} side="top">
-              <button
-                className={`px-2 py-1 text-[11px] transition-colors ${
-                  isActive
-                    ? "bg-accent text-white"
-                    : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-                }`}
-                onClick={() => onEffortChange(level.value)}
-              >
-                {level.label}
-              </button>
-            </Tooltip>
-          );
-        })}
-      </div>
+      {/* Effort selector — custom dropdown */}
+      <EffortPicker effort={effort} onEffortChange={onEffortChange} isPiBackend={isPiBackend} />
 
       {/* Permission mode picker */}
       <PermissionModePicker
@@ -236,8 +217,10 @@ export function ModelPicker({
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [customInput, setCustomInput] = useState(false);
   const [customValue, setCustomValue] = useState("");
+  const [search, setSearch] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const configuredProviders = useAppStore((s) => s.appSettings?.pi_configured_providers);
 
@@ -248,6 +231,7 @@ export function ModelPicker({
   const displayLabel = matchedPreset?.label ?? model ?? MODELS[0].label;
 
   const showList = inline || open;
+  const showSearch = true;
 
   useEffect(() => {
     if (!open || inline) return;
@@ -256,6 +240,7 @@ export function ModelPicker({
         setOpen(false);
         setCustomInput(false);
         setExpandedProvider(null);
+        setSearch("");
       }
     };
     document.addEventListener("mousedown", handler);
@@ -266,74 +251,106 @@ export function ModelPicker({
     if (customInput && inputRef.current) inputRef.current.focus();
   }, [customInput]);
 
+  useEffect(() => {
+    if (showList && showSearch && !customInput && searchRef.current) searchRef.current.focus();
+  }, [showList, showSearch, customInput]);
+
   const usePiGrouped = isPiBackend && configuredProviders && configuredProviders.length > 0;
+
+  const filterModel = (m: SupportedModel) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return m.label.toLowerCase().includes(q) || m.value.toLowerCase().includes(q) || (m.provider && m.provider.toLowerCase().includes(q));
+  };
 
   const providerGroups = usePiGrouped
     ? configuredProviders!.map((p) => ({
         provider: p,
-        models: MODELS.filter((m) => m.provider === p),
+        models: MODELS.filter((m) => m.provider === p && filterModel(m)),
       })).filter((g) => g.models.length > 0)
     : [];
+
+  const filteredModels = search ? MODELS.filter(filterModel) : MODELS;
 
   const currentProvider = model.includes("/") ? model.split("/")[0] : matchedPreset?.provider;
 
   useEffect(() => {
-    if (showList && usePiGrouped && currentProvider) setExpandedProvider(currentProvider);
+    if (showList && usePiGrouped && currentProvider && !search) setExpandedProvider(currentProvider);
   }, [showList]);
+
+  useEffect(() => {
+    if (search && usePiGrouped && providerGroups.length > 0) {
+      setExpandedProvider(providerGroups[0].provider);
+    }
+  }, [search]);
 
   const handleSelect = (value: string) => {
     onModelChange(value);
     if (!inline) {
       setOpen(false);
       setExpandedProvider(null);
+      setSearch("");
     }
   };
+
+  const searchInput = showSearch && !customInput && (
+    <div className="px-2 pt-1.5 pb-1 border-b border-border-primary">
+      <input
+        ref={searchRef}
+        type="text"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search models..."
+        className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+      />
+    </div>
+  );
 
   const listContent = (
     <>
       {usePiGrouped ? (
-        <>
-          {providerGroups.map((g) => {
-            const isExpanded = expandedProvider === g.provider;
-            return (
-              <div key={g.provider}>
-                <button
-                  className={`w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium transition-colors ${
-                    currentProvider === g.provider
-                      ? "text-accent"
-                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                  }`}
-                  onClick={() => setExpandedProvider(isExpanded ? null : g.provider)}
-                >
-                  <span>{fmtProvider(g.provider)}</span>
-                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}>
-                    <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-                {isExpanded && (
-                  <div className="pb-1">
-                    {g.models.map((m) => {
-                      const isActive = m.value === model || `${m.provider}/${m.value}` === model;
-                      return (
-                        <button
-                          key={m.value}
-                          className={`w-full text-left pl-6 pr-3 py-1 text-[11px] transition-colors ${
-                            isActive ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                          }`}
-                          onClick={() => handleSelect(isPiBackend && m.provider ? `${m.provider}/${m.value}` : m.value)}
-                        >
-                          {m.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </>
+        providerGroups.length > 0 ? providerGroups.map((g) => {
+          const isExpanded = expandedProvider === g.provider || !!search;
+          return (
+            <div key={g.provider}>
+              <button
+                className={`w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                  currentProvider === g.provider
+                    ? "text-accent"
+                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                }`}
+                onClick={() => setExpandedProvider(isExpanded && !search ? null : g.provider)}
+              >
+                <span>{fmtProvider(g.provider)}</span>
+                <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}>
+                  <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {isExpanded && (
+                <div className="pb-1">
+                  {g.models.map((m) => {
+                    const isActive = m.value === model || `${m.provider}/${m.value}` === model;
+                    return (
+                      <button
+                        key={m.value}
+                        className={`w-full text-left pl-6 pr-3 py-1 text-[11px] transition-colors ${
+                          isActive ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                        }`}
+                        onClick={() => handleSelect(isPiBackend && m.provider ? `${m.provider}/${m.value}` : m.value)}
+                      >
+                        {m.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        }) : (
+          <div className="px-3 py-2 text-[11px] text-text-tertiary">{search ? "No matches" : "No models available"}</div>
+        )
       ) : (
-        MODELS.map((m) => (
+        filteredModels.length > 0 ? filteredModels.map((m) => (
           <button
             key={m.value}
             className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
@@ -345,48 +362,59 @@ export function ModelPicker({
           >
             {m.label}
           </button>
-        ))
+        )) : (
+          <div className="px-3 py-2 text-[11px] text-text-tertiary">No matches</div>
+        )
       )}
-      <div className="border-t border-border-primary my-0.5" />
-      {customInput ? (
-        <div className="px-2 py-1.5">
-          <input
-            ref={inputRef}
-            type="text"
-            value={customValue}
-            onChange={(e) => setCustomValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && customValue.trim()) {
-                handleSelect(customValue.trim());
-                setCustomInput(false);
-                setCustomValue("");
-              }
-              if (e.key === "Escape") {
-                setCustomInput(false);
-                setCustomValue("");
-              }
-            }}
-            placeholder="provider/model-id"
-            className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
-          />
-          <p className="mt-1 text-[9px] text-text-tertiary">Enter to confirm</p>
-        </div>
-      ) : (
-        <button
-          className="w-full text-left px-3 py-1.5 text-[11px] text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
-          onClick={() => {
-            setCustomInput(true);
-            setCustomValue(matchedPreset ? "" : model);
-          }}
-        >
-          Custom model...
-        </button>
+      {!search && (
+        <>
+          <div className="border-t border-border-primary my-0.5" />
+          {customInput ? (
+            <div className="px-2 py-1.5">
+              <input
+                ref={inputRef}
+                type="text"
+                value={customValue}
+                onChange={(e) => setCustomValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && customValue.trim()) {
+                    handleSelect(customValue.trim());
+                    setCustomInput(false);
+                    setCustomValue("");
+                  }
+                  if (e.key === "Escape") {
+                    setCustomInput(false);
+                    setCustomValue("");
+                  }
+                }}
+                placeholder="provider/model-id"
+                className="w-full px-2 py-1 text-[11px] bg-bg-tertiary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono"
+              />
+              <p className="mt-1 text-[9px] text-text-tertiary">Enter to confirm</p>
+            </div>
+          ) : (
+            <button
+              className="w-full text-left px-3 py-1.5 text-[11px] text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+              onClick={() => {
+                setCustomInput(true);
+                setCustomValue(matchedPreset ? "" : model);
+              }}
+            >
+              Custom model...
+            </button>
+          )}
+        </>
       )}
     </>
   );
 
   if (inline) {
-    return <div className="max-h-[240px] overflow-y-auto">{listContent}</div>;
+    return (
+      <div>
+        {searchInput}
+        <div className="max-h-[240px] overflow-y-auto">{listContent}</div>
+      </div>
+    );
   }
 
   return (
@@ -404,7 +432,90 @@ export function ModelPicker({
         </svg>
       </button>
       {open && (
-        <div className="absolute bottom-full mb-1 left-0 min-w-[200px] max-h-[320px] overflow-y-auto bg-bg-secondary border border-border-primary rounded-md shadow-lg z-50">
+        <div className="absolute bottom-full mb-1 left-0 min-w-[200px] max-h-[320px] bg-bg-secondary border border-border-primary rounded-md shadow-lg z-50 flex flex-col">
+          {searchInput}
+          <div className="overflow-y-auto flex-1">
+            {listContent}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function EffortPicker({
+  effort,
+  onEffortChange,
+  isPiBackend,
+  inline,
+}: {
+  effort: EffortLevel;
+  onEffortChange: (effort: EffortLevel) => void;
+  isPiBackend?: boolean;
+  /** Render the list directly without a trigger button / dropdown wrapper. */
+  inline?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const levels = isPiBackend ? PI_EFFORT_LEVELS : CLAUDE_EFFORT_LEVELS;
+  const selected = levels.find((level) =>
+    effort === level.value || (isPiBackend && effort === "max" && level.value === "xhigh")
+  ) ?? levels[0];
+
+  useEffect(() => {
+    if (!open || inline) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, inline]);
+
+  const handleSelect = (value: EffortLevel) => {
+    onEffortChange(value);
+    if (!inline) setOpen(false);
+  };
+
+  const listContent = levels.map((level) => {
+    const isActive = effort === level.value || (isPiBackend && effort === "max" && level.value === "xhigh");
+    return (
+      <button
+        key={level.value}
+        className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${
+          isActive
+            ? "bg-accent/10 text-accent"
+            : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+        }`}
+        onClick={() => handleSelect(level.value)}
+      >
+        {level.label}
+      </button>
+    );
+  });
+
+  if (inline) {
+    return <div className="max-h-[240px] overflow-y-auto">{listContent}</div>;
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border-primary bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors text-[11px]"
+        onClick={() => setOpen(!open)}
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M8 2v2M8 12v2M3.8 3.8l1.4 1.4M10.8 10.8l1.4 1.4M2 8h2M12 8h2M3.8 12.2l1.4-1.4M10.8 5.2l1.4-1.4" />
+          <circle cx="8" cy="8" r="2.5" />
+        </svg>
+        {selected.label}
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${open ? "rotate-180" : ""}`}>
+          <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute bottom-full mb-1 left-0 min-w-[120px] bg-bg-secondary border border-border-primary rounded-md shadow-lg overflow-hidden z-50">
           {listContent}
         </div>
       )}

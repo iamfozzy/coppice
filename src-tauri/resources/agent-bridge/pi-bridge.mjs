@@ -22,6 +22,11 @@ import {
   defineTool,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createInterface } from "readline";
 import { readFile, readdir, access } from "node:fs/promises";
 import { join } from "node:path";
@@ -271,25 +276,6 @@ function buildCoppiceToolDefinitions() {
       execute: coppiceExecute("open_scratchpad"),
     }),
     defineTool({
-      name: "coppice_notify_user",
-      label: "Notify User",
-      description:
-        "Show a system notification to the user via the Coppice IDE. Use for important events like task completion or errors that need attention.",
-      promptSnippet: "Show a system notification to the user",
-      promptGuidelines: [
-        "Use coppice_notify_user for important events (task completion, errors needing attention) instead of just printing a message.",
-      ],
-      parameters: Type.Object({
-        message: Type.String({ description: "Notification body text" }),
-        title: Type.Optional(
-          Type.String({
-            description: "Notification title (defaults to 'Coppice')",
-          }),
-        ),
-      }),
-      execute: coppiceExecute("notify_user"),
-    }),
-    defineTool({
       name: "coppice_open_url",
       label: "Open URL",
       description:
@@ -378,7 +364,6 @@ async function runChildSession({ task, agent: roleName, childId, signal }) {
       "coppice_list_worktrees",
       "coppice_open_file",
       "coppice_open_scratchpad",
-      "coppice_notify_user",
       "coppice_open_url",
     ]);
     childCustomTools = childCustomTools.filter((t) =>
@@ -391,6 +376,15 @@ async function runChildSession({ task, agent: roleName, childId, signal }) {
     const webTools = await getCachedWebAccessTools();
     childCustomTools = [...childCustomTools, ...webTools];
   } catch {}
+
+  // Add MCP tools from the parent session. Read-only child roles only receive
+  // MCP tools that advertise readOnlyHint.
+  if (currentMcpToolDefinitions.length > 0) {
+    const mcpTools = role.readOnly
+      ? currentMcpToolDefinitions.filter((t) => currentMcpReadOnlyToolNames.has(t.name))
+      : currentMcpToolDefinitions;
+    childCustomTools = [...childCustomTools, ...mcpTools];
+  }
 
   // Use in-memory session manager — no persistence for ephemeral children
   const childSessionManager = SessionManager.inMemory();
@@ -794,6 +788,186 @@ async function getCachedWebAccessTools() {
   return cachedWebAccessToolsPromise;
 }
 
+// ── MCP server support ──
+
+/** Active MCP client connections for the current Pi session. */
+let mcpConnections = [];
+let currentMcpToolDefinitions = [];
+let currentMcpStatuses = [];
+let currentMcpReadOnlyToolNames = new Set();
+
+function sanitizeMcpName(name) {
+  const sanitized = String(name || "mcp")
+    .replace(/[^a-zA-Z0-9_]/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return sanitized || "mcp";
+}
+
+function makeMcpToolName(serverName, toolName, usedNames) {
+  const base = `mcp__${sanitizeMcpName(serverName)}__${sanitizeMcpName(toolName)}`;
+  let candidate = base;
+  let i = 2;
+  while (usedNames.has(candidate)) {
+    candidate = `${base}_${i++}`;
+  }
+  usedNames.add(candidate);
+  return candidate;
+}
+
+function mcpResultToText(result) {
+  if (!result) return "";
+  if ("toolResult" in result) {
+    return typeof result.toolResult === "string"
+      ? result.toolResult
+      : JSON.stringify(result.toolResult, null, 2);
+  }
+
+  const parts = [];
+  for (const block of result.content || []) {
+    if (block.type === "text") {
+      parts.push(block.text || "");
+    } else if (block.type === "resource") {
+      const res = block.resource || {};
+      if (typeof res.text === "string") {
+        parts.push(`Resource ${res.uri || ""}:\n${res.text}`.trim());
+      } else {
+        parts.push(`Resource ${res.uri || ""}: ${JSON.stringify(res)}`.trim());
+      }
+    } else if (block.type === "resource_link") {
+      parts.push(`Resource link: ${block.title || block.name || block.uri}${block.uri ? ` (${block.uri})` : ""}`);
+    } else {
+      parts.push(JSON.stringify(block));
+    }
+  }
+
+  if (result.structuredContent) {
+    parts.push(`Structured content:\n${JSON.stringify(result.structuredContent, null, 2)}`);
+  }
+
+  return parts.join("\n\n") || JSON.stringify(result, null, 2);
+}
+
+function buildMcpTransport(serverName, entry) {
+  const type = entry.type || entry.server_type || (entry.command ? "stdio" : "http");
+  if (type === "stdio") {
+    if (!entry.command) throw new Error("stdio MCP server requires a command");
+    return new StdioClientTransport({
+      command: entry.command,
+      args: Array.isArray(entry.args) ? entry.args : [],
+      env: entry.env && typeof entry.env === "object" ? entry.env : undefined,
+      cwd: currentCwd,
+      stderr: "pipe",
+    });
+  }
+  if (!entry.url) throw new Error(`${type} MCP server requires a URL`);
+  const url = new URL(entry.url);
+  if (type === "sse") return new SSEClientTransport(url);
+  if (type === "http" || type === "streamable_http" || type === "streamable-http") {
+    return new StreamableHTTPClientTransport(url);
+  }
+  throw new Error(`Unsupported MCP server type: ${type}`);
+}
+
+async function closeMcpConnections() {
+  const connections = mcpConnections;
+  mcpConnections = [];
+  currentMcpToolDefinitions = [];
+  currentMcpStatuses = [];
+  currentMcpReadOnlyToolNames = new Set();
+  await Promise.allSettled(
+    connections.map(async ({ client, name }) => {
+      try {
+        await client.close();
+        log(`mcp: closed ${name}`);
+      } catch (err) {
+        log(`mcp: close failed for ${name}: ${err.message}`);
+      }
+    }),
+  );
+}
+
+async function loadMcpToolDefinitions(mcpServers) {
+  await closeMcpConnections();
+
+  if (!mcpServers || typeof mcpServers !== "object" || Object.keys(mcpServers).length === 0) {
+    return { tools: [], statuses: [] };
+  }
+
+  const tools = [];
+  const statuses = [];
+  const usedNames = new Set(tools.map((t) => t.name));
+
+  for (const [serverName, entry] of Object.entries(mcpServers)) {
+    const client = new McpClient({ name: "coppice-pi-agent", version: "0.1.0" }, { capabilities: {} });
+    let transport;
+    try {
+      log(`mcp: connecting ${serverName}...`);
+      transport = buildMcpTransport(serverName, entry || {});
+      if (transport.stderr) {
+        transport.stderr.on("data", (chunk) => {
+          const text = String(chunk).trim();
+          if (text) log(`mcp:${serverName}: ${text.slice(0, 500)}`);
+        });
+      }
+      await client.connect(transport, { timeout: 30_000 });
+      const listed = await client.listTools(undefined, { timeout: 30_000 });
+      const serverTools = listed.tools || [];
+      statuses.push({ name: serverName, status: "connected" });
+      mcpConnections.push({ name: serverName, client });
+      log(`mcp: connected ${serverName} (${serverTools.length} tools)`);
+
+      for (const tool of serverTools) {
+        const piToolName = makeMcpToolName(serverName, tool.name, usedNames);
+        const readOnly = tool.annotations?.readOnlyHint === true;
+        if (readOnly) currentMcpReadOnlyToolNames.add(piToolName);
+        tools.push(
+          defineTool({
+            name: piToolName,
+            label: tool.annotations?.title || tool.name,
+            description:
+              `MCP tool from server '${serverName}' (original tool: '${tool.name}').\n` +
+              (tool.description || ""),
+            promptSnippet: `MCP ${serverName}: ${tool.name}`,
+            promptGuidelines: [
+              `Use ${piToolName} when the user asks for capabilities provided by the '${serverName}' MCP server.`,
+            ],
+            parameters: Type.Unsafe(tool.inputSchema || { type: "object", properties: {} }),
+            executionMode: "parallel",
+            execute: async (_toolCallId, params, signal) => {
+              if (signal?.aborted) throw new Error("MCP tool call cancelled");
+              const result = await client.callTool(
+                { name: tool.name, arguments: params || {} },
+                CallToolResultSchema,
+                { timeout: 120_000, resetTimeoutOnProgress: true, signal },
+              );
+              const text = trimToolResult(mcpResultToText(result));
+              if (result.isError) {
+                throw new Error(text || "MCP tool returned an error");
+              }
+              return {
+                content: [{ type: "text", text }],
+                details: { server: serverName, tool: tool.name },
+              };
+            },
+          }),
+        );
+      }
+    } catch (err) {
+      statuses.push({ name: serverName, status: `error: ${err.message}` });
+      log(`mcp: failed ${serverName}: ${err.stack || err.message}`);
+      try {
+        await client.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  currentMcpToolDefinitions = tools;
+  currentMcpStatuses = statuses;
+  return { tools, statuses };
+}
+
 // ── Permission system ──
 
 /**
@@ -820,7 +994,6 @@ async function handlePermission(toolCall, args, permissionMode) {
     "coppice_list_worktrees",
     "coppice_open_file",
     "coppice_open_scratchpad",
-    "coppice_notify_user",
     "coppice_open_url",
   ];
   if (readOnlyTools.includes(toolName)) return undefined;
@@ -828,6 +1001,9 @@ async function handlePermission(toolCall, args, permissionMode) {
   // Pi's read-only tools — always allow
   const piReadOnly = ["read", "grep", "find", "ls"];
   if (piReadOnly.includes(toolName)) return undefined;
+
+  // MCP tools that advertise readOnlyHint are safe to auto-allow.
+  if (currentMcpReadOnlyToolNames.has(toolName)) return undefined;
 
   // Bypass mode — auto-allow everything
   if (permissionMode === "bypassPermissions") return undefined;
@@ -975,6 +1151,24 @@ let sessionTotalsSeeded = false;
 /** Last per-turn usage for context window display. */
 let lastTurnUsage = null;
 
+function usageToTokenUsage(usage) {
+  return {
+    inputTokens: usage.input || 0,
+    outputTokens: usage.output || 0,
+    cacheReadTokens: usage.cacheRead || 0,
+    cacheWriteTokens: usage.cacheWrite || 0,
+  };
+}
+
+function addUsageToSessionTotals(usage) {
+  const tokens = usageToTokenUsage(usage);
+  sessionTotals.inputTokens += tokens.inputTokens;
+  sessionTotals.outputTokens += tokens.outputTokens;
+  sessionTotals.cacheReadTokens += tokens.cacheReadTokens;
+  sessionTotals.cacheWriteTokens += tokens.cacheWriteTokens;
+  sessionTotals.totalCostUsd += usage.cost?.total || 0;
+}
+
 /** Whether we've already kicked off title generation for this bridge. */
 let titleGenerated = false;
 
@@ -1103,12 +1297,8 @@ function subscribeToSessionEvents(agentSession) {
         // Emit per-turn usage
         const usage = msg.usage;
         if (usage) {
-          lastTurnUsage = {
-            inputTokens: usage.input || 0,
-            outputTokens: usage.output || 0,
-            cacheReadTokens: usage.cacheRead || 0,
-            cacheWriteTokens: usage.cacheWrite || 0,
-          };
+          lastTurnUsage = usageToTokenUsage(usage);
+          addUsageToSessionTotals(usage);
           log(
             `turn usage: in=${lastTurnUsage.inputTokens} CR=${lastTurnUsage.cacheReadTokens} CW=${lastTurnUsage.cacheWriteTokens} out=${lastTurnUsage.outputTokens}`,
           );
@@ -1153,31 +1343,16 @@ function subscribeToSessionEvents(agentSession) {
       }
 
       case "agent_end": {
-        // Find the last assistant message for usage/cost
         const lastAssistant = [...(event.messages || [])]
           .reverse()
           .find((m) => m.role === "assistant");
-        const usage = lastAssistant?.usage;
 
-        if (usage) {
-          const queryCost = {
-            inputTokens: usage.input || 0,
-            outputTokens: usage.output || 0,
-            cacheReadTokens: usage.cacheRead || 0,
-            cacheWriteTokens: usage.cacheWrite || 0,
-          };
-          const queryCostUsd = usage.cost?.total || 0;
-
-          sessionTotals.inputTokens += queryCost.inputTokens;
-          sessionTotals.outputTokens += queryCost.outputTokens;
-          sessionTotals.cacheReadTokens += queryCost.cacheReadTokens;
-          sessionTotals.cacheWriteTokens += queryCost.cacheWriteTokens;
-          sessionTotals.totalCostUsd += queryCostUsd;
-        }
-
-        // Context window from model metadata
+        // Context window from Pi's session accounting when available. This is
+        // more accurate than a model-name heuristic and matches Pi's own footer,
+        // including provider-specific windows and post-compaction unknown usage.
+        const contextUsage = agentSession.getContextUsage?.();
         const currentModel = agentSession.model;
-        const contextWindow = currentModel?.contextWindow || 0;
+        const contextWindow = contextUsage?.contextWindow || currentModel?.contextWindow || 0;
 
         const subtype = lastAssistant?.stopReason === "aborted"
           ? "interrupted"
@@ -1469,10 +1644,19 @@ async function startSession(msg) {
     log(`auth storage: failed to init (${err.message}), falling back to env vars`);
   }
 
-  // Build custom tools (Coppice IDE tools + web access)
+  // Build custom tools (Coppice IDE tools + MCP + web access)
   log("step: building custom tools...");
   const coppiceTools = buildCoppiceToolDefinitions();
   let customTools = [...coppiceTools];
+
+  if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
+    log("step: loading MCP servers...");
+    const { tools: mcpTools, statuses } = await loadMcpToolDefinitions(opts.mcpServers);
+    log(`step: MCP servers done (${mcpTools.length} tools, ${statuses.length} servers)`);
+    customTools = [...customTools, ...mcpTools];
+  } else {
+    await closeMcpConnections();
+  }
 
   if (opts.enableWebAccess !== false) {
     log("step: loading web access tools...");
@@ -1609,7 +1793,7 @@ async function startSession(msg) {
     tools: activeToolNames,
     model: `${provider}/${modelId}`,
     permissionMode: currentPermissionMode,
-    mcpServers: [],
+    mcpServers: currentMcpStatuses,
     slashCommands: ["compact", "model", "session"],
     isResume: !!opts.resume,
   });
@@ -1869,6 +2053,7 @@ function cleanup() {
       /* ignore */
     }
   }
+  closeMcpConnections().catch(() => {});
 }
 
 process.on("SIGTERM", () => {

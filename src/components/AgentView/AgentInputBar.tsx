@@ -396,7 +396,7 @@ export function AgentInputBar({ sessionId, disabled, isAgentBusy, autoFocus, pla
           spellCheck={false}
         />
         {isAgentBusy && onInterrupt && (
-          <Tooltip text="Stop Claude" side="top">
+          <Tooltip text="Stop agent" side="top">
             <button
               className="shrink-0 self-stretch flex items-center justify-center w-8 rounded-lg bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
               onClick={onInterrupt}

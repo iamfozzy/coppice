@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
 import { DiffViewer } from "../DiffViewer/DiffViewer";
 import { Tooltip } from "../ui/Tooltip";
+import { useAgentTabCloseConfirmation } from "../ui/useAgentTabCloseConfirmation";
 import * as commands from "../../lib/commands";
 import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
 
@@ -13,7 +14,6 @@ export function WorktreeView() {
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree);
   const activeTabByWorktree = useAppStore((s) => s.activeTabByWorktree);
   const addTab = useAppStore((s) => s.addTab);
-  const closeTab = useAppStore((s) => s.closeTab);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const newTerminalTab = useAppStore((s) => s.newTerminalTab);
   const newClaudeTab = useAppStore((s) => s.newClaudeTab);
@@ -24,7 +24,6 @@ export function WorktreeView() {
   const consumeClaudeCommand = useAppStore((s) => s.consumeClaudeCommand);
   const pendingAgentPrompt = useAppStore((s) => s.pendingAgentPrompt);
   const consumeAgentPrompt = useAppStore((s) => s.consumeAgentPrompt);
-  const toggleTabPin = useAppStore((s) => s.toggleTabPin);
   const renameTab = useAppStore((s) => s.renameTab);
 
   const prCommentsByProject = useAppStore((s) => s.prCommentsByProject);
@@ -47,6 +46,7 @@ export function WorktreeView() {
 
   const [liveBranch, setLiveBranch] = useState<string | null>(null);
   const [lastBranchWtId, setLastBranchWtId] = useState<string | null>(null);
+  const { requestCloseTab, closeConfirmation } = useAgentTabCloseConfirmation();
 
   if (wtId && wtId !== lastBranchWtId) {
     setLiveBranch(null);
@@ -177,12 +177,10 @@ export function WorktreeView() {
               label={tab.label}
               type={tab.type}
               active={tab.id === activeTabId}
-              pinned={tab.pinned ?? false}
               claudeStatus={tab.type === "claude" || tab.type === "agent" ? claudeStatusByTab[tab.id] ?? null : null}
               onClick={() => setActiveTab(wtId, tab.id)}
-              onClose={() => closeTab(wtId, tab.id)}
+              onClose={(event) => requestCloseTab(wtId, tab.id, event)}
               onRename={(newLabel) => renameTab(wtId, tab.id, newLabel)}
-              onTogglePin={tab.type === "agent" ? () => toggleTabPin(wtId, tab.id) : undefined}
             />
           ))}
         </div>
@@ -248,6 +246,7 @@ export function WorktreeView() {
           return null;
         })()}
       </div>
+      {closeConfirmation}
     </div>
   );
 }
@@ -256,24 +255,19 @@ function Tab({
   label,
   type,
   active,
-  pinned,
   claudeStatus,
   onClick,
   onClose,
   onRename,
-  onTogglePin,
 }: {
   label: string;
   type: "terminal" | "claude" | "agent" | "diff";
   active: boolean;
-  pinned: boolean;
   claudeStatus: ClaudeStatus | null;
   onClick: () => void;
-  onClose: () => void;
+  onClose: (event: React.MouseEvent) => void;
   onRename: (newLabel: string) => void;
-  onTogglePin?: () => void;
 }) {
-  const [dotHovered, setDotHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(label);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -291,17 +285,10 @@ function Tab({
   const isAgentType = type === "agent" || type === "claude";
   const agentActive = isAgentType && claudeStatus === "active";
   const agentIdle = isAgentType && claudeStatus === "idle";
-  const canPin = !!onTogglePin;
 
-  // Show pin icon when hovering the dot area on pinnable tabs
-  const showPin = canPin && dotHovered;
-
-  // Build the status dot (rendered inside a fixed-size container)
+  // Build the status dot (rendered inside a fixed-size container).
   let dotInner: React.ReactNode;
-  if (pinned && !showPin) {
-    // Pinned: accent-colored dot matching the bottom bar
-    dotInner = <span className="w-2 h-2 rounded-full bg-accent shrink-0" />;
-  } else if (agentActive) {
+  if (agentActive) {
     dotInner = (
       <span className="relative flex h-2 w-2 shrink-0">
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
@@ -320,29 +307,18 @@ function Tab({
     );
   }
 
-  const pinIcon = (
-    <svg width="10" height="10" viewBox="0 0 16 16" fill={pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 1L5 5l-3 1 4 4 1-3 4-4z" />
-      <path d="M5 11L1 15" />
-    </svg>
-  );
-
   return (
     <div
       className={`flex items-center gap-2 px-3 text-xs cursor-pointer group relative select-none outline-none ${
-        pinned
-          ? active
-            ? "text-text-primary bg-accent/15"
-            : "text-text-secondary bg-accent/10 hover:bg-accent/15"
-          : active
-            ? "text-text-primary bg-bg-primary"
-            : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover/50"
+        active
+          ? "text-text-primary bg-bg-primary"
+          : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover/50"
       }`}
       onClick={editing ? undefined : onClick}
       onMouseDown={(e) => {
         if (e.button === 1) {
           e.preventDefault();
-          onClose();
+          onClose(e);
         }
       }}
       tabIndex={-1}
@@ -350,15 +326,9 @@ function Tab({
       {active && (
         <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-accent" />
       )}
-      {/* Fixed-width dot / pin container — 16×16 so the label never shifts */}
-      <span
-        className={`w-4 h-4 flex items-center justify-center shrink-0 rounded-sm transition-colors ${canPin ? "cursor-pointer" : ""} ${showPin ? "text-accent hover:bg-accent/10" : ""}`}
-        onMouseEnter={canPin ? () => setDotHovered(true) : undefined}
-        onMouseLeave={canPin ? () => setDotHovered(false) : undefined}
-        onClick={canPin ? (e) => { e.stopPropagation(); onTogglePin!(); } : undefined}
-        title={canPin ? (pinned ? "Unpin from tiles" : "Pin to tiles") : undefined}
-      >
-        {showPin ? pinIcon : dotInner}
+      {/* Fixed-width status dot container — 16×16 so the label never shifts */}
+      <span className="w-4 h-4 flex items-center justify-center shrink-0">
+        {dotInner}
       </span>
       {editing ? (
         <input
@@ -395,7 +365,7 @@ function Tab({
         className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded hover:bg-text-tertiary/20 transition-all shrink-0 -mr-1"
         onClick={(e) => {
           e.stopPropagation();
-          onClose();
+          onClose(e);
         }}
       >
         <svg width="8" height="8" viewBox="0 0 8 8" fill="none">

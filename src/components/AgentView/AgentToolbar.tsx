@@ -11,11 +11,15 @@ interface Props {
 
 /** Resolve the effective context window size for a given model + extended-context flag. */
 function contextWindowFor(model: string, extendedContext: boolean, sdkContextWindow?: number | null): number {
+  // Prefer the backend/SDK-reported value when present. This matters for Pi,
+  // where model-name heuristics are unreliable across providers, and for
+  // Claude beta/native context-window changes that the SDK knows about first.
+  if (sdkContextWindow && sdkContextWindow > 0) return sdkContextWindow;
+
   const m = model.toLowerCase();
   if (m.includes("opus-4-7")) return 1_000_000;
   const supports1M = m.includes("opus-4") || m.includes("sonnet-4");
   if (supports1M && extendedContext) return 1_000_000;
-  if (sdkContextWindow && sdkContextWindow > 0) return sdkContextWindow;
   return 200_000;
 }
 
@@ -37,7 +41,8 @@ export function AgentToolbar({
         <CostDisplay
           cost={session.cost}
           lastTurnCost={session.lastTurnCost}
-          hasApiKey={hasApiKey}
+          showCost={session.backend === "pi" ? session.cost.totalCostUsd > 0 : hasApiKey}
+          backend={session.backend}
           model={session.model}
           extendedContext={session.extendedContext}
           sdkContextWindow={session.sdkContextWindow}
@@ -47,7 +52,7 @@ export function AgentToolbar({
 
       {/* Interrupt button */}
       {isWorking && (
-        <Tooltip text="Stop Claude" side="top">
+        <Tooltip text="Stop agent" side="top">
           <button
             className="flex items-center gap-1 px-2 py-0.5 rounded bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
             onClick={onInterrupt}
@@ -66,7 +71,8 @@ export function AgentToolbar({
 function CostDisplay({
   cost,
   lastTurnCost,
-  hasApiKey,
+  showCost,
+  backend,
   model,
   extendedContext,
   sdkContextWindow,
@@ -74,7 +80,8 @@ function CostDisplay({
 }: {
   cost: AgentCost;
   lastTurnCost: TokenUsage | null;
-  hasApiKey: boolean;
+  showCost: boolean;
+  backend: AgentSessionState["backend"];
   model: string;
   extendedContext: boolean;
   sdkContextWindow: number | null;
@@ -84,11 +91,11 @@ function CostDisplay({
   const [open, setOpen] = useState(false);
 
   // ── Derived metrics ──
-  // Context: current turn's total input (fresh + cache read + cache write).
-  // Only valid when we have per-turn data — cumulative session cost is NOT a
-  // meaningful context-usage metric (it double-counts across turns).
+  // Context: current turn's input plus generated output. Only valid when we
+  // have per-turn data — cumulative session cost is NOT a meaningful
+  // context-usage metric (it double-counts across turns).
   const currentCtx = lastTurnCost
-    ? lastTurnCost.inputTokens + lastTurnCost.cacheReadTokens + lastTurnCost.cacheWriteTokens
+    ? lastTurnCost.inputTokens + lastTurnCost.cacheReadTokens + lastTurnCost.cacheWriteTokens + lastTurnCost.outputTokens
     : 0;
   const contextWindow = contextWindowFor(model, extendedContext, sdkContextWindow);
   const contextPct = currentCtx > 0 ? Math.min(100, (currentCtx / contextWindow) * 100) : 0;
@@ -113,7 +120,7 @@ function CostDisplay({
         onBlur={() => setOpen(false)}
         tabIndex={0}
       >
-        {hasApiKey && (
+        {showCost && (
           <>
             ~${cost.totalCostUsd.toFixed(3)}
             {sep}
@@ -136,7 +143,8 @@ function CostDisplay({
           anchor={anchorRef.current}
           cost={cost}
           lastTurnCost={lastTurnCost}
-          hasApiKey={hasApiKey}
+          showCost={showCost}
+          backend={backend}
           model={model}
           extendedContext={extendedContext}
           sdkContextWindow={sdkContextWindow}
@@ -151,7 +159,8 @@ function CostTooltip({
   anchor,
   cost,
   lastTurnCost,
-  hasApiKey,
+  showCost,
+  backend,
   model,
   extendedContext,
   sdkContextWindow,
@@ -159,7 +168,8 @@ function CostTooltip({
   anchor: HTMLElement;
   cost: AgentCost;
   lastTurnCost: TokenUsage | null;
-  hasApiKey: boolean;
+  showCost: boolean;
+  backend: AgentSessionState["backend"];
   model: string;
   extendedContext: boolean;
   sdkContextWindow: number | null;
@@ -181,7 +191,7 @@ function CostTooltip({
     const maxLeft = window.innerWidth - tipRect.width - margin;
     if (left > maxLeft) left = maxLeft;
     setPos({ top, left });
-  }, [anchor, cost, lastTurnCost, hasApiKey]);
+  }, [anchor, cost, lastTurnCost, showCost]);
 
   const sessionInput = cost.inputTokens + cost.cacheReadTokens + cost.cacheWriteTokens;
   const pct = (n: number) =>
@@ -273,13 +283,13 @@ function CostTooltip({
         </div>
         <div>
           <span className="text-text-primary font-medium">Cache read</span>: prior
-          conversation replayed from Anthropic's prompt cache. ~10% of fresh price.
+          conversation replayed from {backend === "pi" ? "the provider's prompt/session cache when supported" : "Anthropic's prompt cache"}.
           Accumulates every turn as each turn re-reads all prior context.
         </div>
         <div>
           <span className="text-text-primary font-medium">Cache write</span>: new
           content written to the cache each turn (system prompt on first turn,
-          then incremental conversation growth). ~125% of fresh price per write.
+          then incremental conversation growth). Pricing varies by provider.
         </div>
         <div className="text-text-tertiary">
           Session totals are cumulative across every turn. Current context shows
@@ -289,7 +299,7 @@ function CostTooltip({
 
       {/* Billing */}
       <div className="border-t border-border-primary pt-2 mt-2">
-        {hasApiKey ? (
+        {showCost ? (
           <div className="font-mono">
             Estimated cost:{" "}
             <span className="text-text-primary">${cost.totalCostUsd.toFixed(4)}</span>
@@ -297,7 +307,7 @@ function CostTooltip({
           </div>
         ) : (
           <div className="text-text-tertiary">
-            Billing: Claude subscription — no per-token charge.
+            Billing: {backend === "pi" ? "provider OAuth/subscription or unavailable pricing" : "Claude subscription — no per-token charge"}.
           </div>
         )}
       </div>

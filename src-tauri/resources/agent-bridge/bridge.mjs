@@ -77,7 +77,6 @@ const COPPICE_TOOLS_INSTRUCTION = `You are running inside the Coppice desktop ID
 - Use coppice_create_worktree instead of git worktree commands — it registers the worktree in the IDE's project model and copies env files. When you need to do work in the new worktree, pass the task as the 'prompt' parameter — Coppice will switch to the new worktree and spawn a separate agent tab to execute it. NEVER cd into the new worktree yourself after creating it.
 - Use coppice_spawn_terminal to open new terminal tabs in the IDE, optionally running a command.
 - Use coppice_open_file to surface files in the IDE's editor tabs so the user can see them.
-- Use coppice_notify_user for important events (task completion, errors needing attention) instead of just printing a message.
 - Use coppice_open_url for links the user should visit (PR URLs, documentation).
 - Use coppice_open_scratchpad to create a scratchpad with notes, plans, or generated content.
 Don't use these for routine intermediate steps — only when IDE integration genuinely helps.`;
@@ -341,16 +340,6 @@ function buildCoppiceTools() {
         title: z.string().optional().describe("Label for the scratchpad tab"),
       },
       async (args) => callCoppice("open_scratchpad", args),
-      { annotations: { readOnlyHint: true }, alwaysLoad: true },
-    ),
-    tool(
-      "coppice_notify_user",
-      "Show a system notification to the user via the Coppice IDE. Use for important events like task completion or errors that need attention.",
-      {
-        message: z.string().describe("Notification body text"),
-        title: z.string().optional().describe("Notification title (defaults to 'Coppice')"),
-      },
-      async (args) => callCoppice("notify_user", args),
       { annotations: { readOnlyHint: true }, alwaysLoad: true },
     ),
     tool(
@@ -806,7 +795,7 @@ async function startSession(msg) {
     // by the SDK as "mcp__<server>__<tool>", so match on the suffix.
     const coppiceReadOnly = [
       "coppice_list_worktrees", "coppice_open_file",
-      "coppice_open_scratchpad", "coppice_notify_user", "coppice_open_url",
+      "coppice_open_scratchpad", "coppice_open_url",
     ];
     const effectiveToolName = toolName.includes("__") ? toolName.split("__").pop() : toolName;
     if (coppiceReadOnly.includes(effectiveToolName)) {
@@ -888,7 +877,7 @@ async function startSession(msg) {
     };
   }
 
-  // Hooks — emit status on Stop/Notification
+  // Hooks — emit status around tool use
   queryOptions.hooks = {
     PreToolUse: [
       {

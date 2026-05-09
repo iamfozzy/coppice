@@ -532,12 +532,15 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
             timestamp: Date.now(),
           });
         }
-        setStatus(sessionId, endedWithError ? "error" : "done");
-
         if (hasQueue && !endedWithError) {
+          // Continue straight into the next queued prompt without briefly
+          // marking the agent done; otherwise the app can fire a misleading
+          // "finished" notification while the agent is still processing.
           const nextQueued = latestSession.queuedMessages[0];
           shiftQueuedMessage(sessionId);
           dispatchToAgent(nextQueued.text, nextQueued.images);
+        } else {
+          setStatus(sessionId, endedWithError ? "error" : "done");
         }
         break;
       }
@@ -922,7 +925,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           session.status === "done"
             ? "Send a follow-up message..."
             : session.status === "waiting_input"
-              ? "Answer Claude's question..."
+              ? "Answer the agent's question..."
               : session.status === "idle"
                 ? "Send a message to start..."
                 : "Queue message..."

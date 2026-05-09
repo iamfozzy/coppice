@@ -35,7 +35,7 @@ export function AskUserDialog({ pending, onSubmit }: Props) {
           <path d="M5 5.5a2 2 0 013.5 1.5c0 1-1.5 1.2-1.5 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" className="text-accent" />
           <circle cx="7" cy="10.5" r="0.6" fill="currentColor" className="text-accent" />
         </svg>
-        <span className="text-[11px] font-medium text-accent">Claude has a question</span>
+        <span className="text-[11px] font-medium text-accent">Agent has a question</span>
       </div>
 
       <div className="px-3 py-2 space-y-3 overflow-y-auto min-h-0">

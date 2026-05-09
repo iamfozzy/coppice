@@ -34,6 +34,8 @@
     ],
     "resources": {
       "resources/agent-bridge/bridge.mjs": "agent-bridge/bridge.mjs",
+      "resources/agent-bridge/pi-bridge.mjs": "agent-bridge/pi-bridge.mjs",
+      "resources/agent-bridge/pi-oauth.mjs": "agent-bridge/pi-oauth.mjs",
       "resources/agent-bridge/package.json": "agent-bridge/package.json",
       "resources/agent-bridge/package-lock.json": "agent-bridge/package-lock.json",
       "resources/agent-bridge/node_modules": "agent-bridge/node_modules"

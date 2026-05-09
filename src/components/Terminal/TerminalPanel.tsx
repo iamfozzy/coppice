@@ -22,7 +22,7 @@ interface Props {
 export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFamily, keepAlive = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termInstanceRef = useRef<Terminal | null>(null);
-  const themeMode = useAppStore((s) => s.appSettings?.theme ?? "dark");
+  const themeMode = useAppStore((s) => s.appSettings?.theme ?? "dim");
   // Mirror props that are read inside the long-lived PTY-output listener
   // into refs. Keeps the main effect's dep array tight (so we don't tear
   // down the terminal when these change) while still letting changes take

@@ -3,9 +3,9 @@
 
 # Coppice
 
-A desktop app for managing Git worktrees, Claude AI sessions, and development workflows in a unified interface. Built with Tauri v2, React, and Rust.
+A desktop app for managing Git worktrees, AI agent sessions, and development workflows in a unified interface. Built with Tauri v2, React, and Rust.
 
-Coppice lets you work across multiple Git worktrees simultaneously, each with its own terminal sessions, Claude AI tabs, diff viewers, and configurable runners — all in one window.
+Coppice lets you work across multiple Git worktrees simultaneously, each with its own terminal sessions, AI agent tabs (Claude Agent SDK or Pi Agent), diff viewers, and configurable runners — all in one window.
 
 ## Installation
 
@@ -62,11 +62,13 @@ Since the app is not code-signed, Windows SmartScreen may block it on first laun
 - Open worktree in VS Code, native terminal, or file manager
 - Cross-platform support (Finder/Explorer/xdg-open)
 
-### Claude Agent SDK Integration
-- Agent sessions are powered by [`@anthropic-ai/claude-agent-sdk`](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)
-- A bundled Node "agent bridge" process (`src-tauri/resources/agent-bridge/`) drives the SDK over a JSON-line stdin/stdout protocol — one bridge process per agent session
-- Rust backend (`src-tauri/src/commands/agent.rs`) spawns and manages bridge lifecycles; tool-use and `AskUserQuestion` round-trips block on frontend responses
-- Bridge dependencies install automatically via the root `postinstall` script, so `npm install` in the repo root is all you need
+### Agent Backends
+- **Claude Agent SDK** sessions are powered by [`@anthropic-ai/claude-agent-sdk`](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) and use the `bridge.mjs` Node bridge.
+- **Pi Agent** sessions are powered by [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) and [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) via `pi-bridge.mjs`.
+- Pi Agent supports provider/model selection across many LLM providers (Claude, OpenAI, Gemini, DeepSeek, Mistral, Groq, xAI, OpenRouter, GitHub Copilot, and more), optional web search/fetch tools via `pi-web-access`, and a `subagent` tool for parallel or isolated child-agent work.
+- Both backends use a bundled Node "agent bridge" process (`src-tauri/resources/agent-bridge/`) over a JSON-line stdin/stdout protocol — one bridge process per agent session.
+- Rust backend (`src-tauri/src/commands/agent.rs`) chooses the bridge, spawns/manages lifecycles, and handles tool-use, permission, and user-question round-trips with the frontend.
+- Bridge dependencies install automatically via the root `postinstall` script, so `npm install` in the repo root is all you need.
 - Node.js and `gh` binaries are bundled as Tauri sidecars (`src-tauri/binaries/coppice-node-*`, `coppice-gh-*`) so the packaged app has no external runtime dependencies. `npm install` downloads them for the host platform via `scripts/download-sidecars.mjs`; CI re-runs it per target triple.
 
 ## Tech Stack
@@ -83,6 +85,7 @@ Since the app is not code-signed, Windows SmartScreen may block it on first laun
 | Database | SQLite via rusqlite (WAL mode) |
 | PTY | portable-pty |
 | GitHub | `gh` CLI |
+| Agents | Claude Agent SDK, Pi Coding Agent |
 
 ## Project Structure
 
@@ -94,6 +97,7 @@ Since the app is not code-signed, Windows SmartScreen may block it on first laun
 │   │   ├── Terminal/             # xterm.js terminal wrapper
 │   │   ├── DiffViewer/           # Monaco diff editor
 │   │   ├── PRStatus/             # GitHub PR info panel
+│   │   ├── AgentView/            # Claude/Pi agent UI
 │   │   └── ProjectSettings/      # Project configuration modal
 │   ├── stores/appStore.ts        # Global state (Zustand)
 │   ├── lib/commands.ts           # Tauri IPC wrappers
@@ -105,10 +109,12 @@ Since the app is not code-signed, Windows SmartScreen may block it on first laun
 │   │   │   ├── worktree.rs       # Git worktree operations
 │   │   │   ├── terminal.rs       # PTY spawn/write/resize/kill
 │   │   │   ├── github.rs         # PR status, CI logs, PR creation
+│   │   │   ├── agent.rs          # Claude/Pi agent bridge commands
 │   │   │   └── external.rs       # VS Code, terminal, file manager
 │   │   ├── db/mod.rs             # SQLite schema & queries
 │   │   ├── models/mod.rs         # Project, Worktree structs
 │   │   └── services/pty_manager.rs # PTY lifecycle & output streaming
+│   ├── resources/agent-bridge/   # Claude and Pi Node bridge scripts
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 └── .github/workflows/build.yml   # Multi-platform CI
@@ -178,12 +184,70 @@ Build artifacts (`.dmg`, `.app`, `.deb`, `.AppImage`, `.msi`, `.exe`) are upload
 
 ## Architecture Notes
 
-- **Per-worktree isolation** — Each worktree gets its own set of tabs (terminal, Claude, diff) and runners, stored in `tabsByWorktree` and `runnersByWorktree` maps.
+- **Per-worktree isolation** — Each worktree gets its own set of tabs (terminal, agent, diff) and runners, stored in `tabsByWorktree` and `runnersByWorktree` maps.
 - **Terminal pool** — Runner terminals are rendered off-screen and reparented into the visible UI on demand, preserving terminal state across tab switches.
 - **Event-driven PTY** — Output streams via Tauri events (`pty-output-{sessionId}`) rather than polling. A dedicated flush thread batches output every 50ms.
 - **SQLite with WAL** — Database uses Write-Ahead Logging for concurrent read/write. Foreign keys enabled with cascading deletes on worktrees.
 - **Git CLI** — All git operations shell out to `git` / `gh` directly (no libgit2), keeping the dependency surface small and behavior consistent with the user's git config.
-- **Agent bridge subprocess** — Each Claude Agent SDK session runs in its own Node subprocess, isolated from the main app. Communication is line-delimited JSON over stdio, letting the Rust backend drive the SDK without embedding a JS runtime.
+- **Agent bridge subprocess** — Each Claude Agent SDK or Pi Agent session runs in its own Node subprocess, isolated from the main app. Communication is line-delimited JSON over stdio, letting the Rust backend drive JavaScript agent SDKs without embedding a JS runtime.
+
+## Using Pi Agent
+
+Coppice can use Pi Agent as an alternative to the Claude Agent SDK backend.
+
+1. Open **App Settings → Agent mode** and choose **Pi Agent**.
+2. Add one or more providers under **Providers & Authentication**.
+3. Authenticate with either an API key or OAuth where supported (Anthropic, GitHub Copilot, OpenAI Codex). OAuth credentials are stored in `~/.pi/agent/auth.json`.
+4. Pick the default provider/model and thinking level, then save.
+
+Pi Agent tabs use the same Coppice UI as Claude tabs, including permission prompts, image attachments, persisted session history, slash commands, and IDE tools such as opening files, creating worktrees, and spawning terminals. Pi-specific options include:
+
+- **Web access** — optional `web_search` and `fetch_content` tools via `pi-web-access`.
+- **Subagents** — delegate focused research, implementation, or review work to isolated child agents.
+- **Provider-scoped models** — model selections use `provider/model` names (for example `openai/gpt-4o` or `google/gemini-2.5-pro`).
+
+### Pi Agent subagents
+
+When **App Settings → Pi Agent → Tools → Subagent** is enabled, the Pi Agent can call a `subagent` tool to spawn short-lived child agent sessions. Each child shares the parent session's provider/model and worktree, runs independently, and returns only its final answer to the parent, keeping exploratory context out of the main conversation. Child agents cannot recursively spawn more subagents.
+
+Supported subagent roles:
+
+| Role | Access | Best for |
+|------|--------|----------|
+| `scout` | Read-only, low thinking | Fast codebase reconnaissance, file/path discovery, concise context gathering |
+| `researcher` | Read-only, medium thinking | Deeper investigation, tracing code paths, documentation/code analysis |
+| `planner` | Read-only, high thinking | Producing detailed implementation plans before edits begin |
+| `worker` | Read/write, medium thinking | Isolated implementation tasks and verification |
+| `reviewer` | Read-only, medium thinking | Reviewing changes for bugs, correctness, style, and security concerns |
+
+You normally use subagents by asking the Pi Agent to delegate work in natural language, for example:
+
+```text
+Use a scout subagent to find where terminal sessions are created, then update the implementation yourself.
+```
+
+```text
+Run these in parallel: a researcher to inspect the Rust agent bridge flow, and a reviewer to check the current frontend changes.
+```
+
+For prompts or custom tools that need the exact shape, the tool accepts either a single task:
+
+```json
+{ "agent": "reviewer", "task": "Review the changes in src/components/AgentView for regressions." }
+```
+
+or multiple parallel tasks:
+
+```json
+{
+  "tasks": [
+    { "agent": "scout", "task": "Find all settings related to Pi Agent tools." },
+    { "agent": "planner", "task": "Plan the README update for Pi subagents." }
+  ]
+}
+```
+
+Use subagents for independent or context-heavy work; avoid them for quick single-file reads, small edits, or tasks that need back-and-forth with the user.
 
 ## Using Non-Claude Models via LiteLLM
 

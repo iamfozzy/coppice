@@ -23,7 +23,6 @@ pub fn handle_coppice_tool(
         "spawn_terminal" => handle_spawn_terminal(args, app, cwd),
         "open_file" => handle_open_file(args, app, cwd),
         "open_scratchpad" => handle_open_scratchpad(args, app),
-        "notify_user" => handle_notify_user(args, app),
         "open_url" => handle_open_url(args, app),
         _ => Err(format!("Unknown coppice tool: {}", tool_name)),
     }
@@ -390,29 +389,6 @@ fn handle_open_scratchpad(args: &Value, app: &AppHandle) -> Result<String, Strin
     );
 
     Ok("Scratchpad tab created".to_string())
-}
-
-fn handle_notify_user(args: &Value, app: &AppHandle) -> Result<String, String> {
-    let message = args
-        .get("message")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "'message' is required".to_string())?;
-    let title = args
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Coppice");
-
-    let _ = app.emit(
-        "coppice-action",
-        serde_json::json!({
-            "action": "notify",
-            "message": message,
-            "title": title,
-        })
-        .to_string(),
-    );
-
-    Ok("Notification sent".to_string())
 }
 
 fn handle_open_url(args: &Value, _app: &AppHandle) -> Result<String, String> {

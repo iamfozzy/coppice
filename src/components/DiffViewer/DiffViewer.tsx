@@ -147,7 +147,7 @@ function createCommentZoneNode(lineComments: PrComment[]): HTMLDivElement {
 
 export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
   const appSettings = useAppStore((s) => s.appSettings);
-  const themeMode = appSettings?.theme ?? "dark";
+  const themeMode = appSettings?.theme ?? "dim";
   const resolved = resolveTheme(themeMode);
   const monacoThemeName = { light: "coppice-light", dim: "coppice-dim", atom: "coppice-atom", dark: "coppice-dark" }[resolved];
   const [original, setOriginal] = useState<string>("");

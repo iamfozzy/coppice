@@ -34,6 +34,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
 
       - name: Install system dependencies (Linux)
         if: matrix.platform == 'ubuntu-22.04'
@@ -139,45 +142,24 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Determine version tag
         id: version
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-          else
-            VERSION=$(node -p "require('./package.json').version")
-            TAG="v${VERSION}"
-            if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
-              echo "Tag $TAG already exists — skipping release"
-              echo "should_release=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "New version $TAG — will create release"
-              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-              echo "should_release=true" >> "$GITHUB_OUTPUT"
-            fi
-          fi
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
       - name: Download all artifacts
-        if: steps.version.outputs.should_release == 'true'
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
       - name: List artifacts
-        if: steps.version.outputs.should_release == 'true'
         run: find artifacts -type f | head -50
 
       - name: Create GitHub Release
-        if: steps.version.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
