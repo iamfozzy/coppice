@@ -8,7 +8,7 @@ import { ChangesPanel } from "./ChangesPanel";
 import { SidebarRunners } from "./SidebarRunners";
 import { Tooltip } from "../ui/Tooltip";
 import { TileViewToggleButton } from "../ui/TileViewToggleButton";
-import { AppInfoButton } from "../ui/AppInfoButton";
+import { AppInfoButton, AppUpdateButton } from "../ui/AppInfoButton";
 import { ModelConfigPopover, formatPiProvider, getPiModelsForProvider, stripPiProviderPrefix, type HeaderOption } from "../ui/AgentHeaderControls";
 
 export function Sidebar() {
@@ -289,6 +289,7 @@ export function Sidebar() {
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          <AppUpdateButton align="right" />
           <AppInfoButton align="right" />
           <Tooltip text="Settings" align="right">
             <button
