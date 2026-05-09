@@ -30,7 +30,7 @@ export function AppUpdateButton({
       <button
         type="button"
         onClick={() => void openAppReleasePage(appUpdate.releaseUrl)}
-        className="relative w-7 h-7 flex items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/15 transition-colors"
+        className="relative w-7 h-7 flex items-center justify-center rounded-md border border-amber-500/20 bg-amber-500/10 text-amber-300 hover:bg-amber-500/15 transition-colors"
         aria-label={`Open GitHub Releases to download ${latestVersion}`}
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -57,7 +57,7 @@ export function AppInfoButton({
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/60 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary/25 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
           aria-label="About Coppice"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
