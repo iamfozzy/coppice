@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 /// Per-server OAuth metadata persisted in settings.toml. Only non-secret
-/// data lives here — access/refresh tokens are stored in the OS keychain.
+/// data lives here — access/refresh tokens are stored in Coppice's encrypted
+/// local secret store.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct McpOAuthState {
     /// Discovered authorization endpoint (RFC 8414).
@@ -13,19 +14,24 @@ pub struct McpOAuthState {
     /// Discovered token endpoint.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub token_endpoint: String,
+    /// RFC 8707 resource indicator for the MCP server. Some providers (notably
+    /// Atlassian) bind tokens to this audience and require it during token
+    /// exchange/refresh as well as on the authorization URL.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub resource: String,
     /// Optional dynamic-registration endpoint (RFC 7591).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration_endpoint: Option<String>,
     /// Client ID returned from dynamic registration (or pre-registered).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub client_id: String,
-    /// Whether a client secret is stored in the keychain (true=confidential client).
+    /// Whether a client secret is stored in the secret store (true=confidential client).
     #[serde(default)]
     pub has_client_secret: bool,
     /// Requested scopes (space-separated value the AS will see).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<String>,
-    /// True when the keychain currently holds a non-expired (or refreshable) token set.
+    /// True when the secret store currently holds a non-expired (or refreshable) token set.
     #[serde(default)]
     pub connected: bool,
     /// Unix timestamp of last successful auth/refresh — purely informational.
@@ -167,7 +173,8 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
     }
-    let contents = toml::to_string_pretty(settings).map_err(|e| format!("Failed to serialize: {}", e))?;
+    let contents =
+        toml::to_string_pretty(settings).map_err(|e| format!("Failed to serialize: {}", e))?;
     std::fs::write(&path, contents).map_err(|e| format!("Failed to write settings: {}", e))?;
     Ok(())
 }

@@ -149,15 +149,14 @@ const TOOL_FRUGALITY_INSTRUCTION = `Keep tool outputs small: they persist in con
 
 const COPPICE_TOOLS_INSTRUCTION = `You are running inside the Coppice desktop IDE. Prefer coppice_ prefixed tools over shell equivalents when IDE integration helps. Only use IDE tools when it genuinely helps, not for routine intermediate steps.`;
 
-const SUBAGENT_INSTRUCTION = `Use the subagent tool when:
-- You need to explore unfamiliar code before planning — delegate to a scout first to gather context without bloating your own window.
-- You have multiple independent tasks — run parallel workers instead of doing them sequentially.
-- A task would consume significant context (many file reads, large searches) that you won't need afterward — a subagent's context is discarded after it reports back.
-- You want a code review or second opinion on changes you've made — delegate to a reviewer.
-- You need a detailed implementation plan — delegate to a planner so the research stays in the child's context.
+const SUBAGENT_INSTRUCTION = `Subagent context-isolation policy:
+- If you expect to use 3+ exploratory tools (grep/read/bash/code_search/web_search/fetch_content) before you can act, delegate that exploration to a scout/researcher first. The child's context is discarded; only its concise report returns.
+- If you have multiple independent investigations or implementation chunks, use one subagent call with a tasks array so they run in parallel instead of doing sequential tool calls yourself.
+- For unfamiliar code, default to a scout before planning. For broad research, use researcher. For implementation sequencing, use planner. After non-trivial edits, use reviewer.
+- Ask children to return concise findings with file paths/line numbers and no long pasted outputs.
 
 Do NOT use subagent for:
-- Simple single-file reads, quick edits, or short bash commands — the overhead isn't worth it.
+- Simple single-file reads, quick edits, or one-off commands — the overhead isn't worth it.
 - Tasks where you already have the context you need.
 - Anything that requires back-and-forth with the user — subagents run to completion without user interaction.`;
 
@@ -551,15 +550,19 @@ function buildSubagentToolDefinition() {
     label: "Subagent",
     description:
       "Delegate a task to a child agent that runs independently and returns its result. " +
-      "Use for parallel work, focused research, code review, or isolated implementation tasks. " +
+      "Use to keep parent context small when a task would require multiple exploratory tool calls, " +
+      "or for parallel work, focused research, code review, and isolated implementation. " +
       "Single task: { agent, task }. Parallel: { tasks: [{ agent, task }, ...] }.",
     promptSnippet: "Spawn child agents for parallel or focused work",
     promptGuidelines: [
+      "Context rule: if you expect 3+ exploratory tool calls before acting, delegate that exploration " +
+        "to a scout/researcher and continue from its concise report.",
       "Use subagent for tasks that benefit from isolation: parallel implementation, " +
         "focused research, or review. Each child runs with its own context window.",
       "Available roles: scout (fast read-only recon), researcher (thorough analysis), " +
         "planner (implementation planning), worker (full implementation), reviewer (code review).",
       "Prefer a single subagent call with a tasks array over sequential calls for parallelizable work.",
+      "Ask children to return concise findings with file paths/line numbers and no long pasted outputs.",
       "The child agent's final response text is returned as the tool result.",
     ],
     parameters: Type.Object({

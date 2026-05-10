@@ -94,11 +94,13 @@ export interface AppSettings {
 export interface McpOAuthState {
   authorization_endpoint?: string;
   token_endpoint?: string;
+  /** RFC 8707 audience/resource bound to issued tokens. */
+  resource?: string;
   registration_endpoint?: string;
   client_id?: string;
   has_client_secret?: boolean;
   scopes?: string[];
-  /** Whether a non-expired (or refreshable) token set is currently in the keychain. */
+  /** Whether a non-expired (or refreshable) token set is currently in the encrypted local secret store. */
   connected?: boolean;
   /** Unix seconds — last successful auth/refresh. */
   last_auth_at?: number;

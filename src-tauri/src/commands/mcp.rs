@@ -11,15 +11,16 @@
 //!      dynamic registration, opens the browser, and emits `mcp-oauth-event`
 //!      events as the flow progresses.
 //!   4. On success, settings.toml has `oauth.connected = true` and the
-//!      keychain holds the token set. Subsequent `agent_start` calls inject
-//!      `Authorization: Bearer …` into the MCP server's headers.
+//!      encrypted local secret store holds the token set. Subsequent
+//!      `agent_start` calls inject `Authorization: Bearer …` into the MCP
+//!      server's headers.
 
 use std::collections::HashMap;
 use std::thread;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::services::mcp_oauth;
 use crate::settings::{save_settings, McpOAuthState, McpServerEntry, SettingsState};
@@ -142,8 +143,8 @@ pub fn mcp_install_catalog_entry(
     token: Option<String>,
     settings: State<'_, SettingsState>,
 ) -> Result<InstalledMcpServer, String> {
-    let entry = catalog_lookup(&catalog_id)
-        .ok_or_else(|| format!("Unknown catalog id: {}", catalog_id))?;
+    let entry =
+        catalog_lookup(&catalog_id).ok_or_else(|| format!("Unknown catalog id: {}", catalog_id))?;
 
     if entry.auth == "static-bearer" {
         let t = token.as_deref().unwrap_or("").trim();
@@ -191,7 +192,10 @@ pub fn mcp_install_catalog_entry(
     }
     guard.mcp_servers.insert(name.clone(), server.clone());
     save_settings(&guard)?;
-    Ok(InstalledMcpServer { name, entry: server })
+    Ok(InstalledMcpServer {
+        name,
+        entry: server,
+    })
 }
 
 // ─── OAuth flow ────────────────────────────────────────────────────────────
@@ -233,8 +237,8 @@ pub fn mcp_oauth_start(
         .clone()
         .ok_or_else(|| "OAuth requires an http/sse server URL".to_string())?;
 
-    let scopes: Vec<String> = entry
-        .oauth
+    let existing_oauth = entry.oauth.clone();
+    let scopes: Vec<String> = existing_oauth
         .as_ref()
         .map(|o| o.scopes.clone())
         .unwrap_or_default();
@@ -261,6 +265,7 @@ pub fn mcp_oauth_start(
             &server_url,
             &scopes,
             &client_name,
+            existing_oauth.as_ref(),
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -281,7 +286,8 @@ pub fn mcp_oauth_start(
         // Persist the discovered endpoints & client_id immediately so that if
         // the user kills Coppice mid-flow, we can reconnect without re-doing
         // discovery from scratch.
-        if let Err(e) = persist_oauth_state(&name_clone, &oauth_state, false) {
+        let settings_state = app_clone.state::<SettingsState>();
+        if let Err(e) = persist_oauth_state(&settings_state, &name_clone, &oauth_state, false) {
             eprintln!("[mcp-oauth] persist (pre-callback) failed: {}", e);
         }
 
@@ -300,13 +306,12 @@ pub fn mcp_oauth_start(
         }
 
         // Wait for the listener thread to capture the code and exchange it.
-        match flow
-            .completion_rx
-            .recv_timeout(Duration::from_secs(360))
-        {
+        match flow.completion_rx.recv_timeout(Duration::from_secs(360)) {
             Ok(Ok(_tokens)) => {
                 // Mark connected in settings.
-                if let Err(e) = persist_oauth_state(&name_clone, &oauth_state, true) {
+                if let Err(e) =
+                    persist_oauth_state(&settings_state, &name_clone, &oauth_state, true)
+                {
                     eprintln!("[mcp-oauth] persist (post-callback) failed: {}", e);
                 }
                 emit(
@@ -320,6 +325,9 @@ pub fn mcp_oauth_start(
                 );
             }
             Ok(Err(e)) => {
+                if e == mcp_oauth::FLOW_SUPERSEDED {
+                    return;
+                }
                 emit(
                     &app_clone,
                     McpOAuthEvent {
@@ -350,16 +358,17 @@ pub fn mcp_oauth_start(
 /// Update the persisted OAuth state for a server. We hold the settings lock
 /// only briefly, mutate, and write to disk.
 fn persist_oauth_state(
+    settings: &SettingsState,
     name: &str,
     oauth_state: &McpOAuthState,
     connected: bool,
 ) -> Result<(), String> {
-    // Re-load from disk to avoid clobbering a concurrent write to other
-    // settings fields. (The lock-protected SettingsState is the source of
-    // truth for the in-memory copy used by other code paths; we update both.)
-    let path_settings = crate::settings::load_settings();
-    let mut next = path_settings;
-    let entry = next
+    // Keep the in-memory SettingsState and settings.toml in sync. Refresh uses
+    // token_endpoint/client_id/resource from SettingsState during agent_start;
+    // if we only wrote the TOML, the first post-login refresh would still use
+    // the empty placeholder OAuth state until Coppice restarted.
+    let mut guard = settings.0.lock().map_err(|e| e.to_string())?;
+    let entry = guard
         .mcp_servers
         .get_mut(name)
         .ok_or_else(|| format!("Server '{}' was removed during OAuth", name))?;
@@ -374,7 +383,7 @@ fn persist_oauth_state(
         );
     }
     entry.oauth = Some(new_state);
-    save_settings(&next)
+    save_settings(&guard)
 }
 
 /// List the live status of every configured OAuth-enabled server.
@@ -392,10 +401,7 @@ pub fn mcp_get_auth_status(
 
 /// Drop tokens + cached client secret for a server (keeps the server config).
 #[tauri::command]
-pub fn mcp_oauth_revoke(
-    name: String,
-    settings: State<'_, SettingsState>,
-) -> Result<(), String> {
+pub fn mcp_oauth_revoke(name: String, settings: State<'_, SettingsState>) -> Result<(), String> {
     mcp_oauth::revoke(&name)?;
     // Mark not-connected in settings.
     let mut guard = settings.0.lock().map_err(|e| e.to_string())?;

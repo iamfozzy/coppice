@@ -8,14 +8,13 @@
 //! 2. **Dynamic client registration (RFC 7591)** — POST a `client_name` +
 //!    loopback `redirect_uris` to the registration endpoint, store the
 //!    returned `client_id` in settings (and `client_secret`, if any, in the
-//!    keychain).
+//!    encrypted local secret store).
 //! 3. **PKCE authorization code flow (OAuth 2.1)** — generate a verifier +
 //!    S256 challenge, bind a one-shot loopback listener on a fixed port, open
 //!    the auth URL in the user's browser, capture `code` from the callback,
 //!    exchange it at the token endpoint.
-//! 4. **Token storage** — access + refresh tokens are persisted in the OS
-//!    keychain (Keychain on macOS, Credential Manager on Windows, Secret
-//!    Service on Linux). Settings.toml holds only non-secret state.
+//! 4. **Token storage** — access + refresh tokens are persisted in Coppice's
+//!    encrypted local secret store. Settings.toml holds only non-secret state.
 //! 5. **Refresh on demand** — `access_token_for_session` is called from
 //!    `agent_start`; if the token expires within 60s we refresh transparently
 //!    before injecting the `Authorization: Bearer …` header.
@@ -44,6 +43,7 @@ const LOOPBACK_PORT: u16 = 33418;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 const FLOW_TIMEOUT: Duration = Duration::from_secs(300);
+pub const FLOW_SUPERSEDED: &str = "__coppice_mcp_oauth_flow_superseded__";
 
 // ─── Public types ──────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ pub struct AuthServerMetadata {
     pub scopes_supported: Option<Vec<String>>,
 }
 
-/// Token set persisted in the keychain.
+/// Token set persisted in the encrypted local secret store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredTokens {
     pub access_token: String,
@@ -92,7 +92,9 @@ struct FlowSlot {
     state: String,
     code_verifier: String,
     /// Channel: listener thread sends the captured `code` (or an error string).
-    rx: std::sync::mpsc::Receiver<Result<String, String>>,
+    /// Kept as an Option so the completion driver can take the receiver while
+    /// leaving the slot in the map for cancellation by a superseding flow.
+    rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// Cancellation token for the listener thread — flipping this lets the
     /// thread exit on its next poll tick, releasing the loopback port. We
     /// don't keep the `TcpListener` here because the thread needs sole
@@ -110,6 +112,19 @@ impl Drop for FlowSlot {
 fn flow_slots() -> &'static Mutex<HashMap<String, FlowSlot>> {
     static SLOTS: OnceLock<Mutex<HashMap<String, FlowSlot>>> = OnceLock::new();
     SLOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn token_refresh_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn flow_slot_matches(server_name: &str, state: &str) -> bool {
+    flow_slots()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(server_name).map(|slot| slot.state == state))
+        .unwrap_or(false)
 }
 
 // ─── HTTP helpers ──────────────────────────────────────────────────────────
@@ -174,9 +189,15 @@ fn well_known_urls(issuer: &str, name: &str) -> Vec<String> {
     let mut urls: Vec<String> = Vec::new();
     if !path.is_empty() {
         // RFC 8414 §3.3 — well-known is inserted between host and path.
-        urls.push(format!("{}://{}/.well-known/{}{}", scheme, host, name, path));
+        urls.push(format!(
+            "{}://{}/.well-known/{}{}",
+            scheme, host, name, path
+        ));
         // Legacy: well-known appended to the full issuer URL.
-        urls.push(format!("{}://{}{}/.well-known/{}", scheme, host, path, name));
+        urls.push(format!(
+            "{}://{}{}/.well-known/{}",
+            scheme, host, path, name
+        ));
     }
     // Always try the host root — many servers publish only at the origin.
     urls.push(format!("{}://{}/.well-known/{}", scheme, host, name));
@@ -282,9 +303,7 @@ pub fn discover(server_url: &str) -> Result<DiscoveryResult, String> {
     // WWW-Authenticate pointing at its protected-resource metadata.
     let www_authenticate = match agent.get(server_url).call() {
         Ok(_) => None,
-        Err(ureq::Error::Status(_, resp)) => {
-            resp.header("www-authenticate").map(|s| s.to_string())
-        }
+        Err(ureq::Error::Status(_, resp)) => resp.header("www-authenticate").map(|s| s.to_string()),
         Err(e) => return Err(format!("Could not reach {}: {}", server_url, e)),
     };
 
@@ -307,7 +326,8 @@ pub fn discover(server_url: &str) -> Result<DiscoveryResult, String> {
                     .first()
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        "Protected-resource document didn't list any authorization_servers".to_string()
+                        "Protected-resource document didn't list any authorization_servers"
+                            .to_string()
                     })?;
                 let scopes = json
                     .get("scopes_supported")
@@ -535,9 +555,7 @@ fn bind_with_retry() -> Result<TcpListener, String> {
 }
 
 fn handle_callback(mut stream: TcpStream, expected_state: &str) -> Result<String, String> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .ok();
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
     let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
     let mut request_line = String::new();
     reader
@@ -564,7 +582,9 @@ fn handle_callback(mut stream: TcpStream, expected_state: &str) -> Result<String
         if let Some((k, v)) = kv.split_once('=') {
             params.insert(
                 k.to_string(),
-                urlencoding::decode(v).map(|s| s.into_owned()).unwrap_or_default(),
+                urlencoding::decode(v)
+                    .map(|s| s.into_owned())
+                    .unwrap_or_default(),
             );
         }
     }
@@ -630,6 +650,7 @@ fn exchange_code(
     redirect_uri: &str,
     code: &str,
     code_verifier: &str,
+    resource: Option<&str>,
 ) -> Result<StoredTokens, String> {
     let mut form = vec![
         ("grant_type", "authorization_code".to_string()),
@@ -641,6 +662,9 @@ fn exchange_code(
     if let Some(secret) = client_secret {
         form.push(("client_secret", secret.to_string()));
     }
+    if let Some(resource) = resource.filter(|r| !r.is_empty()) {
+        form.push(("resource", resource.to_string()));
+    }
     post_token(token_endpoint, &form)
 }
 
@@ -649,6 +673,7 @@ fn refresh_with(
     client_id: &str,
     client_secret: Option<&str>,
     refresh_token: &str,
+    resource: Option<&str>,
 ) -> Result<StoredTokens, String> {
     let mut form = vec![
         ("grant_type", "refresh_token".to_string()),
@@ -657,6 +682,9 @@ fn refresh_with(
     ];
     if let Some(secret) = client_secret {
         form.push(("client_secret", secret.to_string()));
+    }
+    if let Some(resource) = resource.filter(|r| !r.is_empty()) {
+        form.push(("resource", resource.to_string()));
     }
     post_token(token_endpoint, &form)
 }
@@ -677,7 +705,11 @@ fn post_token(endpoint: &str, form: &[(&str, String)]) -> Result<StoredTokens, S
     let parsed: TokenResponse = resp
         .into_json()
         .map_err(|e| format!("Bad token response: {}", e))?;
-    let expires_in = parsed.expires_in.unwrap_or(3600);
+    // `expires_in` is optional in OAuth token responses. If a provider omits
+    // it, don't invent a short one-hour expiry that would force needless
+    // re-authentication; treat it as long-lived unless the provider tells us
+    // otherwise.
+    let expires_in = parsed.expires_in.unwrap_or(10 * 365 * 24 * 60 * 60);
     Ok(StoredTokens {
         access_token: parsed.access_token,
         refresh_token: parsed.refresh_token,
@@ -757,16 +789,14 @@ pub fn start_authorization(
     server_url: &str,
     extra_scopes: &[String],
     client_name: &str,
+    existing_oauth: Option<&McpOAuthState>,
 ) -> Result<(StartedFlow, McpOAuthState), String> {
     // Cancel ANY in-flight flow (not just one for this server). All flows
     // share the same loopback port, so a previously-abandoned flow for a
     // different server would otherwise still be holding it. Dropping each
     // FlowSlot trips its cancel flag; the listener thread releases the
     // port within ~150ms, which `bind_with_retry` accommodates.
-    flow_slots()
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clear();
+    flow_slots().lock().map_err(|e| e.to_string())?.clear();
 
     // Discovery → registration → start listener → build URL.
     let DiscoveryResult {
@@ -782,26 +812,44 @@ pub fn start_authorization(
         scopes_supported.clone()
     };
 
-    // Try to reuse an existing client registration (so we don't churn AS records).
+    // Reuse an existing dynamic client registration where possible. Re-running
+    // DCR on every "Reconnect" churns provider-side client records and can
+    // invalidate/lose the client secret needed for refresh. If the saved state
+    // is incomplete, fall back to fresh registration.
     let stored_secret = load_client_secret(server_name).ok().flatten();
-
-    let registration_endpoint = auth_server
-        .registration_endpoint
-        .clone()
-        .ok_or_else(|| dcr_unsupported_message(server_url))?;
     let redirect = redirect_uri();
-    let registration = register_client(
-        &registration_endpoint,
-        client_name,
-        &redirect,
-        &scopes,
-    )?;
-    if let Some(ref secret) = registration.client_secret {
-        save_client_secret(server_name, secret)?;
-    } else if stored_secret.is_some() {
-        // Previous registration had a secret; clear it.
-        let _ = delete_client_secret(server_name);
-    }
+    let existing_client = existing_oauth.and_then(|o| {
+        let has_usable_secret = !o.has_client_secret || stored_secret.is_some();
+        if !o.client_id.is_empty() && has_usable_secret {
+            Some((
+                o.client_id.clone(),
+                stored_secret.clone(),
+                o.has_client_secret,
+            ))
+        } else {
+            None
+        }
+    });
+    let registration_endpoint = auth_server.registration_endpoint.clone();
+    let (client_id, client_secret, has_client_secret) = if let Some(existing) = existing_client {
+        existing
+    } else {
+        let endpoint = registration_endpoint
+            .as_deref()
+            .ok_or_else(|| dcr_unsupported_message(server_url))?;
+        let registration = register_client(endpoint, client_name, &redirect, &scopes)?;
+        if let Some(ref secret) = registration.client_secret {
+            save_client_secret(server_name, secret)?;
+        } else if stored_secret.is_some() {
+            // Previous registration had a secret; clear it.
+            let _ = delete_client_secret(server_name);
+        }
+        (
+            registration.client_id,
+            registration.client_secret.clone(),
+            registration.client_secret.is_some(),
+        )
+    };
 
     // Listener on the loopback port — must come before opening the browser
     // so we don't race a fast user.
@@ -815,7 +863,7 @@ pub fn start_authorization(
         FlowSlot {
             state: state.clone(),
             code_verifier: verifier.clone(),
-            rx,
+            rx: Some(rx),
             cancel,
         },
     );
@@ -824,7 +872,7 @@ pub fn start_authorization(
     let mut auth_url = format!(
         "{}?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}",
         auth_server.authorization_endpoint,
-        urlencoding::encode(&registration.client_id),
+        urlencoding::encode(&client_id),
         urlencoding::encode(&redirect),
         urlencoding::encode(&challenge),
         urlencoding::encode(&state),
@@ -841,9 +889,10 @@ pub fn start_authorization(
     let oauth_state = McpOAuthState {
         authorization_endpoint: auth_server.authorization_endpoint.clone(),
         token_endpoint: auth_server.token_endpoint.clone(),
-        registration_endpoint: Some(registration_endpoint),
-        client_id: registration.client_id.clone(),
-        has_client_secret: registration.client_secret.is_some(),
+        resource: resource.clone(),
+        registration_endpoint,
+        client_id: client_id.clone(),
+        has_client_secret,
         scopes,
         connected: false,
         last_auth_at: None,
@@ -854,30 +903,29 @@ pub fn start_authorization(
     let (completion_tx, completion_rx) = std::sync::mpsc::channel::<Result<StoredTokens, String>>();
     let server_name_clone = server_name.to_string();
     let oauth_state_clone = oauth_state.clone();
-    let client_id = registration.client_id.clone();
-    let client_secret = registration.client_secret.clone();
     let redirect_clone = redirect.clone();
     let verifier_clone = verifier.clone();
     thread::spawn(move || {
-        // If the slot is gone the user started a fresh flow that superseded
-        // this one — exit silently so we don't surface a confusing error
-        // mid-flight. (The new flow's completion thread will report.)
-        let slot = match flow_slots()
-            .lock()
-            .ok()
-            .and_then(|mut g| g.remove(&server_name_clone))
-        {
-            Some(s) => s,
-            None => return,
+        // Take the receiver while leaving the slot in the global map. That lets
+        // a newer OAuth attempt cancel the listener promptly instead of being
+        // blocked by the fixed callback port until this thread times out.
+        let rx = match flow_slots().lock().ok().and_then(|mut g| {
+            let slot = g.get_mut(&server_name_clone)?;
+            if slot.code_verifier != verifier_clone || slot.state != state {
+                return None;
+            }
+            slot.rx.take()
+        }) {
+            Some(rx) => rx,
+            None => return, // superseded
         };
-        if slot.code_verifier != verifier_clone || slot.state != state {
-            return; // superseded
+        let received = rx.recv_timeout(FLOW_TIMEOUT + Duration::from_secs(10));
+        if received.is_err() && !flow_slot_matches(&server_name_clone, &state) {
+            let _ = completion_tx.send(Err(FLOW_SUPERSEDED.to_string()));
+            return;
         }
         let result = (|| -> Result<StoredTokens, String> {
-            let code = slot
-                .rx
-                .recv_timeout(FLOW_TIMEOUT + Duration::from_secs(10))
-                .map_err(|_| "OAuth listener channel closed".to_string())??;
+            let code = received.map_err(|_| "OAuth listener channel closed".to_string())??;
             let tokens = exchange_code(
                 &oauth_state_clone.token_endpoint,
                 &client_id,
@@ -885,10 +933,16 @@ pub fn start_authorization(
                 &redirect_clone,
                 &code,
                 &verifier_clone,
+                Some(&oauth_state_clone.resource),
             )?;
             save_tokens(&server_name_clone, &tokens)?;
             Ok(tokens)
         })();
+        if let Ok(mut g) = flow_slots().lock() {
+            if g.get(&server_name_clone).map(|s| s.state.as_str()) == Some(state.as_str()) {
+                g.remove(&server_name_clone);
+            }
+        }
         let _ = completion_tx.send(result);
     });
 
@@ -905,6 +959,16 @@ pub fn start_authorization(
 /// Returns the bearer access token, refreshing if it expires within 60s.
 /// Returns `Ok(None)` if the server has no stored tokens (let it start
 /// unauthenticated; the bridge will surface the 401).
+fn resource_for_entry(oauth: &McpOAuthState, entry: &McpServerEntry) -> Option<String> {
+    if !oauth.resource.is_empty() {
+        return Some(oauth.resource.clone());
+    }
+    // Migration fallback for settings written before we persisted the RFC 8707
+    // resource. `discover` also defaults to the server origin when the
+    // protected-resource document doesn't advertise a more specific value.
+    entry.url.as_deref().and_then(|url| url_origin(url).ok())
+}
+
 pub fn access_token_for_session(
     server_name: &str,
     entry: &McpServerEntry,
@@ -913,19 +977,28 @@ pub fn access_token_for_session(
         Some(o) => o,
         None => return Ok(None),
     };
+    // Atlassian uses rotating refresh tokens. Serialize refresh attempts so a
+    // status poll and an agent start cannot both spend the same refresh token.
+    let _refresh_guard = token_refresh_lock().lock().map_err(|e| e.to_string())?;
     let mut tokens = match load_tokens(server_name)? {
         Some(t) => t,
         None => return Ok(None),
     };
-    // Refresh if we're within 60s of expiry and we have a refresh token.
+    // Refresh if we're within 60s of expiry. Never inject a known-expired
+    // bearer token — it just produces opaque 401s from the MCP server.
     if tokens.expires_at <= now_unix() + 60 {
         if let Some(rt) = tokens.refresh_token.clone() {
+            if oauth.token_endpoint.is_empty() || oauth.client_id.is_empty() {
+                return Err("OAuth metadata is incomplete; reconnect this MCP server".to_string());
+            }
             let secret = load_client_secret(server_name).ok().flatten();
+            let resource = resource_for_entry(oauth, entry);
             tokens = refresh_with(
                 &oauth.token_endpoint,
                 &oauth.client_id,
                 secret.as_deref(),
                 &rt,
+                resource.as_deref(),
             )?;
             // Some IdPs omit a refresh_token on refresh; preserve the old one
             // so the next refresh still works.
@@ -933,6 +1006,8 @@ pub fn access_token_for_session(
                 tokens.refresh_token = Some(rt);
             }
             save_tokens(server_name, &tokens)?;
+        } else {
+            return Err("OAuth access token expired and no refresh token is available; reconnect this MCP server".to_string());
         }
     }
     Ok(Some(tokens.access_token))
@@ -949,12 +1024,27 @@ pub fn status_for(server_name: &str, entry: &McpServerEntry) -> McpAuthStatus {
         };
     }
     match load_tokens(server_name) {
-        Ok(Some(tokens)) => {
+        Ok(Some(mut tokens)) => {
+            let now = now_unix();
+            // Status polling is a safe place to perform an on-demand refresh,
+            // so the UI doesn't show "expired" for a token we can refresh and
+            // the next agent session doesn't start with stale credentials.
+            if tokens.expires_at <= now + 60 && tokens.refresh_token.is_some() {
+                if let Err(e) = access_token_for_session(server_name, entry) {
+                    return McpAuthStatus {
+                        name: server_name.to_string(),
+                        status: "error".into(),
+                        expires_at: Some(tokens.expires_at),
+                        message: Some(format!("Refresh failed: {}", e)),
+                    };
+                }
+                if let Ok(Some(refreshed)) = load_tokens(server_name) {
+                    tokens = refreshed;
+                }
+            }
             let now = now_unix();
             let status = if tokens.expires_at > now + 60 {
                 "connected"
-            } else if tokens.refresh_token.is_some() {
-                "expired" // will refresh on next session
             } else {
                 "expired"
             };
@@ -980,7 +1070,7 @@ pub fn status_for(server_name: &str, entry: &McpServerEntry) -> McpAuthStatus {
     }
 }
 
-/// Wipe all OAuth state for a server (keychain + flow slots).
+/// Wipe all OAuth state for a server (secret store + flow slots).
 pub fn revoke(server_name: &str) -> Result<(), String> {
     flow_slots()
         .lock()
