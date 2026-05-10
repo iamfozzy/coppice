@@ -216,9 +216,9 @@ pub fn agent_start(
     // Pass MCP servers from settings.
     //
     // For http/sse servers we merge: user-supplied static headers + a Bearer
-    // token loaded from the OS keychain when the server has completed an
-    // OAuth flow. The keychain lookup also refreshes the token if it's about
-    // to expire — this is the single point where MCP auth is materialized.
+    // token loaded from Coppice's encrypted local secret store when the server
+    // has completed an OAuth flow. The lookup also refreshes the token if it's
+    // about to expire — this is the single point where MCP auth is materialized.
     {
         if !settings_snapshot.mcp_servers.is_empty() {
             let mut servers = serde_json::Map::new();
@@ -254,7 +254,7 @@ pub fn agent_start(
                     }
 
                     // Build headers: start with user-supplied static headers,
-                    // then overlay the OAuth Bearer token (keychain-backed,
+                    // then overlay the OAuth Bearer token (secret-store backed,
                     // auto-refreshed) if the server has completed OAuth.
                     let mut headers_map: serde_json::Map<String, serde_json::Value> = entry
                         .headers

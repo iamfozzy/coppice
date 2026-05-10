@@ -1424,7 +1424,7 @@ function McpServersEditor({
     refreshStatuses();
   }, [refreshStatuses]);
 
-  // Re-poll status every 8s while modal is open. Cheap (just reads keychain
+  // Re-poll status every 8s while modal is open. Cheap (just reads the local secret store
   // entry expiry timestamps) and lets a token expiring during a flow tick
   // its badge from connected → expired without the user reopening settings.
   useEffect(() => {
@@ -1560,7 +1560,7 @@ function McpServersEditor({
     <div>
       <label className="block text-xs text-text-secondary mb-1">MCP Servers</label>
       <p className="text-[length:var(--app-font-10)] text-text-tertiary mb-2">
-        Additional MCP servers available to Claude Agent and Pi Agent sessions. OAuth tokens are stored in your OS keychain.
+        Additional MCP servers available to Claude Agent and Pi Agent sessions. OAuth tokens are stored in Coppice's encrypted local secret store.
       </p>
 
       {entries.length > 0 && (
@@ -2035,7 +2035,7 @@ function McpCustomForm({
             className="w-full px-2 py-1 text-xs bg-bg-primary border border-border-primary rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent font-mono resize-none"
           />
           <p className="text-[length:var(--app-font-9)] text-text-tertiary">
-            For OAuth-protected servers, prefer "Add from catalog" — Coppice will run the OAuth flow and store tokens in your keychain.
+            For OAuth-protected servers, prefer "Add from catalog" — Coppice will run the OAuth flow and store tokens in its encrypted local secret store.
           </p>
         </>
       )}
