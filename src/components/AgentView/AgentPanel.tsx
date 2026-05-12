@@ -685,24 +685,67 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
         if (subEvt === "start") {
           store.updateSubagentChild({
             id: childId, role: subRole, task: subTask,
-            lastTool: "", status: "running",
+            lastTool: "", lastToolSummary: "", toolCount: 0,
+            elapsed: 0, filesExplored: [], filesModified: [],
+            transcript: [], status: "running",
           });
         } else if (subEvt === "tool_start") {
           const existing = store.subagentChildren.find((c) => c.id === childId);
           if (existing) {
-            store.updateSubagentChild({ ...existing, lastTool: msg.toolName as string });
+            store.updateSubagentChild({
+              ...existing,
+              lastTool: msg.toolName as string,
+              lastToolSummary: (msg.toolSummary as string) || "",
+              toolCount: (msg.toolCount as number) || existing.toolCount,
+            });
+          }
+        } else if (subEvt === "tool_end") {
+          const existing = store.subagentChildren.find((c) => c.id === childId);
+          if (existing) {
+            store.updateSubagentChild({
+              ...existing,
+              toolCount: (msg.toolCount as number) || existing.toolCount,
+            });
+          }
+        } else if (subEvt === "transcript") {
+          const existing = store.subagentChildren.find((c) => c.id === childId);
+          if (existing) {
+            const entries = (msg.transcript as Array<{ tool: string; summary: string; status: string }>) || [];
+            store.updateSubagentChild({
+              ...existing,
+              transcript: entries.map((e) => ({
+                tool: e.tool,
+                summary: e.summary,
+                status: e.status as "ok" | "error" | "running",
+              })),
+            });
           }
         } else if (subEvt === "done") {
           const existing = store.subagentChildren.find((c) => c.id === childId);
           if (existing) {
-            store.updateSubagentChild({ ...existing, status: "done", lastTool: "" });
+            const stats = (msg.stats as { toolCount?: number; elapsed?: number; filesExplored?: string[]; filesModified?: string[] }) || {};
+            store.updateSubagentChild({
+              ...existing,
+              status: "done",
+              lastTool: "",
+              lastToolSummary: "",
+              toolCount: stats.toolCount ?? existing.toolCount,
+              elapsed: stats.elapsed ?? 0,
+              filesExplored: stats.filesExplored ?? existing.filesExplored,
+              filesModified: stats.filesModified ?? existing.filesModified,
+            });
           }
         } else if (subEvt === "error") {
           const existing = store.subagentChildren.find((c) => c.id === childId);
           if (existing) {
+            const stats = (msg.stats as { toolCount?: number; elapsed?: number; filesExplored?: string[]; filesModified?: string[] }) || {};
             store.updateSubagentChild({
               ...existing, status: "error",
-              error: (msg.error as string) || "unknown", lastTool: "",
+              error: (msg.error as string) || "unknown", lastTool: "", lastToolSummary: "",
+              toolCount: stats.toolCount ?? existing.toolCount,
+              elapsed: stats.elapsed ?? 0,
+              filesExplored: stats.filesExplored ?? existing.filesExplored,
+              filesModified: stats.filesModified ?? existing.filesModified,
             });
           }
         }

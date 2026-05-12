@@ -129,8 +129,8 @@ function getMcpConnectionState(
   return "pending";
 }
 
-function formatMcpEndpoint(entry?: McpServerEntry): string {
-  if (!entry) return "Session-reported server";
+function formatMcpEndpoint(entry?: McpServerEntry, name?: string): string {
+  if (!entry) return name === "coppice" ? "IDE tools (worktree, terminal, file, scratchpad)" : "Session-reported server";
   if (entry.server_type === "stdio") {
     const command = entry.command || "<command>";
     const args = entry.args?.join(" ") || "";
@@ -207,8 +207,6 @@ export function McpStatusPopover({
     };
   }, []);
 
-  if (configuredEntries.length === 0) return null;
-
   // Live session status takes priority over the cached OAuth status —
   // a session that fails the connect handshake is what the user actually
   // cares about. Pre-session, fall back to the OAuth-flow status.
@@ -230,15 +228,25 @@ export function McpStatusPopover({
     return auth.status;
   }
 
+  // Always show the built-in Coppice IDE server. Before a session starts it
+  // appears as "built-in"; once the bridge reports status it shows live.
+  const coppiceRow = {
+    name: "coppice",
+    entry: undefined,
+    status: "connected" as const,
+    isOauth: false,
+  };
+
   const rows: Array<{ name: string; entry?: McpServerEntry; status?: string; isOauth: boolean }> =
-    configuredEntries.map(([name, entry]) => ({
+    [coppiceRow,
+    ...configuredEntries.map(([name, entry]) => ({
       name,
       entry,
       status: sessionStatusByName.get(name) ?? preSessionStatus(name, entry),
       isOauth: !!entry.oauth,
-    }));
+    }))];
   for (const server of sessionServers) {
-    if (!(server.name in configuredServers)) {
+    if (server.name !== "coppice" && !(server.name in configuredServers)) {
       rows.push({ name: server.name, entry: undefined, status: server.status, isOauth: false });
     }
   }
@@ -291,8 +299,8 @@ export function McpStatusPopover({
   } else {
     toneClass =
       "border-border-primary/25 bg-bg-tertiary/40 text-text-secondary hover:bg-bg-hover hover:text-text-primary";
-    badgeText = `${configuredEntries.length}`;
-    summary = `${configuredEntries.length} MCP server${configuredEntries.length === 1 ? "" : "s"} configured`;
+    badgeText = `${rows.length}`;
+    summary = `${rows.length} MCP server${rows.length === 1 ? "" : "s"} configured`;
   }
 
   const button = (
@@ -356,8 +364,8 @@ export function McpStatusPopover({
                         ? "bg-red-500/10 text-red-300"
                         : "bg-bg-tertiary text-text-secondary";
               const statusLabel = row.status || (row.isOauth ? "configured" : "configured");
-              const transport = row.entry?.server_type || "unknown";
-              const endpoint = formatMcpEndpoint(row.entry);
+              const transport = row.entry?.server_type || (row.name === "coppice" ? "built-in" : "unknown");
+              const endpoint = formatMcpEndpoint(row.entry, row.name);
               return (
                 <div key={row.name} className="rounded-md border border-border-primary/60 bg-bg-primary/20 px-2 py-1.5">
                   <div className="flex items-start gap-2">

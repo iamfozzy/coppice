@@ -1,7 +1,8 @@
-import { memo, useState } from "react";
+import { memo, useState, useCallback } from "react";
 import type { AgentMessage } from "../../lib/types";
 import { Tooltip } from "../ui/Tooltip";
 import { MarkdownContent } from "./MarkdownContent";
+import { claudeAuthLogin } from "../../lib/commands";
 
 interface Props {
   message: AgentMessage;
@@ -82,20 +83,92 @@ export const MessageBubble = memo(function MessageBubble({ message, onCancel, wo
       );
 
     case "error":
-      return (
-        <div className="flex items-start gap-2 bg-error/8 border border-error/20 rounded-lg px-3 py-2.5 text-sm text-error">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="mt-0.5 shrink-0">
-            <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.2" />
-            <path d="M7 4v3.5M7 9.5v.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          </svg>
-          <span className="break-words">{message.content}</span>
-        </div>
-      );
+      return <ErrorBubble message={message} />;
 
     default:
       return null;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Auth error detection + re-login action
+// ---------------------------------------------------------------------------
+
+/** Patterns that indicate an authentication / login expiry error. */
+const AUTH_ERROR_PATTERNS = [
+  /not authenticated/i,
+  /authentication.*(?:expired|failed|required|invalid)/i,
+  /unauthorized/i,
+  /session_stale_relogin/i,
+  /untrusted_device/i,
+  /login.*(?:expired|required)/i,
+  /token.*(?:expired|invalid|revoked)/i,
+  /please.*log\s*in/i,
+  /credential.*(?:expired|invalid|missing)/i,
+  /401/,
+  /oauth.*(?:expired|failed|invalid)/i,
+];
+
+function isAuthError(content: string): boolean {
+  return AUTH_ERROR_PATTERNS.some((pattern) => pattern.test(content));
+}
+
+function ErrorBubble({ message }: { message: AgentMessage }) {
+  const [loginStatus, setLoginStatus] = useState<"idle" | "pending" | "success">("idle");
+  const showLogin = isAuthError(message.content || "");
+
+  const handleLogin = useCallback(async () => {
+    setLoginStatus("pending");
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      const unlisten = await listen<string>("claude-auth-event", (event) => {
+        try {
+          const msg = JSON.parse(event.payload);
+          if (msg.type === "success") {
+            setLoginStatus("success");
+            unlisten();
+          } else if (msg.type === "error") {
+            setLoginStatus("idle");
+            unlisten();
+          }
+        } catch {}
+      });
+      await claudeAuthLogin();
+    } catch {
+      setLoginStatus("idle");
+    }
+  }, []);
+
+  return (
+    <div className="flex items-start gap-2 bg-error/8 border border-error/20 rounded-lg px-3 py-2.5 text-sm text-error">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="mt-0.5 shrink-0">
+        <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M7 4v3.5M7 9.5v.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+      <div className="break-words flex-1">
+        <span>{message.content}</span>
+        {showLogin && (
+          <button
+            type="button"
+            onClick={handleLogin}
+            disabled={loginStatus !== "idle"}
+            className={`ml-2 inline-flex items-center gap-1 px-2 py-0.5 text-[length:var(--app-font-11)] font-medium rounded transition-colors ${
+              loginStatus === "success"
+                ? "bg-green-500/15 text-green-400 border border-green-500/30"
+                : loginStatus === "pending"
+                  ? "bg-purple-500/10 text-purple-400 border border-purple-500/30 animate-pulse"
+                  : "bg-purple-500/10 text-purple-400 border border-purple-500/30 hover:bg-purple-500/20 cursor-pointer"
+            }`}
+          >
+            {loginStatus === "success" ? "✓ Logged in" :
+             loginStatus === "pending" ? "Logging in…" :
+             "Re-login"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // MCP servers tooltip

@@ -155,6 +155,15 @@ const SUBAGENT_INSTRUCTION = `Subagent context-isolation policy:
 - For unfamiliar code, default to a scout before planning. For broad research, use researcher. For implementation sequencing, use planner. After non-trivial edits, use reviewer.
 - Ask children to return concise findings with file paths/line numbers and no long pasted outputs.
 
+Examples of when to delegate:
+- "Find all usages of handleEvent across the codebase" → scout
+- "Understand how the auth module connects to the session manager" → researcher
+- "Plan the implementation for adding dark mode support" → planner
+- "Implement the new API endpoint in routes/ while I work on the frontend" → worker
+- "Review the changes I just made to the database layer" → reviewer
+- "Run the test suite and report failures" → tester
+- Multiple independent tasks (e.g. "find X" + "find Y" + "implement Z") → single subagent call with tasks array
+
 Do NOT use subagent for:
 - Simple single-file reads, quick edits, or one-off commands — the overhead isn't worth it.
 - Tasks where you already have the context you need.
@@ -340,37 +349,72 @@ const SUBAGENT_ROLES = {
   scout: {
     label: "Scout",
     systemPromptAppend:
-      "You are a fast reconnaissance agent. Read files, search code, and gather context. Do NOT modify any files. Report findings concisely with file paths and line numbers.",
+      "You are a fast reconnaissance agent. Read files, search code, and gather context. Do NOT modify any files.\n\n" +
+      "Response format — keep under 300 words:\n" +
+      "## Files examined\n- path/to/file.ts (lines X-Y) — brief note\n" +
+      "## Findings\n- Bullet points with file:line references\n" +
+      "## Recommendation\n- One-liner if applicable",
     thinkingLevel: "low",
     readOnly: true,
   },
   researcher: {
     label: "Researcher",
     systemPromptAppend:
-      "You are a thorough research agent. Explore the codebase, read documentation, trace code paths, and produce a comprehensive analysis. Do NOT modify files.",
+      "You are a thorough research agent. Explore the codebase, read documentation, trace code paths, and produce a comprehensive analysis. Do NOT modify files.\n\n" +
+      "Response format — keep under 500 words:\n" +
+      "## Files examined\n- path/to/file.ts (lines X-Y) — brief note\n" +
+      "## Analysis\n- Detailed findings with file:line references\n" +
+      "## Connections\n- How components relate to each other\n" +
+      "## Recommendation\n- Actionable next steps",
     thinkingLevel: "medium",
     readOnly: true,
   },
   planner: {
     label: "Planner",
     systemPromptAppend:
-      "You are a planning agent. Analyze the codebase and produce a detailed, step-by-step implementation plan. Do NOT modify files. Focus on file paths, function signatures, and sequencing.",
+      "You are a planning agent. Analyze the codebase and produce a detailed, step-by-step implementation plan. Do NOT modify files. Focus on file paths, function signatures, and sequencing.\n\n" +
+      "Response format:\n" +
+      "## Files to modify\n- path/to/file.ts — what changes and why\n" +
+      "## Implementation steps\n1. Step with file:line references\n" +
+      "## Risks / edge cases\n- Bullet points\n" +
+      "## Testing strategy\n- How to verify the changes",
     thinkingLevel: "high",
     readOnly: true,
   },
   worker: {
     label: "Worker",
     systemPromptAppend:
-      "You are an implementation agent. Execute the task you have been given. You have full tool access. Be thorough and verify your work.",
+      "You are an implementation agent. Execute the task you have been given. You have full tool access. Be thorough and verify your work.\n\n" +
+      "Response format — keep concise:\n" +
+      "## Changes made\n- path/to/file.ts — what was changed\n" +
+      "## Verification\n- How you verified the changes work\n" +
+      "## Notes\n- Anything the parent agent should know",
     thinkingLevel: "medium",
     readOnly: false,
   },
   reviewer: {
     label: "Reviewer",
     systemPromptAppend:
-      "You are a code review agent. Examine the specified code for bugs, style issues, security concerns, and correctness. Do NOT modify files. Report issues with file paths and line numbers.",
+      "You are a code review agent. Examine the specified code for bugs, style issues, security concerns, and correctness. Do NOT modify files.\n\n" +
+      "Response format:\n" +
+      "## Files reviewed\n- path/to/file.ts (lines X-Y)\n" +
+      "## Issues found\n- [severity] file:line — description\n" +
+      "## Suggestions\n- Improvement ideas\n" +
+      "## Verdict\n- Overall assessment (approve / needs changes)",
     thinkingLevel: "medium",
     readOnly: true,
+  },
+  tester: {
+    label: "Tester",
+    systemPromptAppend:
+      "You are a testing agent. Run tests, analyze failures, and report results. You have full tool access to execute test commands.\n\n" +
+      "Response format:\n" +
+      "## Tests run\n- Command executed and scope\n" +
+      "## Results\n- X passed, Y failed, Z skipped\n" +
+      "## Failures\n- test name — file:line — brief failure reason\n" +
+      "## Recommendation\n- What to fix first",
+    thinkingLevel: "low",
+    readOnly: false,
   },
 };
 
@@ -378,12 +422,19 @@ let childIdCounter = 0;
 
 /**
  * Spawn a child AgentSession, run it to completion, and return the final text.
- * The child shares the parent's auth, model, and cwd but gets a scoped tool set
+ * The child shares the parent's auth and cwd but gets a scoped tool set
  * with no subagent tool (prevents recursion).
  */
-async function runChildSession({ task, agent: roleName, childId, signal }) {
+async function runChildSession({ task, agent: roleName, childId, signal, model: modelOverride }) {
   const role = SUBAGENT_ROLES[roleName] || SUBAGENT_ROLES.worker;
   const cid = childId || `child-${++childIdCounter}`;
+  const startTime = Date.now();
+
+  // Tracking accumulators (display-only, not sent to parent context)
+  let toolCount = 0;
+  const filesExplored = new Set();
+  const filesModified = new Set();
+  const transcript = []; // { tool, summary, status }
 
   log(`subagent[${cid}]: starting role=${roleName} task="${task.slice(0, 80)}"`);
   emit({
@@ -426,9 +477,25 @@ async function runChildSession({ task, agent: roleName, childId, signal }) {
 
   // Use in-memory session manager — no persistence for ephemeral children
   const childSessionManager = SessionManager.inMemory();
-  const childModel = session
-    ? session.model
-    : getModel("anthropic", "claude-sonnet-4-20250514");
+
+  // Model resolution: explicit override > role default > parent model > fallback
+  let childModel;
+  if (modelOverride) {
+    try {
+      // Try to resolve as "provider/model" or just "model" (default anthropic)
+      const parts = modelOverride.split("/");
+      const provider = parts.length > 1 ? parts[0] : "anthropic";
+      const modelId = parts.length > 1 ? parts.slice(1).join("/") : modelOverride;
+      childModel = getModel(provider, modelId);
+    } catch {
+      log(`subagent[${cid}]: model override "${modelOverride}" failed, using parent model`);
+      childModel = session ? session.model : getModel("anthropic", "claude-sonnet-4-20250514");
+    }
+  } else {
+    childModel = session
+      ? session.model
+      : getModel("anthropic", "claude-sonnet-4-20250514");
+  }
 
   const { session: childSession } = await createAgentSession({
     cwd: currentCwd,
@@ -473,23 +540,89 @@ async function runChildSession({ task, agent: roleName, childId, signal }) {
     childSession.agent.beforeToolCall = async () => undefined;
   }
 
-  // Forward child progress events to frontend
+  /**
+   * Extract a short summary from tool args for the transcript and progress events.
+   * Returns a human-readable string like "src/foo.ts" or "grep 'pattern' in src/".
+   */
+  function summarizeToolArgs(toolName, args) {
+    if (!args) return "";
+    const a = typeof args === "object" ? args : {};
+    switch (toolName) {
+      case "read":
+        return a.file_path ? shortPath(a.file_path) : "";
+      case "edit":
+      case "write":
+        return a.file_path ? shortPath(a.file_path) : "";
+      case "grep":
+      case "code_search":
+        return [a.pattern, a.path ? `in ${shortPath(a.path)}` : ""].filter(Boolean).join(" ");
+      case "glob":
+        return [a.pattern, a.path ? `in ${shortPath(a.path)}` : ""].filter(Boolean).join(" ");
+      case "bash":
+        return a.command ? a.command.slice(0, 60) : "";
+      case "web_search":
+        return a.query ? a.query.slice(0, 60) : "";
+      case "fetch_content":
+        return a.url ? a.url.slice(0, 60) : "";
+      default:
+        return "";
+    }
+  }
+
+  /** Shorten an absolute path to the last 2-3 segments for display. */
+  function shortPath(p) {
+    if (!p) return "";
+    const segments = p.replace(/\\/g, "/").split("/").filter(Boolean);
+    return segments.length <= 3 ? segments.join("/") : segments.slice(-3).join("/");
+  }
+
+  /** Track file paths from tool args. */
+  function trackFiles(toolName, args) {
+    if (!args) return;
+    const a = typeof args === "object" ? args : {};
+    const filePath = a.file_path || a.path;
+    if (filePath) {
+      if (toolName === "edit" || toolName === "write") {
+        filesModified.add(shortPath(filePath));
+      } else if (toolName === "read" || toolName === "grep" || toolName === "glob" || toolName === "code_search") {
+        filesExplored.add(shortPath(filePath));
+      }
+    }
+  }
+
+  // Forward child progress events to frontend with richer data
   const unsub = childSession.subscribe((event) => {
     if (event.type === "tool_execution_start") {
+      toolCount++;
+      const args = event.args || event.input;
+      const summary = summarizeToolArgs(event.toolName, args);
+      trackFiles(event.toolName, args);
+
+      transcript.push({ tool: event.toolName, summary, status: "running" });
+
       emit({
         type: "subagent_progress",
         childId: cid,
         role: roleName,
         event: "tool_start",
         toolName: event.toolName,
+        toolSummary: summary,
+        toolCount,
       });
     } else if (event.type === "tool_execution_end") {
+      // Update the last transcript entry status
+      const last = transcript[transcript.length - 1];
+      if (last && last.tool === event.toolName) {
+        last.status = event.isError ? "error" : "ok";
+      }
+
       emit({
         type: "subagent_progress",
         childId: cid,
         role: roleName,
         event: "tool_end",
         toolName: event.toolName,
+        toolCount,
       });
     }
   });
@@ -503,6 +636,8 @@ async function runChildSession({ task, agent: roleName, childId, signal }) {
   try {
     await childSession.prompt(task);
 
+    const elapsed = Date.now() - startTime;
+
     // Extract final assistant text
     const messages = childSession.agent.state.messages;
     const lastAssistant = [...messages]
@@ -515,22 +650,53 @@ async function runChildSession({ task, agent: roleName, childId, signal }) {
       }
     }
 
-    log(`subagent[${cid}]: completed (${resultText.length} chars)`);
+    // For worker/tester roles, append a structured diff summary extracted from
+    // actual tool calls (not relying on the agent's prose)
+    if (!role.readOnly && filesModified.size > 0) {
+      const diffSummary = `\n\n## Files modified (verified)\n${[...filesModified].map((f) => `- ${f}`).join("\n")}`;
+      resultText += diffSummary;
+    }
+
+    log(`subagent[${cid}]: completed in ${elapsed}ms, ${toolCount} tools, ${resultText.length} chars`);
+
+    // Emit transcript for frontend display (not in parent context)
+    emit({
+      type: "subagent_progress",
+      childId: cid,
+      role: roleName,
+      event: "transcript",
+      transcript: transcript.map((t) => ({
+        tool: t.tool,
+        summary: t.summary,
+        status: t.status,
+      })),
+    });
+
+    // Emit done with stats
     emit({
       type: "subagent_progress",
       childId: cid,
       role: roleName,
       event: "done",
+      stats: {
+        toolCount,
+        elapsed,
+        filesExplored: [...filesExplored],
+        filesModified: [...filesModified],
+      },
     });
+
     return resultText || "(No output from subagent)";
   } catch (err) {
-    log(`subagent[${cid}]: error: ${err.message}`);
+    const elapsed = Date.now() - startTime;
+    log(`subagent[${cid}]: error after ${elapsed}ms: ${err.message}`);
     emit({
       type: "subagent_progress",
       childId: cid,
       role: roleName,
       event: "error",
       error: err.message,
+      stats: { toolCount, elapsed, filesExplored: [...filesExplored], filesModified: [...filesModified] },
     });
     return `Subagent error: ${err.message}`;
   } finally {
@@ -551,25 +717,27 @@ function buildSubagentToolDefinition() {
     description:
       "Delegate a task to a child agent that runs independently and returns its result. " +
       "Use to keep parent context small when a task would require multiple exploratory tool calls, " +
-      "or for parallel work, focused research, code review, and isolated implementation. " +
+      "or for parallel work, focused research, code review, testing, and isolated implementation. " +
       "Single task: { agent, task }. Parallel: { tasks: [{ agent, task }, ...] }.",
     promptSnippet: "Spawn child agents for parallel or focused work",
     promptGuidelines: [
       "Context rule: if you expect 3+ exploratory tool calls before acting, delegate that exploration " +
         "to a scout/researcher and continue from its concise report.",
       "Use subagent for tasks that benefit from isolation: parallel implementation, " +
-        "focused research, or review. Each child runs with its own context window.",
+        "focused research, testing, or review. Each child runs with its own context window.",
       "Available roles: scout (fast read-only recon), researcher (thorough analysis), " +
-        "planner (implementation planning), worker (full implementation), reviewer (code review).",
+        "planner (implementation planning), worker (full implementation), reviewer (code review), " +
+        "tester (run tests and report results).",
       "Prefer a single subagent call with a tasks array over sequential calls for parallelizable work.",
       "Ask children to return concise findings with file paths/line numbers and no long pasted outputs.",
       "The child agent's final response text is returned as the tool result.",
+      "Use the model parameter to override the child's model — e.g. use a cheaper/faster model for scouts.",
     ],
     parameters: Type.Object({
       agent: Type.Optional(
         Type.String({
           description:
-            "Agent role: scout, researcher, planner, worker, reviewer. Default: worker",
+            "Agent role: scout, researcher, planner, worker, reviewer, tester. Default: worker",
         }),
       ),
       task: Type.Optional(
@@ -582,9 +750,18 @@ function buildSubagentToolDefinition() {
               Type.String({ description: "Agent role" }),
             ),
             task: Type.String({ description: "Task description" }),
+            model: Type.Optional(
+              Type.String({ description: "Model override for this task (e.g. 'claude-sonnet-4-20250514')" }),
+            ),
           }),
           { description: "Array of tasks for parallel execution" },
         ),
+      ),
+      model: Type.Optional(
+        Type.String({
+          description:
+            "Model override for the child agent (e.g. 'claude-sonnet-4-20250514'). Defaults to parent model.",
+        }),
       ),
     }),
     executionMode: "sequential",
@@ -594,7 +771,7 @@ function buildSubagentToolDefinition() {
       if (params.tasks && params.tasks.length > 0) {
         taskList = params.tasks;
       } else if (params.task) {
-        taskList = [{ agent: params.agent || "worker", task: params.task }];
+        taskList = [{ agent: params.agent || "worker", task: params.task, model: params.model }];
       } else {
         return {
           content: [
@@ -612,6 +789,7 @@ function buildSubagentToolDefinition() {
           const result = await runChildSession({
             task: t.task,
             agent: t.agent || "worker",
+            model: t.model || params.model,
             signal,
           });
           return {
@@ -626,6 +804,7 @@ function buildSubagentToolDefinition() {
             runChildSession({
               task: t.task,
               agent: t.agent || "worker",
+              model: t.model || params.model,
               childId: `child-${++childIdCounter}`,
               signal,
             }),
@@ -837,6 +1016,10 @@ let mcpConnections = [];
 let currentMcpToolDefinitions = [];
 let currentMcpStatuses = [];
 let currentMcpReadOnlyToolNames = new Set();
+/** Map of server name → live McpClient, used for dynamic reconnect on token refresh. */
+let mcpClientMap = new Map();
+/** Map of server name → original server config entry (with headers etc.). */
+let currentMcpServerEntries = {};
 
 function sanitizeMcpName(name) {
   const sanitized = String(name || "mcp")
@@ -943,6 +1126,8 @@ async function closeMcpConnections() {
   currentMcpToolDefinitions = [];
   currentMcpStatuses = [];
   currentMcpReadOnlyToolNames = new Set();
+  mcpClientMap.clear();
+  currentMcpServerEntries = {};
   await Promise.allSettled(
     connections.map(async ({ client, name }) => {
       try {
@@ -983,6 +1168,8 @@ async function loadMcpToolDefinitions(mcpServers) {
       const serverTools = listed.tools || [];
       statuses.push({ name: serverName, status: "connected" });
       mcpConnections.push({ name: serverName, client });
+      mcpClientMap.set(serverName, client);
+      currentMcpServerEntries[serverName] = entry;
       log(`mcp: connected ${serverName} (${serverTools.length} tools)`);
 
       for (const tool of serverTools) {
@@ -1003,8 +1190,10 @@ async function loadMcpToolDefinitions(mcpServers) {
             parameters: Type.Unsafe(tool.inputSchema || { type: "object", properties: {} }),
             executionMode: "parallel",
             execute: async (_toolCallId, params, signal) => {
+              const currentClient = mcpClientMap.get(serverName);
+              if (!currentClient) throw new Error(`MCP server '${serverName}' is not connected`);
               if (signal?.aborted) throw new Error("MCP tool call cancelled");
-              const result = await client.callTool(
+              const result = await currentClient.callTool(
                 { name: tool.name, arguments: params || {} },
                 CallToolResultSchema,
                 { timeout: 120_000, resetTimeoutOnProgress: true, signal },
@@ -1933,7 +2122,7 @@ async function startSession(msg) {
     tools: activeToolNames,
     model: `${provider}/${modelId}`,
     permissionMode: currentPermissionMode,
-    mcpServers: currentMcpStatuses,
+    mcpServers: [{ name: "coppice", status: "connected" }, ...currentMcpStatuses],
     slashCommands: ["compact", "model", "session"],
     isResume: !!opts.resume,
   });
@@ -2148,6 +2337,39 @@ async function handleCommand(msg) {
           result: msg.result || "",
           isError: msg.isError || false,
         });
+      }
+      break;
+    }
+
+    case "update_mcp_headers": {
+      const updates = msg.servers || {};
+      for (const [name, update] of Object.entries(updates)) {
+        if (!currentMcpServerEntries[name]) continue;
+        // Update stored entry headers
+        currentMcpServerEntries[name].headers = {
+          ...(currentMcpServerEntries[name].headers || {}),
+          ...update.headers,
+        };
+        // Reconnect this server with updated headers
+        const oldClient = mcpClientMap.get(name);
+        if (oldClient) {
+          try { await oldClient.close(); } catch {}
+          mcpConnections = mcpConnections.filter((c) => c.name !== name);
+        }
+        try {
+          const newClient = new McpClient(
+            { name: "coppice-pi-agent", version: "0.1.0" },
+            { capabilities: {} },
+          );
+          const transport = buildMcpTransport(name, currentMcpServerEntries[name]);
+          await newClient.connect(transport, { timeout: 30_000 });
+          mcpClientMap.set(name, newClient);
+          mcpConnections.push({ client: newClient, name });
+          log(`mcp: reconnected ${name} with refreshed token`);
+        } catch (err) {
+          log(`mcp: reconnect failed for ${name}: ${err.message}`);
+          mcpClientMap.delete(name);
+        }
       }
       break;
     }

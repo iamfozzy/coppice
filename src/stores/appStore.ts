@@ -224,11 +224,23 @@ export interface RunnerInfo {
   cwd: string;
 }
 
+export interface SubagentTranscriptEntry {
+  tool: string;
+  summary: string;
+  status: "ok" | "error" | "running";
+}
+
 export interface SubagentChild {
   id: string;
   role: string;
   task: string;
   lastTool: string;
+  lastToolSummary: string;
+  toolCount: number;
+  elapsed: number;
+  filesExplored: string[];
+  filesModified: string[];
+  transcript: SubagentTranscriptEntry[];
   status: "running" | "done" | "error";
   error?: string;
 }
