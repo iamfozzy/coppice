@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAppStore, type SubagentChild } from "../../stores/appStore";
+import { useAppStore, type SubagentChild, type SubagentTranscriptEntry } from "../../stores/appStore";
 import { MarkdownContent } from "./MarkdownContent";
 
 /** Stable reference so the Zustand selector doesn't trigger infinite re-renders. */
@@ -198,45 +198,125 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
 // ── Subagent child row ──
 
 function SubagentChildRow({ child }: { child: SubagentChild }) {
+  const [showTranscript, setShowTranscript] = useState(false);
   const role = child.role.charAt(0).toUpperCase() + child.role.slice(1);
   const taskPreview = child.task ? truncate(child.task, 80) : "";
+  const hasTranscript = child.transcript.length > 0;
+
+  /** Format elapsed ms as a compact string like "1.2s" or "45s". */
+  const formatElapsed = (ms: number) => {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+    return `${Math.round(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`;
+  };
 
   return (
-    <div className="flex items-center gap-2 px-1.5 py-0.5 rounded font-mono text-[length:var(--app-font-11)]">
-      {child.status === "done" ? (
-        <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
-      ) : child.status === "error" ? (
-        <span className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
-      ) : (
-        <span className="relative flex h-1.5 w-1.5 shrink-0">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-60" />
-          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
+    <div>
+      <button
+        type="button"
+        className={`flex items-center gap-2 px-1.5 py-0.5 rounded font-mono text-[length:var(--app-font-11)] w-full text-left ${
+          hasTranscript ? "hover:bg-bg-hover/40 cursor-pointer" : "cursor-default"
+        }`}
+        onClick={hasTranscript ? () => setShowTranscript((v) => !v) : undefined}
+      >
+        {child.status === "done" ? (
+          <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
+        ) : child.status === "error" ? (
+          <span className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
+        ) : (
+          <span className="relative flex h-1.5 w-1.5 shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-60" />
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
+          </span>
+        )}
+
+        <span className={
+          child.status === "done" ? "text-text-tertiary" :
+          child.status === "error" ? "text-error/80" :
+          "text-text-secondary font-medium"
+        }>
+          {role}
         </span>
-      )}
 
-      <span className={
-        child.status === "done" ? "text-text-tertiary" :
-        child.status === "error" ? "text-error/80" :
-        "text-text-secondary font-medium"
-      }>
-        {role}
-      </span>
+        {/* Running: show current tool + summary */}
+        {child.status === "running" && child.lastTool && (
+          <span className="text-text-tertiary truncate min-w-0">
+            {child.lastTool}
+            {child.lastToolSummary ? ` ${child.lastToolSummary}` : ""}
+          </span>
+        )}
 
-      {child.status === "running" && child.lastTool && (
-        <span className="text-text-tertiary">{child.lastTool}</span>
-      )}
+        {/* Running: no tool yet, show task preview */}
+        {child.status === "running" && !child.lastTool && taskPreview && (
+          <span className="text-text-tertiary truncate min-w-0">{taskPreview}</span>
+        )}
 
-      {child.status === "done" && (
-        <span className="text-success/70">done</span>
-      )}
+        {/* Running: show tool count */}
+        {child.status === "running" && child.toolCount > 0 && (
+          <span className="text-text-quaternary shrink-0 ml-auto">{child.toolCount} tools</span>
+        )}
 
-      {child.status === "error" && (
-        <span className="text-error/70 truncate">{child.error}</span>
-      )}
+        {/* Done: show stats */}
+        {child.status === "done" && (
+          <>
+            <span className="text-text-quaternary shrink-0">
+              {child.toolCount > 0 && `${child.toolCount} tools`}
+              {child.toolCount > 0 && child.elapsed > 0 && " · "}
+              {child.elapsed > 0 && formatElapsed(child.elapsed)}
+            </span>
+            {(child.filesExplored.length > 0 || child.filesModified.length > 0) && (
+              <span className="text-text-quaternary shrink-0">
+                {child.filesExplored.length > 0 && `${child.filesExplored.length} explored`}
+                {child.filesExplored.length > 0 && child.filesModified.length > 0 && ", "}
+                {child.filesModified.length > 0 && `${child.filesModified.length} modified`}
+              </span>
+            )}
+          </>
+        )}
 
-      {child.status === "running" && !child.lastTool && taskPreview && (
-        <span className="text-text-tertiary truncate">{taskPreview}</span>
+        {/* Error: show error message */}
+        {child.status === "error" && (
+          <span className="text-error/70 truncate min-w-0">{child.error}</span>
+        )}
+
+        {/* Transcript expand indicator */}
+        {hasTranscript && (
+          <svg
+            width="9" height="9" viewBox="0 0 10 10" fill="none"
+            className={`ml-auto shrink-0 text-text-tertiary/70 transition-transform ${showTranscript ? "rotate-90" : ""}`}
+          >
+            <path d="M3 1l4 4-4 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
+
+      {/* Expandable transcript */}
+      {showTranscript && hasTranscript && (
+        <SubagentTranscriptView entries={child.transcript} />
       )}
+    </div>
+  );
+}
+
+/** Condensed transcript of tool calls made by a subagent child. */
+function SubagentTranscriptView({ entries }: { entries: SubagentTranscriptEntry[] }) {
+  return (
+    <div className="ml-5 mt-0.5 mb-1 border-l border-border/40 pl-2 space-y-px">
+      {entries.map((entry, i) => (
+        <div key={i} className="flex items-center gap-1.5 font-mono text-[length:var(--app-font-10)] text-text-quaternary">
+          {entry.status === "ok" ? (
+            <span className="w-1 h-1 rounded-full bg-success/60 shrink-0" />
+          ) : entry.status === "error" ? (
+            <span className="w-1 h-1 rounded-full bg-error/60 shrink-0" />
+          ) : (
+            <span className="w-1 h-1 rounded-full bg-accent/60 shrink-0" />
+          )}
+          <span className="text-text-tertiary">{entry.tool}</span>
+          {entry.summary && (
+            <span className="truncate min-w-0">{entry.summary}</span>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
