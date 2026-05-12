@@ -837,6 +837,10 @@ let mcpConnections = [];
 let currentMcpToolDefinitions = [];
 let currentMcpStatuses = [];
 let currentMcpReadOnlyToolNames = new Set();
+/** Map of server name → live McpClient, used for dynamic reconnect on token refresh. */
+let mcpClientMap = new Map();
+/** Map of server name → original server config entry (with headers etc.). */
+let currentMcpServerEntries = {};
 
 function sanitizeMcpName(name) {
   const sanitized = String(name || "mcp")
@@ -943,6 +947,8 @@ async function closeMcpConnections() {
   currentMcpToolDefinitions = [];
   currentMcpStatuses = [];
   currentMcpReadOnlyToolNames = new Set();
+  mcpClientMap.clear();
+  currentMcpServerEntries = {};
   await Promise.allSettled(
     connections.map(async ({ client, name }) => {
       try {
@@ -983,6 +989,8 @@ async function loadMcpToolDefinitions(mcpServers) {
       const serverTools = listed.tools || [];
       statuses.push({ name: serverName, status: "connected" });
       mcpConnections.push({ name: serverName, client });
+      mcpClientMap.set(serverName, client);
+      currentMcpServerEntries[serverName] = entry;
       log(`mcp: connected ${serverName} (${serverTools.length} tools)`);
 
       for (const tool of serverTools) {
@@ -1003,8 +1011,10 @@ async function loadMcpToolDefinitions(mcpServers) {
             parameters: Type.Unsafe(tool.inputSchema || { type: "object", properties: {} }),
             executionMode: "parallel",
             execute: async (_toolCallId, params, signal) => {
+              const currentClient = mcpClientMap.get(serverName);
+              if (!currentClient) throw new Error(`MCP server '${serverName}' is not connected`);
               if (signal?.aborted) throw new Error("MCP tool call cancelled");
-              const result = await client.callTool(
+              const result = await currentClient.callTool(
                 { name: tool.name, arguments: params || {} },
                 CallToolResultSchema,
                 { timeout: 120_000, resetTimeoutOnProgress: true, signal },
@@ -1933,7 +1943,7 @@ async function startSession(msg) {
     tools: activeToolNames,
     model: `${provider}/${modelId}`,
     permissionMode: currentPermissionMode,
-    mcpServers: currentMcpStatuses,
+    mcpServers: [{ name: "coppice", status: "connected" }, ...currentMcpStatuses],
     slashCommands: ["compact", "model", "session"],
     isResume: !!opts.resume,
   });
@@ -2148,6 +2158,39 @@ async function handleCommand(msg) {
           result: msg.result || "",
           isError: msg.isError || false,
         });
+      }
+      break;
+    }
+
+    case "update_mcp_headers": {
+      const updates = msg.servers || {};
+      for (const [name, update] of Object.entries(updates)) {
+        if (!currentMcpServerEntries[name]) continue;
+        // Update stored entry headers
+        currentMcpServerEntries[name].headers = {
+          ...(currentMcpServerEntries[name].headers || {}),
+          ...update.headers,
+        };
+        // Reconnect this server with updated headers
+        const oldClient = mcpClientMap.get(name);
+        if (oldClient) {
+          try { await oldClient.close(); } catch {}
+          mcpConnections = mcpConnections.filter((c) => c.name !== name);
+        }
+        try {
+          const newClient = new McpClient(
+            { name: "coppice-pi-agent", version: "0.1.0" },
+            { capabilities: {} },
+          );
+          const transport = buildMcpTransport(name, currentMcpServerEntries[name]);
+          await newClient.connect(transport, { timeout: 30_000 });
+          mcpClientMap.set(name, newClient);
+          mcpConnections.push({ client: newClient, name });
+          log(`mcp: reconnected ${name} with refreshed token`);
+        } catch (err) {
+          log(`mcp: reconnect failed for ${name}: ${err.message}`);
+          mcpClientMap.delete(name);
+        }
       }
       break;
     }

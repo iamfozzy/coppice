@@ -408,6 +408,22 @@ export async function piOAuthCheck(): Promise<Record<string, boolean>> {
   return invoke("pi_oauth_check");
 }
 
+/** Start Claude Code OAuth login flow. Opens browser for auth. */
+export async function claudeAuthLogin(): Promise<void> {
+  return invoke("claude_auth_login");
+}
+
+/** Check Claude Code CLI authentication status. */
+export async function claudeAuthStatus(): Promise<{
+  loggedIn: boolean;
+  authMethod?: string;
+  email?: string;
+  orgName?: string;
+  subscriptionType?: string;
+}> {
+  return invoke("claude_auth_status");
+}
+
 /** Query the Pi SDK's built-in model registry. No running session required. */
 export async function piGetModels(): Promise<
   Array<{

@@ -294,6 +294,29 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Send a JSON line to ALL running bridge processes.
+    /// Used by the token refresh scheduler to push updated MCP headers.
+    /// Errors on individual sessions are logged but don't fail the broadcast.
+    pub fn broadcast(&self, json_line: &str) {
+        let sessions = self.sessions.lock().unwrap();
+        if sessions.is_empty() {
+            return;
+        }
+        let line = format!("{}\n", json_line);
+        for (session_id, session) in sessions.iter() {
+            if let Ok(mut stdin) = session.stdin.lock() {
+                if let Err(e) = stdin.write_all(line.as_bytes()) {
+                    eprintln!(
+                        "[agent-mgr] broadcast to {}: write error: {}",
+                        session_id, e
+                    );
+                    continue;
+                }
+                let _ = stdin.flush();
+            }
+        }
+    }
+
     /// Close all sessions — called on app exit.
     pub fn close_all(&self) {
         let mut sessions = self.sessions.lock().unwrap();

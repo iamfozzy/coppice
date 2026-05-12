@@ -9,6 +9,8 @@ import {
   piGetModels,
   piOAuthLogin,
   piOAuthCheck,
+  claudeAuthLogin,
+  claudeAuthStatus,
   mcpGetCatalog,
   mcpInstallCatalogEntry,
   mcpOauthStart,
@@ -258,6 +260,12 @@ export function AppSettingsModal() {
           {/* Claude Agent settings */}
           {form.default_claude_mode === "agent" && (form.agent_backend || "claude") === "claude" && (
             <div className="space-y-4 rounded-lg border border-accent/20 bg-accent/[0.03] p-4">
+              <ClaudeAuthSection />
+              <div className="flex items-center gap-2">
+                <div className="flex-1 border-t border-border-primary" />
+                <span className="text-[length:var(--app-font-10)] text-text-tertiary">or use an API key</span>
+                <div className="flex-1 border-t border-border-primary" />
+              </div>
               <Field
                 label="Anthropic API key"
                 value={form.agent_api_key}
@@ -434,6 +442,111 @@ const PI_KNOWN_PROVIDERS = [
   "groq", "cerebras", "xai", "openrouter", "fireworks",
   "amazon-bedrock", "google-vertex", "github-copilot", "azure-openai-responses",
 ];
+
+// ── Claude Code auth section ──
+
+function ClaudeAuthSection() {
+  const [status, setStatus] = useState<"idle" | "checking" | "pending" | "success" | "error">("checking");
+  const [message, setMessage] = useState("");
+
+  // Check auth status on mount
+  useEffect(() => {
+    claudeAuthStatus()
+      .then((info) => {
+        if (info.loggedIn) {
+          setStatus("success");
+          setMessage(
+            info.email
+              ? `Signed in as ${info.email}${info.orgName ? ` (${info.orgName})` : ""}`
+              : "Signed in to Claude"
+          );
+        } else {
+          setStatus("idle");
+          setMessage("");
+        }
+      })
+      .catch(() => {
+        // claude CLI not available — hide the section silently
+        setStatus("idle");
+        setMessage("");
+      });
+  }, []);
+
+  const handleLogin = async () => {
+    setStatus("pending");
+    setMessage("Opening browser for authentication...");
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      const unlisten = await listen<string>("claude-auth-event", (event) => {
+        try {
+          const msg = JSON.parse(event.payload);
+          if (msg.type === "success") {
+            setStatus("success");
+            setMessage("Signed in to Claude");
+            // Re-check to get account details
+            claudeAuthStatus().then((info) => {
+              if (info.loggedIn) {
+                setMessage(
+                  info.email
+                    ? `Signed in as ${info.email}${info.orgName ? ` (${info.orgName})` : ""}`
+                    : "Signed in to Claude"
+                );
+              }
+            }).catch(() => {});
+            unlisten();
+          } else if (msg.type === "error") {
+            setStatus("error");
+            setMessage(msg.message || "Login failed");
+            unlisten();
+          } else if (msg.type === "progress") {
+            setMessage(msg.message || "Waiting for authorization...");
+          }
+        } catch {}
+      });
+      await claudeAuthLogin();
+    } catch (err) {
+      setStatus("error");
+      setMessage(String(err));
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleLogin}
+          disabled={status === "pending"}
+          className={`px-3 py-1.5 text-[length:var(--app-font-11)] font-medium rounded transition-colors ${
+            status === "success"
+              ? "bg-green-500/15 text-green-400 border border-green-500/30"
+              : status === "pending"
+                ? "bg-purple-500/10 text-purple-400 border border-purple-500/30 animate-pulse"
+                : "bg-purple-500/10 text-purple-400 border border-purple-500/30 hover:bg-purple-500/20"
+          }`}
+        >
+          {status === "pending" ? "Waiting for authorization..." :
+           status === "success" ? "✓ Signed in" :
+           "Login with Claude subscription"}
+        </button>
+      </div>
+      {message && (
+        <p className={`mt-1.5 text-[length:var(--app-font-10)] ${
+          status === "error" ? "text-red-400" :
+          status === "success" ? "text-green-400/70" :
+          "text-text-tertiary"
+        }`}>
+          {message}
+        </p>
+      )}
+      {status !== "success" && status !== "pending" && (
+        <p className="mt-1 text-[length:var(--app-font-10)] text-text-tertiary">
+          Uses your Claude Pro/Max/Team subscription — no API key needed
+        </p>
+      )}
+    </div>
+  );
+}
 
 /** Providers that support OAuth login (no API key needed). */
 const OAUTH_PROVIDERS = new Set(["anthropic", "github-copilot", "openai-codex"]);

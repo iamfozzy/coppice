@@ -472,6 +472,7 @@ let activeAbort = null;
 let pendingInterrupt = false;
 let hasInitialized = false;
 let currentPermissionMode = "default";
+let currentMcpServerConfigs = {};
 let titleGenerated = false;
 let currentCwd = process.cwd();
 let heartbeatTimer = null;
@@ -500,6 +501,7 @@ let sessionTotals = {
   totalCostUsd: 0,
 };
 let sessionTotalsSeeded = false;
+let configuredMcpServerNames = new Set();
 
 // ── Stdin reader ──
 
@@ -571,6 +573,29 @@ async function handleCommand(msg) {
         });
       }
       break;
+
+    case "update_mcp_headers": {
+      const updates = msg.servers || {};
+      for (const [name, update] of Object.entries(updates)) {
+        if (currentMcpServerConfigs[name]) {
+          currentMcpServerConfigs[name].headers = {
+            ...(currentMcpServerConfigs[name].headers || {}),
+            ...update.headers,
+          };
+        }
+      }
+      // Push updated configs to the running SDK query so MCP connections
+      // reconnect with the fresh bearer token before the old one expires.
+      if (activeQuery) {
+        try {
+          await activeQuery.setMcpServers(currentMcpServerConfigs);
+          log("MCP headers refreshed for:", Object.keys(updates).join(", "));
+        } catch (err) {
+          log("Failed to refresh MCP headers:", err.message);
+        }
+      }
+      break;
+    }
 
     case "list_commands":
       await emitCommands();
@@ -837,6 +862,21 @@ async function startSession(msg) {
     };
   }
 
+  // Save remote MCP server configs for mid-session token refresh
+  currentMcpServerConfigs = {};
+  if (queryOptions.mcpServers) {
+    for (const [name, config] of Object.entries(queryOptions.mcpServers)) {
+      if (name !== "coppice") {
+        currentMcpServerConfigs[name] = config;
+      }
+    }
+  }
+
+  // Track user-configured + internal MCP server names so the init event
+  // filters out SDK-injected servers (e.g. Claude's built-in remote MCP
+  // servers like Slack, Gmail, etc.) that the user didn't configure.
+  configuredMcpServerNames = new Set(Object.keys(queryOptions.mcpServers || {}));
+
   // Permission callback — blocks until frontend responds (unless bypassed)
   queryOptions.canUseTool = async (toolName, toolInput, context) => {
     // Bypass mode — auto-allow everything without prompting
@@ -1072,7 +1112,11 @@ function processMessage(message) {
           permissionMode: message.permissionMode || "",
           // Rewrites raw "error: <stack>" statuses into friendly descriptions
           // and emits one mcp_error event per failed server.
-          mcpServers: normalizeMcpServerStatuses(message.mcp_servers || []),
+          mcpServers: normalizeMcpServerStatuses(
+            (message.mcp_servers || []).filter(
+              (s) => s && configuredMcpServerNames.has(s.name),
+            ),
+          ),
           slashCommands: [
             ...(message.slash_commands || []),
             ...(message.skills || []),

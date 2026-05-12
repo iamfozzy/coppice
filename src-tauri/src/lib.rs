@@ -93,6 +93,8 @@ pub fn run() {
             commands::agent::pi_get_models,
             commands::agent::pi_oauth_login,
             commands::agent::pi_oauth_check,
+            commands::agent::claude_auth_login,
+            commands::agent::claude_auth_status,
             commands::agent::read_image_base64,
             commands::agent::get_project_commands,
             // Agent tab cache commands
@@ -113,6 +115,14 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
+
+    // Spawn the MCP OAuth token refresh scheduler. This background thread
+    // proactively refreshes tokens approaching expiry and pushes updated
+    // headers to all running agent bridges so MCP connections don't 401.
+    let scheduler_handle = app.handle().clone();
+    std::thread::spawn(move || {
+        services::mcp_token_scheduler::run(scheduler_handle);
+    });
 
     app.run(|handle, event| {
         if let tauri::RunEvent::Exit = event {

@@ -1028,3 +1028,168 @@ pub fn get_project_commands(cwd: String) -> Result<Vec<ProjectSlashCommand>, Str
 
     Ok(commands)
 }
+
+/// Track the active Claude auth process so we can kill it before starting a new one.
+static CLAUDE_AUTH_CHILD_PID: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
+
+/// Start the Claude Code OAuth login flow. Spawns `claude auth login` as a
+/// subprocess, streaming progress via `claude-auth-event` Tauri events.
+/// The `claude` CLI opens a browser for the user to authenticate, then
+/// stores tokens in `~/.claude/`.
+#[tauri::command]
+pub fn claude_auth_login(app: AppHandle) -> Result<(), String> {
+    eprintln!("[claude-auth] starting login");
+
+    // Kill any previous auth process
+    if let Ok(mut pid_guard) = CLAUDE_AUTH_CHILD_PID.lock() {
+        if let Some(old_pid) = pid_guard.take() {
+            eprintln!(
+                "[claude-auth] killing previous auth process (pid={})",
+                old_pid
+            );
+            #[cfg(unix)]
+            {
+                let _ = std::process::Command::new("kill")
+                    .args(["-TERM", &old_pid.to_string()])
+                    .output();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &old_pid.to_string()])
+                    .output();
+            }
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &old_pid.to_string()])
+                    .output();
+            }
+        }
+    }
+
+    // Resolve the `claude` binary. Prefer PATH lookup via login shell so we
+    // pick up the user's installed version (e.g. ~/.local/bin/claude).
+    let claude_bin = crate::services::shell_env::bin("claude");
+
+    let mut cmd = crate::services::shell_env::user_command(&claude_bin);
+    cmd.args(["auth", "login", "--claudeai"]);
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to start `claude auth login`: {}", e))?;
+
+    let child_pid = child.id();
+    eprintln!("[claude-auth] process spawned (pid={})", child_pid);
+
+    if let Ok(mut pid_guard) = CLAUDE_AUTH_CHILD_PID.lock() {
+        *pid_guard = Some(child_pid);
+    }
+
+    // Emit initial status to frontend
+    let _ = app.emit(
+        "claude-auth-event",
+        serde_json::json!({ "type": "progress", "message": "Opening browser for authentication..." }).to_string(),
+    );
+
+    let stdout = child.stdout.take().ok_or("No stdout")?;
+    let stderr = child.stderr.take().ok_or("No stderr")?;
+
+    // Thread: forward stderr lines to log + frontend
+    let app_stderr = app.clone();
+    thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            eprintln!("[claude-auth] {}", line);
+            // Surface stderr as progress (claude CLI prints status there)
+            let _ = app_stderr.emit(
+                "claude-auth-event",
+                serde_json::json!({ "type": "progress", "message": line }).to_string(),
+            );
+        }
+    });
+
+    // Thread: read stdout + wait for exit
+    let app_clone = app.clone();
+    thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            eprintln!("[claude-auth] stdout: {}", line);
+            let _ = app_clone.emit(
+                "claude-auth-event",
+                serde_json::json!({ "type": "progress", "message": line }).to_string(),
+            );
+        }
+
+        // Wait for the process to exit
+        let status = child.wait();
+        if let Ok(mut pid_guard) = CLAUDE_AUTH_CHILD_PID.lock() {
+            if *pid_guard == Some(child_pid) {
+                *pid_guard = None;
+            }
+        }
+
+        match status {
+            Ok(s) if s.success() => {
+                eprintln!("[claude-auth] login succeeded");
+                let _ = app_clone.emit(
+                    "claude-auth-event",
+                    serde_json::json!({ "type": "success" }).to_string(),
+                );
+            }
+            Ok(s) => {
+                let msg = format!("Login failed (exit code {})", s.code().unwrap_or(-1));
+                eprintln!("[claude-auth] {}", msg);
+                let _ = app_clone.emit(
+                    "claude-auth-event",
+                    serde_json::json!({ "type": "error", "message": msg }).to_string(),
+                );
+            }
+            Err(e) => {
+                let msg = format!("Login process error: {}", e);
+                eprintln!("[claude-auth] {}", msg);
+                let _ = app_clone.emit(
+                    "claude-auth-event",
+                    serde_json::json!({ "type": "error", "message": msg }).to_string(),
+                );
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// Check the Claude Code CLI authentication status.
+/// Returns the JSON output of `claude auth status`.
+#[tauri::command]
+pub fn claude_auth_status() -> Result<serde_json::Value, String> {
+    let claude_bin = crate::services::shell_env::bin("claude");
+    let mut cmd = crate::services::shell_env::user_command(&claude_bin);
+    cmd.args(["auth", "status"]);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to check Claude auth status: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Try to parse as JSON (claude auth status outputs JSON)
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+        return Ok(parsed);
+    }
+
+    // Fallback: not logged in or claude not installed
+    if !output.status.success() {
+        return Ok(serde_json::json!({ "loggedIn": false }));
+    }
+
+    Ok(serde_json::json!({ "loggedIn": false, "raw": stdout.trim() }))
+}
