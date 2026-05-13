@@ -250,6 +250,7 @@ interface AppState {
   projects: Project[];
   worktreesByProject: Record<string, Worktree[]>;
   appSettings: AppSettings | null;
+  claudeAuthInfo: { loggedIn: boolean; email?: string; orgName?: string } | null;
   /** Dynamic model list populated by the Pi bridge's init event. */
   piAvailableModels: import("../lib/supportedModels").SupportedModel[];
   scratchpadProject: Project | null;
@@ -292,6 +293,7 @@ interface AppState {
   // Actions — settings
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
+  refreshClaudeAuth: () => void;
   ensurePiModelsLoaded: () => Promise<void>;
   setDefaultAgentBackend: (backend: AgentBackend) => Promise<void>;
 
@@ -407,6 +409,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   worktreesByProject: {},
   appSettings: null,
+  claudeAuthInfo: null,
   piAvailableModels: [],
   scratchpadProject: null,
   scratchpadWorktree: null,
@@ -439,6 +442,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (settings.agent_backend === "pi") {
       get().ensurePiModelsLoaded().catch(() => {});
     }
+    get().refreshClaudeAuth();
   },
 
   saveSettings: async (settings) => {
@@ -447,6 +451,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (settings.agent_backend === "pi") {
       await get().ensurePiModelsLoaded();
     }
+  },
+
+  refreshClaudeAuth: () => {
+    commands.claudeAuthStatus()
+      .then((info) => {
+        if (info.loggedIn) {
+          set({ claudeAuthInfo: { loggedIn: true, email: info.email, orgName: info.orgName } });
+        } else {
+          set({ claudeAuthInfo: { loggedIn: false } });
+        }
+      })
+      .catch(() => {
+        set({ claudeAuthInfo: { loggedIn: false } });
+      });
   },
 
   ensurePiModelsLoaded: async () => {
