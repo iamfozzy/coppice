@@ -10,7 +10,6 @@ import {
   piOAuthLogin,
   piOAuthCheck,
   claudeAuthLogin,
-  claudeAuthStatus,
   mcpGetCatalog,
   mcpInstallCatalogEntry,
   mcpOauthStart,
@@ -446,31 +445,37 @@ const PI_KNOWN_PROVIDERS = [
 // ── Claude Code auth section ──
 
 function ClaudeAuthSection() {
-  const [status, setStatus] = useState<"idle" | "checking" | "pending" | "success" | "error">("checking");
-  const [message, setMessage] = useState("");
+  const cachedAuth = useAppStore((s) => s.claudeAuthInfo);
+  const refreshClaudeAuth = useAppStore((s) => s.refreshClaudeAuth);
+  const [status, setStatus] = useState<"idle" | "pending" | "success" | "error">(
+    cachedAuth?.loggedIn ? "success" : "idle"
+  );
+  const [message, setMessage] = useState(() => {
+    if (!cachedAuth?.loggedIn) return "";
+    return cachedAuth.email
+      ? `Signed in as ${cachedAuth.email}${cachedAuth.orgName ? ` (${cachedAuth.orgName})` : ""}`
+      : "Signed in to Claude";
+  });
 
-  // Check auth status on mount
+  // Background refresh on mount — cached value shows instantly, CLI updates if stale
   useEffect(() => {
-    claudeAuthStatus()
-      .then((info) => {
-        if (info.loggedIn) {
-          setStatus("success");
-          setMessage(
-            info.email
-              ? `Signed in as ${info.email}${info.orgName ? ` (${info.orgName})` : ""}`
-              : "Signed in to Claude"
-          );
-        } else {
-          setStatus("idle");
-          setMessage("");
-        }
-      })
-      .catch(() => {
-        // claude CLI not available — hide the section silently
-        setStatus("idle");
-        setMessage("");
-      });
+    refreshClaudeAuth();
   }, []);
+
+  useEffect(() => {
+    if (!cachedAuth) return;
+    if (cachedAuth.loggedIn) {
+      setStatus("success");
+      setMessage(
+        cachedAuth.email
+          ? `Signed in as ${cachedAuth.email}${cachedAuth.orgName ? ` (${cachedAuth.orgName})` : ""}`
+          : "Signed in to Claude"
+      );
+    } else if (status !== "pending" && status !== "error") {
+      setStatus("idle");
+      setMessage("");
+    }
+  }, [cachedAuth]);
 
   const handleLogin = async () => {
     setStatus("pending");
@@ -483,16 +488,7 @@ function ClaudeAuthSection() {
           if (msg.type === "success") {
             setStatus("success");
             setMessage("Signed in to Claude");
-            // Re-check to get account details
-            claudeAuthStatus().then((info) => {
-              if (info.loggedIn) {
-                setMessage(
-                  info.email
-                    ? `Signed in as ${info.email}${info.orgName ? ` (${info.orgName})` : ""}`
-                    : "Signed in to Claude"
-                );
-              }
-            }).catch(() => {});
+            refreshClaudeAuth();
             unlisten();
           } else if (msg.type === "error") {
             setStatus("error");
