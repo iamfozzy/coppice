@@ -157,6 +157,8 @@ export interface AgentMessage {
   thinkingText?: string;
   /** MCP server status for system "session started" messages */
   mcpServers?: McpServerStatus[];
+  /** When set, the error originated from this MCP server (used for OAuth re-connect). */
+  mcpServerName?: string;
   timestamp: number;
 }
 

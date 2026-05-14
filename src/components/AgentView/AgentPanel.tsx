@@ -626,6 +626,7 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           id: nextMsgId(),
           type: "error",
           content: message,
+          mcpServerName: (msg.serverName as string) || undefined,
           timestamp: Date.now(),
         });
         break;
