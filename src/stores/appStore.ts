@@ -41,13 +41,11 @@ function findTabLocation(state: Pick<AppState, "tabsByWorktree" | "worktreesByPr
   return null;
 }
 
-/** Fast check: find the worktree that owns the tab (skips the project lookup). */
-function findWorktreeForTab(tabsByWorktree: Record<string, TabInfo[]>, tabId: string): string | null {
-  for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
-    if (tabs.some((t) => t.id === tabId)) return wtId;
-  }
-  return null;
-}
+// Hot-path tab→worktree lookups go through the `tabWorktreeIndex` field on
+// the store (maintained in every tab-mutating action). The previous
+// `findWorktreeForTab` helper that scanned `tabsByWorktree` is gone — that
+// scan ran inside `setClaudeStatus` / `setAgentStatus` and was hit on every
+// streaming token.
 
 function clearIdleClaudeStatus(
   claudeStatusByTab: Record<string, ClaudeStatus>,
@@ -78,13 +76,20 @@ function messagesWithStreamingSnapshot(tabId: string, session: AgentSessionState
 }
 
 /** Persist in-flight streaming text periodically so a renderer hang/restart does
- * not lose the partial assistant response that was already visible. */
+ * not lose the partial assistant response that was already visible.
+ *
+ * The 2s throttle gates how often we even *schedule* a save; the underlying
+ * `persistAgentTabDebounced` then defers the actual full-history
+ * `JSON.stringify` + IPC by 500ms (debounced — so a burst of message-appends
+ * coalesces with the streaming snapshot into a single save). Using the
+ * debounced path keeps the megabyte-sized stringify off the main thread on
+ * every fire — previously this ran synchronously every 2s during streaming. */
 function persistAgentStreamingSnapshot(tabId: string) {
   const now = Date.now();
   const last = _streamPersistLast.get(tabId) ?? 0;
   if (now - last < 2000) return;
   _streamPersistLast.set(tabId, now);
-  persistAgentTabDebounced(tabId, true);
+  persistAgentTabDebounced(tabId);
 }
 
 /** Debounced save of a single agent tab's state to the DB cache. */
@@ -272,6 +277,12 @@ interface AppState {
   activeTabByWorktree: Record<string, string | null>;
   runnersByWorktree: Record<string, Record<string, RunnerInfo>>;
 
+  // O(1) lookup: tab ID → owning worktree ID. Kept in sync with `tabsByWorktree`
+  // by every action that adds or removes a tab. Used by hot-path callers
+  // (setClaudeStatus, setAgentStatus) so per-token status updates don't pay
+  // the O(W·T) scan over `tabsByWorktree`.
+  tabWorktreeIndex: Record<string, string>;
+
   // Claude tab activity status (keyed by tab ID — covers both claude and agent tabs)
   claudeStatusByTab: Record<string, ClaudeStatus>;
 
@@ -424,6 +435,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   deletingWorktreeIds: new Set(),
   tabsByWorktree: {},
   activeTabByWorktree: {},
+  tabWorktreeIndex: {},
   runnersByWorktree: {},
   claudeStatusByTab: {},
   agentSessionByTab: {},
@@ -685,7 +697,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // "Visible" means the tab is the active tab of the selected worktree;
     // "focused" means the whole window is in the foreground. Both must be
     // true for us to consider the user present.
-    const owningWt = findWorktreeForTab(s.tabsByWorktree, tabId);
+    const owningWt = s.tabWorktreeIndex[tabId] ?? null;
     const isVisible = owningWt !== null
       && s.selectedWorktreeId === owningWt
       && s.activeTabByWorktree[owningWt] === tabId;
@@ -841,20 +853,25 @@ export const useAppStore = create<AppState>((set, get) => ({
         return;
       }
 
-      set((s) => ({
-        tabsByWorktree: {
-          ...s.tabsByWorktree,
-          [worktreeId]: restoredTabs,
-        },
-        activeTabByWorktree: {
-          ...s.activeTabByWorktree,
-          [worktreeId]: restoredTabs[restoredTabs.length - 1]?.id ?? null,
-        },
-        agentSessionByTab: {
-          ...s.agentSessionByTab,
-          ...restoredSessions,
-        },
-      }));
+      set((s) => {
+        const nextIndex = { ...s.tabWorktreeIndex };
+        for (const tab of restoredTabs) nextIndex[tab.id] = worktreeId;
+        return {
+          tabsByWorktree: {
+            ...s.tabsByWorktree,
+            [worktreeId]: restoredTabs,
+          },
+          activeTabByWorktree: {
+            ...s.activeTabByWorktree,
+            [worktreeId]: restoredTabs[restoredTabs.length - 1]?.id ?? null,
+          },
+          tabWorktreeIndex: nextIndex,
+          agentSessionByTab: {
+            ...s.agentSessionByTab,
+            ...restoredSessions,
+          },
+        };
+      });
     } catch (err) {
       console.error("Failed to restore agent tabs:", err);
     }
@@ -887,6 +904,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...s.activeTabByWorktree,
         [worktreeId]: tab.id,
       },
+      tabWorktreeIndex: { ...s.tabWorktreeIndex, [tab.id]: worktreeId },
     }));
   },
 
@@ -921,6 +939,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...s.activeTabByWorktree,
         [worktreeId]: tab.id,
       },
+      tabWorktreeIndex: { ...s.tabWorktreeIndex, [tab.id]: worktreeId },
     }));
   },
 
@@ -940,9 +959,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const agentSession = tabId in s.agentSessionByTab
       ? (() => { const { [tabId]: _, ...rest } = s.agentSessionByTab; return rest; })()
       : s.agentSessionByTab;
+    const tabIndex = tabId in s.tabWorktreeIndex
+      ? (() => { const { [tabId]: _, ...rest } = s.tabWorktreeIndex; return rest; })()
+      : s.tabWorktreeIndex;
     set({
       tabsByWorktree: { ...s.tabsByWorktree, [worktreeId]: next },
       activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: newActive },
+      tabWorktreeIndex: tabIndex,
       claudeStatusByTab: claudeStatus,
       agentSessionByTab: agentSession,
     });
@@ -1068,6 +1091,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...state.activeTabByWorktree,
         [worktreeId]: tab.id,
       },
+      tabWorktreeIndex: { ...state.tabWorktreeIndex, [tab.id]: worktreeId },
       agentSessionByTab: {
         ...state.agentSessionByTab,
         [tab.id]: sessionState,
@@ -1206,7 +1230,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // so the user notices even if the window is in the background.
     if (status === "waiting_permission") {
       const s = store;
-      const owningWt = findWorktreeForTab(s.tabsByWorktree, tabId);
+      const owningWt = s.tabWorktreeIndex[tabId] ?? null;
       const isVisible = owningWt !== null
         && s.selectedWorktreeId === owningWt
         && s.activeTabByWorktree[owningWt] === tabId;

@@ -5,6 +5,7 @@ import { PRPanel } from "../PRStatus/PRPanel";
 import { Tooltip } from "../ui/Tooltip";
 import * as commands from "../../lib/commands";
 import type { GitFileStatus } from "../../lib/commands";
+import { useWindowFocused } from "../../lib/windowFocus";
 
 type Tab = "uncommitted" | "pr-changes" | "pr-status";
 type FileContextMenuState = {
@@ -49,6 +50,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
   const worktree = worktrees.find((w) => w.id === selectedWorktreeId);
 
   const [tab, setTab] = useState<Tab>("uncommitted");
+  const windowFocused = useWindowFocused();
 
   // Delay content rendering after worktree switch to prevent UI blocking
   const [contentReady, setContentReady] = useState(false);
@@ -82,9 +84,13 @@ export const ChangesPanel = memo(function ChangesPanel() {
   wtIdRef.current = worktree?.id;
   baseBranchRef.current = worktree?.target_branch || project?.target_branch || project?.base_branch || "main";
 
-  // Deferred uncommitted refresh + unpushed count
+  // Deferred uncommitted refresh + unpushed count.
+  // Polls only while the window is focused — avoids burning ~2 git subprocesses
+  // every 5s for every open worktree when the user is in another app.
+  // On focus regain, refreshes immediately and then resumes the 5s cadence.
   useEffect(() => {
     if (!worktree) return;
+    if (!windowFocused) return;
     let cancelled = false;
 
     let first = true;
@@ -113,7 +119,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
     const timer = setTimeout(refresh, 500);
     const interval = setInterval(refresh, 5000);
     return () => { cancelled = true; clearTimeout(timer); clearInterval(interval); };
-  }, [worktree?.id]);
+  }, [worktree?.id, windowFocused]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -138,9 +144,11 @@ export const ChangesPanel = memo(function ChangesPanel() {
     };
   }, [contextMenu]);
 
-  // PR files — always fetch so tab count stays current
+  // PR files — always fetch so tab count stays current.
+  // Same focus-gating as the uncommitted poll above.
   useEffect(() => {
     if (!worktree) return;
+    if (!windowFocused) return;
     let cancelled = false;
 
     let first = true;
@@ -160,7 +168,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
     const timer = setTimeout(refresh, 500);
     const interval = setInterval(refresh, 5000);
     return () => { cancelled = true; clearTimeout(timer); clearInterval(interval); };
-  }, [worktree?.id]);
+  }, [worktree?.id, windowFocused]);
 
   if (!worktree || !project || selectedWorktreeId === "__scratchpad__") return null;
 
