@@ -191,6 +191,18 @@ fn handle_create_worktree(args: &Value, app: &AppHandle, cwd: &str) -> Result<St
         .current_dir(&project.local_path)
         .output();
 
+    // Fetch latest remote refs so we don't branch off stale tracking data
+    let fetch = user_command("git")
+        .args(["fetch", "origin"])
+        .current_dir(&project.local_path)
+        .output()
+        .map_err(|e| format!("Failed to fetch from origin: {}", e))?;
+
+    if !fetch.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch.stderr);
+        return Err(format!("git fetch failed: {}", stderr));
+    }
+
     if !new_branch.is_empty() {
         // Create a new branch based on base_branch
         let output = user_command("git")
