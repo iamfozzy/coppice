@@ -18,8 +18,58 @@ import { homedir } from "node:os";
 
 // ── Helpers ──
 
-function emit(obj) {
+// Streaming-partial coalescer.
+//
+// The SDK emits one `text_delta` event per token. Forwarding each one as its
+// own JSON line through stdout → Rust BufReader::lines → Tauri event →
+// frontend JSON.parse adds up: a 1500-token response is 1500 IPC roundtrips,
+// each forcing a Zustand `set()` + React render on the streaming bubble.
+//
+// Instead we buffer consecutive same-type deltas (text or thinking) and flush
+// them at most every ~16ms (one frame). Any non-partial emit flushes first to
+// preserve message ordering — the frontend still sees streaming text appear
+// before the assistant/tool_use/result that follows.
+let _pendingPartial = null; // { type: "text" | "thinking", text: string }
+let _flushTimer = null;
+const PARTIAL_FLUSH_MS = 16;
+
+function _writeLine(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
+}
+
+function flushPendingPartial() {
+  if (_flushTimer) {
+    clearTimeout(_flushTimer);
+    _flushTimer = null;
+  }
+  if (_pendingPartial) {
+    _writeLine({ type: "partial", delta: _pendingPartial });
+    _pendingPartial = null;
+  }
+}
+
+function emitPartial(deltaType, text) {
+  if (!text) return;
+  if (_pendingPartial && _pendingPartial.type === deltaType) {
+    _pendingPartial.text += text;
+  } else {
+    // Different delta type — flush the current buffer so types stay separated.
+    flushPendingPartial();
+    _pendingPartial = { type: deltaType, text };
+  }
+  if (!_flushTimer) {
+    _flushTimer = setTimeout(flushPendingPartial, PARTIAL_FLUSH_MS);
+  }
+}
+
+function emit(obj) {
+  // Flush any pending streaming deltas before a non-partial event so the
+  // frontend renders streaming text in the right order relative to
+  // assistant/tool_use/result messages.
+  if (_pendingPartial && obj?.type !== "partial") {
+    flushPendingPartial();
+  }
+  _writeLine(obj);
 }
 
 function log(...args) {
@@ -1311,23 +1361,23 @@ function processMessage(message) {
     }
 
     case "stream_event": {
-      // SDKPartialAssistantMessage — raw streaming events
+      // SDKPartialAssistantMessage — raw streaming events.
+      // Text/thinking deltas go through the coalescer so the per-token IPC
+      // tax is paid at most once per frame instead of once per token.
       const evt = message.event;
       if (!evt) break;
       if (evt.type === "content_block_start") {
         emit({ type: "status", status: "thinking" });
       } else if (evt.type === "content_block_delta") {
         if (evt.delta?.type === "text_delta") {
-          emit({
-            type: "partial",
-            delta: { type: "text", text: evt.delta.text },
-          });
+          emitPartial("text", evt.delta.text);
         } else if (evt.delta?.type === "thinking_delta") {
-          emit({
-            type: "partial",
-            delta: { type: "thinking", text: evt.delta.thinking },
-          });
+          emitPartial("thinking", evt.delta.thinking);
         }
+      } else if (evt.type === "content_block_stop") {
+        // End of a content block — flush any buffered text so the next
+        // block's deltas don't accidentally merge with the previous block.
+        flushPendingPartial();
       }
       break;
     }

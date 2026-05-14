@@ -2,7 +2,7 @@ import { memo, useState, useCallback } from "react";
 import type { AgentMessage } from "../../lib/types";
 import { Tooltip } from "../ui/Tooltip";
 import { MarkdownContent } from "./MarkdownContent";
-import { claudeAuthLogin } from "../../lib/commands";
+import { claudeAuthLogin, mcpOauthStart } from "../../lib/commands";
 
 interface Props {
   message: AgentMessage;
@@ -115,29 +115,47 @@ function isAuthError(content: string): boolean {
 
 function ErrorBubble({ message }: { message: AgentMessage }) {
   const [loginStatus, setLoginStatus] = useState<"idle" | "pending" | "success">("idle");
-  const showLogin = isAuthError(message.content || "");
+  const isMcpError = !!message.mcpServerName;
+  const showLogin = isMcpError || isAuthError(message.content || "");
 
   const handleLogin = useCallback(async () => {
     setLoginStatus("pending");
     try {
-      const { listen } = await import("@tauri-apps/api/event");
-      const unlisten = await listen<string>("claude-auth-event", (event) => {
-        try {
-          const msg = JSON.parse(event.payload);
-          if (msg.type === "success") {
-            setLoginStatus("success");
-            unlisten();
-          } else if (msg.type === "error") {
-            setLoginStatus("idle");
-            unlisten();
-          }
-        } catch {}
-      });
-      await claudeAuthLogin();
+      if (isMcpError) {
+        const { listen } = await import("@tauri-apps/api/event");
+        const unlisten = await listen<string>("mcp-oauth-event", (event) => {
+          try {
+            const msg = typeof event.payload === "string" ? JSON.parse(event.payload) : event.payload;
+            if (msg.kind === "success") {
+              setLoginStatus("success");
+              unlisten();
+            } else if (msg.kind === "error") {
+              setLoginStatus("idle");
+              unlisten();
+            }
+          } catch {}
+        });
+        await mcpOauthStart(message.mcpServerName!);
+      } else {
+        const { listen } = await import("@tauri-apps/api/event");
+        const unlisten = await listen<string>("claude-auth-event", (event) => {
+          try {
+            const msg = JSON.parse(event.payload);
+            if (msg.type === "success") {
+              setLoginStatus("success");
+              unlisten();
+            } else if (msg.type === "error") {
+              setLoginStatus("idle");
+              unlisten();
+            }
+          } catch {}
+        });
+        await claudeAuthLogin();
+      }
     } catch {
       setLoginStatus("idle");
     }
-  }, []);
+  }, [isMcpError, message.mcpServerName]);
 
   return (
     <div className="flex items-start gap-2 bg-error/8 border border-error/20 rounded-lg px-3 py-2.5 text-sm text-error">
@@ -160,9 +178,11 @@ function ErrorBubble({ message }: { message: AgentMessage }) {
                   : "bg-purple-500/10 text-purple-400 border border-purple-500/30 hover:bg-purple-500/20 cursor-pointer"
             }`}
           >
-            {loginStatus === "success" ? "✓ Logged in" :
-             loginStatus === "pending" ? "Logging in…" :
-             "Re-login"}
+            {loginStatus === "success"
+              ? (isMcpError ? "✓ Connected" : "✓ Logged in")
+              : loginStatus === "pending"
+                ? (isMcpError ? "Connecting…" : "Logging in…")
+                : (isMcpError ? "Connect" : "Re-login")}
           </button>
         )}
       </div>

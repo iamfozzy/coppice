@@ -33,6 +33,18 @@ pub async fn create_worktree(
         .current_dir(&project.local_path)
         .output();
 
+    // Fetch latest remote refs so we don't branch off stale tracking data
+    let fetch = user_command("git")
+        .args(["fetch", "origin"])
+        .current_dir(&project.local_path)
+        .output()
+        .map_err(|e| format!("Failed to fetch from origin: {}", e))?;
+
+    if !fetch.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch.stderr);
+        return Err(format!("git fetch failed: {}", stderr));
+    }
+
     // Use --detach to avoid "already checked out" errors, then checkout the branch
     let output = user_command("git")
         .args(["worktree", "add", "--detach", &worktree_path])
@@ -86,6 +98,18 @@ pub async fn create_worktree_new_branch(
         .args(["worktree", "prune"])
         .current_dir(&project.local_path)
         .output();
+
+    // Fetch latest remote refs so we don't branch off stale tracking data
+    let fetch = user_command("git")
+        .args(["fetch", "origin"])
+        .current_dir(&project.local_path)
+        .output()
+        .map_err(|e| format!("Failed to fetch from origin: {}", e))?;
+
+    if !fetch.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch.stderr);
+        return Err(format!("git fetch failed: {}", stderr));
+    }
 
     // Create worktree with a new branch based off the selected base
     let output = user_command("git")
@@ -186,6 +210,12 @@ pub async fn delete_worktree(db: State<'_, Database>, id: String, keep_branch: b
 #[tauri::command]
 pub async fn list_branches(db: State<'_, Database>, project_id: String) -> Result<Vec<String>, String> {
     let project = find_project(&db, &project_id)?;
+
+    // Fetch + prune so the branch list reflects current remote state
+    let _ = user_command("git")
+        .args(["fetch", "origin", "--prune"])
+        .current_dir(&project.local_path)
+        .output();
 
     let output = user_command("git")
         .args(["branch", "-a", "--format=%(refname:short)"])

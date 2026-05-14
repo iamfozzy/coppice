@@ -3,6 +3,7 @@ import * as commands from "../../lib/commands";
 import type { PrStatusResult, PrComment } from "../../lib/commands";
 import { cacheGet, cacheGetStale, cacheSet } from "../../lib/cache";
 import { useAppStore } from "../../stores/appStore";
+import { useWindowFocused } from "../../lib/windowFocus";
 
 interface Props {
   projectId: string;
@@ -24,6 +25,7 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedComments, setSelectedComments] = useState<Set<number>>(new Set());
+  const windowFocused = useWindowFocused();
 
   // Single effect for everything — keyed on cacheKey so it restarts on worktree switch
   const generationRef = useRef(0);
@@ -143,7 +145,11 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
     setSelectedComments(new Set());
   }, [comments, selectedComments, onFixWithClaude]);
 
-  // On worktree change: restore cache, bump generation, schedule refresh
+  // On worktree change: restore cache, bump generation, schedule refresh.
+  // The 30s poll only runs while the window is focused — `gh pr view` is a
+  // real subprocess spawn + network roundtrip and there's no point doing it
+  // while the user is in another app. On focus regain this effect re-runs
+  // and the delayed refresh picks up any stale state.
   useEffect(() => {
     const gen = ++generationRef.current;
 
@@ -155,11 +161,15 @@ export const PRPanel = memo(function PRPanel({ projectId, branch, worktreePath, 
     setChecked(cached !== null);
     setError(null);
 
+    if (!windowFocused) {
+      return;
+    }
+
     // Refresh after delay, then poll
     const timer = setTimeout(() => refresh(gen), 800);
     const interval = setInterval(() => refresh(gen), 30000);
     return () => { clearTimeout(timer); clearInterval(interval); };
-  }, [cacheKey, commentsCacheKey, refresh]);
+  }, [cacheKey, commentsCacheKey, refresh, windowFocused]);
 
   const handleFixWithClaude = () => {
     if (!prStatus?.pr) return;

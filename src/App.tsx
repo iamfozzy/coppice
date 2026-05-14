@@ -144,9 +144,27 @@ function App() {
   // macOS: shows a number badge on the dock icon.
   // Linux: depends on desktop env (Unity, GNOME with extension).
   // Windows: not supported by set_badge_count (no-op).
+  //
+  // The Zustand `subscribe` callback fires on *every* store mutation —
+  // including each per-token `updateAgentStreamingText` during agent
+  // streaming. The Object.values + filter walk over `claudeStatusByTab` is
+  // cheap individually but adds up to thousands of unnecessary calls per
+  // second at typical token rates. Gate the walk on a reference-equality
+  // check: `claudeStatusByTab` is only re-assigned when an action actually
+  // touches it (setClaudeStatus, removeClaudeStatus, clearClaudeIdleStatus,
+  // closeTab, setActiveTab, cycleTab) — never by streaming-text updates.
   useEffect(() => {
-    let prevCount = 0;
+    let prevStatusMap = useAppStore.getState().claudeStatusByTab;
+    let prevCount = Object.values(prevStatusMap).filter((s) => s === "idle").length;
+    // Initialise the badge on mount so a restart with idle tabs already
+    // shows the count without waiting for the next status change.
+    getCurrentWindow()
+      .setBadgeCount(prevCount > 0 ? prevCount : undefined)
+      .catch(() => {});
+
     const unsub = useAppStore.subscribe((state) => {
+      if (state.claudeStatusByTab === prevStatusMap) return;
+      prevStatusMap = state.claudeStatusByTab;
       const idleCount = Object.values(state.claudeStatusByTab).filter(
         (s) => s === "idle"
       ).length;

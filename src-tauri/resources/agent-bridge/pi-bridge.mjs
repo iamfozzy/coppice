@@ -339,6 +339,201 @@ function buildCoppiceToolDefinitions() {
   ];
 }
 
+// ── Todo / Plan tools ──
+
+const TODO_STATUSES = new Set(["pending", "in_progress", "completed"]);
+let currentTodos = [];
+
+function cloneTodos(todos) {
+  return todos.map((todo) => ({ ...todo }));
+}
+
+function normalizeTodoItems(value, { enforceSingleInProgress = true } = {}) {
+  if (!Array.isArray(value)) {
+    throw new Error("todos must be an array");
+  }
+
+  const todos = value.map((item, index) => {
+    if (!item || typeof item !== "object") {
+      throw new Error(`todos[${index}] must be an object`);
+    }
+
+    const content = typeof item.content === "string" ? item.content.trim() : "";
+    if (!content) {
+      throw new Error(`todos[${index}].content must be a non-empty string`);
+    }
+
+    const status = item.status;
+    if (!TODO_STATUSES.has(status)) {
+      throw new Error(
+        `todos[${index}].status must be one of: pending, in_progress, completed`,
+      );
+    }
+
+    const todo = { content, status };
+    if (typeof item.activeForm === "string" && item.activeForm.trim()) {
+      todo.activeForm = item.activeForm.trim();
+    }
+    return todo;
+  });
+
+  if (
+    enforceSingleInProgress &&
+    todos.filter((todo) => todo.status === "in_progress").length > 1
+  ) {
+    throw new Error("only one todo may be in_progress at a time");
+  }
+
+  return todos;
+}
+
+function tryNormalizePersistedTodos(value) {
+  try {
+    return normalizeTodoItems(value, { enforceSingleInProgress: false });
+  } catch {
+    return null;
+  }
+}
+
+function extractTodosFromStoredMessage(msg) {
+  if (!msg || typeof msg !== "object") return null;
+
+  if (msg.role === "toolResult" && msg.toolName === "TodoWrite") {
+    const todos = tryNormalizePersistedTodos(msg.details?.todos);
+    if (todos) return todos;
+  }
+
+  if (msg.role === "assistant" && Array.isArray(msg.content)) {
+    let latest = null;
+    for (const block of msg.content) {
+      if (block?.type === "toolCall" && block.name === "TodoWrite") {
+        const todos = tryNormalizePersistedTodos(block.arguments?.todos);
+        if (todos) latest = todos;
+      }
+    }
+    return latest;
+  }
+
+  return null;
+}
+
+function reconstructTodoState(sessionManager) {
+  currentTodos = [];
+
+  try {
+    const entries = typeof sessionManager.getBranch === "function"
+      ? sessionManager.getBranch()
+      : (sessionManager.buildSessionContext?.().messages || []).map((message) => ({
+          type: "message",
+          message,
+        }));
+
+    for (const entry of entries || []) {
+      if (entry?.type !== "message") continue;
+      const todos = extractTodosFromStoredMessage(entry.message);
+      if (todos) currentTodos = todos;
+    }
+
+    log(`todos: reconstructed ${currentTodos.length} item(s)`);
+  } catch (err) {
+    currentTodos = [];
+    log(`todos: failed to reconstruct (${err.message})`);
+  }
+}
+
+function formatTodosForTool(todos) {
+  if (!todos.length) return "No todos";
+  return todos
+    .map((todo) => {
+      const marker = todo.status === "completed"
+        ? "x"
+        : todo.status === "in_progress"
+          ? "~"
+          : " ";
+      const active = todo.status === "in_progress" && todo.activeForm
+        ? ` — ${todo.activeForm}`
+        : "";
+      return `[${marker}] ${todo.content}${active}`;
+    })
+    .join("\n");
+}
+
+function buildTodoToolDefinitions() {
+  const TodoItem = Type.Object({
+    content: Type.String({
+      description: "Task description",
+    }),
+    status: Type.String({
+      description: "Task status: pending, in_progress, or completed",
+    }),
+    activeForm: Type.Optional(
+      Type.String({
+        description:
+          "Optional present-tense wording for the current in-progress task",
+      }),
+    ),
+  });
+
+  return [
+    defineTool({
+      name: "TodoRead",
+      label: "Todo Read",
+      description:
+        "Read the current session todo list used to track plan progress.",
+      promptSnippet: "Read the current task plan/todo list",
+      promptGuidelines: [
+        "Use TodoRead to inspect the current task plan before resuming multi-step work.",
+      ],
+      parameters: Type.Object({}),
+      execute: async () => ({
+        content: [{ type: "text", text: formatTodosForTool(currentTodos) }],
+        details: { todos: cloneTodos(currentTodos) },
+      }),
+    }),
+    defineTool({
+      name: "TodoWrite",
+      label: "Todo Write",
+      description:
+        "Create or update the current session todo list. Use this for multi-step tasks and keep statuses current as work progresses.",
+      promptSnippet: "Create or update a visible task plan/todo list",
+      promptGuidelines: [
+        "Use TodoWrite for multi-step tasks so the user can see the plan and progress.",
+        "Keep TodoWrite current: mark a task in_progress before working on it and completed as soon as it is done.",
+        "Use exactly one in_progress todo while actively working; leave all others pending or completed.",
+        "Do not use TodoWrite for trivial single-step requests.",
+      ],
+      parameters: Type.Object({
+        todos: Type.Array(TodoItem, {
+          description:
+            "Full replacement todo list. Each item must include content and status.",
+        }),
+      }),
+      executionMode: "sequential",
+      execute: async (_toolCallId, params) => {
+        currentTodos = normalizeTodoItems(params.todos);
+        const completed = currentTodos.filter(
+          (todo) => todo.status === "completed",
+        ).length;
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Todo list updated (${completed}/${currentTodos.length} completed)` +
+                (currentTodos.length ? `\n\n${formatTodosForTool(currentTodos)}` : ""),
+            },
+          ],
+          details: {
+            todos: cloneTodos(currentTodos),
+            completed,
+            total: currentTodos.length,
+          },
+        };
+      },
+    }),
+  ];
+}
+
 // ── Subagent system ──
 
 /**
@@ -1271,9 +1466,10 @@ async function handlePermission(toolCall, args, permissionMode) {
   ];
   if (readOnlyTools.includes(toolName)) return undefined;
 
-  // Pi's read-only tools — always allow
-  const piReadOnly = ["read", "grep", "find", "ls"];
+  // Pi's read-only/internal tools — always allow
+  const piReadOnly = ["read", "grep", "find", "ls", "TodoRead"];
   if (piReadOnly.includes(toolName)) return undefined;
+  if (toolName === "TodoWrite") return undefined;
 
   // MCP tools that advertise readOnlyHint are safe to auto-allow.
   if (currentMcpReadOnlyToolNames.has(toolName)) return undefined;
@@ -1976,7 +2172,7 @@ async function startSession(msg) {
   // Build custom tools (Coppice IDE tools + MCP + web access)
   log("step: building custom tools...");
   const coppiceTools = buildCoppiceToolDefinitions();
-  let customTools = [...coppiceTools];
+  let customTools = [...coppiceTools, ...buildTodoToolDefinitions()];
 
   if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
     log("step: loading MCP servers...");
@@ -2024,6 +2220,7 @@ async function startSession(msg) {
   const sessionManager = SessionManager.open(sessionFilePath, undefined, currentCwd);
   const existingCtx = sessionManager.buildSessionContext();
   const resumeCount = existingCtx.messages.length;
+  reconstructTodoState(sessionManager);
 
   log(`step: creating AgentSession (tools=${customTools.length} thinking=${thinkingLevel} resume=${resumeCount} file=${sessionFilePath})...`);
 

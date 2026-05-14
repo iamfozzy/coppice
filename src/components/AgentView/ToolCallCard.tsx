@@ -31,6 +31,7 @@ export function normalizeToolName(name: string): string {
     grep: "Grep",
     find: "Grep",
     ls: "Bash",
+    todoread: "TodoRead",
     todowrite: "TodoWrite",
     websearch: "WebSearch",
     web_search: "WebSearch",
@@ -75,6 +76,7 @@ function ToolIcon({ name }: { name: string }) {
           <path d="M8 8l2.5 2.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
         </svg>
       );
+    case "TodoRead":
     case "TodoWrite":
       return (
         <svg width="11" height="11" viewBox="0 0 12 12" fill="none" className="shrink-0">
@@ -485,6 +487,8 @@ function summarizeInput(toolName: string, input: unknown): string {
       if (tasks.length > 1) return `${tasks.length} parallel tasks`;
       return task ? `${role}: ${task}` : role;
     }
+    case "TodoRead":
+      return "current plan";
     case "TodoWrite": {
       const todos = Array.isArray(obj.todos) ? obj.todos as TodoItem[] : [];
       const done = todos.filter((t) => t.status === "completed").length;

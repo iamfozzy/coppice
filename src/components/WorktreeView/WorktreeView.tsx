@@ -5,6 +5,7 @@ import { Tooltip } from "../ui/Tooltip";
 import { useAgentTabCloseConfirmation } from "../ui/useAgentTabCloseConfirmation";
 import * as commands from "../../lib/commands";
 import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
+import { useWindowFocused } from "../../lib/windowFocus";
 
 export function WorktreeView() {
   const selectedWorktreeId = useAppStore((s) => s.selectedWorktreeId);
@@ -47,6 +48,7 @@ export function WorktreeView() {
   const [liveBranch, setLiveBranch] = useState<string | null>(null);
   const [lastBranchWtId, setLastBranchWtId] = useState<string | null>(null);
   const { requestCloseTab, closeConfirmation } = useAgentTabCloseConfirmation();
+  const windowFocused = useWindowFocused();
 
   if (wtId && wtId !== lastBranchWtId) {
     setLiveBranch(null);
@@ -55,9 +57,13 @@ export function WorktreeView() {
 
   const updateWorktreeBranch = useAppStore((s) => s.updateWorktreeBranch);
 
-  // Poll the actual git branch every 3 seconds (skip for scratchpad)
+  // Poll the actual git branch every 3 seconds (skip for scratchpad).
+  // Suspended while the window is unfocused — `git` spawns are not free, and
+  // the user can't see the branch label change anyway. On focus regain the
+  // effect re-runs and triggers an immediate check.
   useEffect(() => {
     if (!worktree || isScratchpad) return;
+    if (!windowFocused) return;
     let cancelled = false;
     const check = () => {
       commands.getCurrentBranch(worktree.path).then((branch) => {
@@ -70,7 +76,7 @@ export function WorktreeView() {
     check();
     const interval = setInterval(check, 3000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [worktree?.path, worktree?.id]);
+  }, [worktree?.path, worktree?.id, windowFocused]);
 
   // Watch for pending Claude commands
   useEffect(() => {
