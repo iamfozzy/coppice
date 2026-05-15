@@ -262,10 +262,13 @@ function App() {
 
   // Single window-level file drop handler — routes to active session only.
   // For agent tabs, image files are converted to base64 and queued as image
-  // attachments for the agent input bar; for terminal tabs, file paths are
-  // written as text.
+  // attachments for the agent input bar. Claude CLI tabs receive dropped paths
+  // as bracketed paste so Claude Code can detect image paths and turn them into
+  // its native [Image #N] attachments. Plain terminal tabs receive path text.
   useEffect(() => {
     const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp"]);
+    const formatDroppedPaths = (paths: string[]) => paths.map((p) => `"${p.replace(/"/g, '\\"')}"`).join(" ");
+    const bracketedPaste = (text: string) => `\x1b[200~${text}\x1b[201~`;
 
     const unlisten = getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type !== "drop") return;
@@ -300,10 +303,13 @@ function App() {
             useAppStore.getState().pushDroppedImages(activeSessionId, attachments);
           })
           .catch(() => {});
-      } else {
-        // Terminal tab — write file paths as text
-        const text = paths.map((p: string) => `"${p}"`).join(" ");
-        commands.terminalWrite(activeSessionId, text).catch(() => {});
+      } else if (activeTab?.type === "claude") {
+        // Claude CLI parses pasted image paths into attachments; send the drop
+        // using the same bracketed-paste envelope as normal paste handling.
+        commands.terminalWrite(activeSessionId, bracketedPaste(formatDroppedPaths(paths))).catch(() => {});
+      } else if (activeTab?.type === "terminal") {
+        // Terminal tab — write file paths as text.
+        commands.terminalWrite(activeSessionId, formatDroppedPaths(paths)).catch(() => {});
       }
     });
     return () => { unlisten.then((fn) => fn()); };
