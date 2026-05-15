@@ -49,6 +49,7 @@ pub fn run() {
             commands::worktree::get_current_branch,
             commands::worktree::get_git_status,
             commands::worktree::get_file_content,
+            commands::worktree::get_file_preview,
             commands::worktree::get_merge_base,
             commands::worktree::get_file_diff,
             commands::worktree::get_pr_diff_files,

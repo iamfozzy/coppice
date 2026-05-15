@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore, type ClaudeStatus } from "../../stores/appStore";
 import { DiffViewer } from "../DiffViewer/DiffViewer";
+import { FileViewer } from "../FileViewer/FileViewer";
 import { Tooltip } from "../ui/Tooltip";
 import { useAgentTabCloseConfirmation } from "../ui/useAgentTabCloseConfirmation";
 import * as commands from "../../lib/commands";
@@ -153,6 +154,8 @@ export function WorktreeView() {
             const activeTab = tabs.find((t) => t.id === activeTabId);
             if (activeTab?.type === "diff" && activeTab.diffFile) {
               commands.openWorktreeFileInEditor(worktree.path, activeTab.diffFile);
+            } else if (activeTab?.type === "file" && activeTab.filePath) {
+              commands.openWorktreeFileInEditor(worktree.path, activeTab.filePath);
             } else {
               commands.openInEditor(worktree.path);
             }
@@ -215,6 +218,13 @@ export function WorktreeView() {
                   baseBranch={activeTab.diffMode === "pr" ? activeTab.diffBaseBranch : undefined}
                   comments={fileComments}
                 />
+              </div>
+            );
+          }
+          if (activeTab?.type === "file" && activeTab.filePath) {
+            return (
+              <div className="absolute inset-0 z-10">
+                <FileViewer key={activeTab.id} cwd={activeTab.cwd} file={activeTab.filePath} />
               </div>
             );
           }
@@ -397,7 +407,7 @@ function Tab({
   onRename,
 }: {
   label: string;
-  type: "terminal" | "claude" | "agent" | "diff";
+  type: "terminal" | "claude" | "agent" | "diff" | "file";
   active: boolean;
   claudeStatus: ClaudeStatus | null;
   progress: number | null;
@@ -436,7 +446,7 @@ function Tab({
     dotInner = <span className="w-2 h-2 rounded-full shrink-0 bg-warning" />;
   } else {
     const activeColor =
-      type === "agent" || type === "claude" ? "bg-accent" : type === "diff" ? "bg-warning" : "bg-text-tertiary";
+      type === "agent" || type === "claude" ? "bg-accent" : type === "diff" ? "bg-warning" : type === "file" ? "bg-success" : "bg-text-tertiary";
     dotInner = (
       <span
         className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? activeColor : "bg-text-tertiary/40"}`}

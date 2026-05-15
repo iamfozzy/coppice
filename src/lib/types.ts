@@ -52,7 +52,20 @@ export interface TerminalSession {
 
 export type ProjectFormData = Omit<Project, "id" | "created_at">;
 
-export type ThemeMode = "dark" | "dim" | "atom" | "light" | "system";
+export type ThemeMode =
+  | "dark"
+  | "dim"
+  | "atom"
+  | "github"
+  | "tokyo"
+  | "catppuccin"
+  | "dracula"
+  | "nord"
+  | "gruvbox"
+  | "solarized"
+  | "solarized-light"
+  | "light"
+  | "system";
 export type AgentBackend = "claude" | "pi";
 export type DefaultSessionMode = "terminal" | AgentBackend;
 export type PersistedDefaultClaudeMode = DefaultSessionMode | "agent";

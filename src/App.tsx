@@ -33,7 +33,7 @@ function App() {
     for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
       const activeTab = activeTabByWorktree[wtId];
       for (const tab of tabs) {
-        if (tab.type === "diff" || tab.type === "agent") continue;
+        if (tab.type === "diff" || tab.type === "file" || tab.type === "agent") continue;
         // When tile view is open, Claude CLI tabs are rendered inside tiles.
         // Keep them out of the always-mounted terminal layer to avoid two
         // xterm panels racing to spawn/attach to the same PTY session.
@@ -371,7 +371,7 @@ function App() {
             const relFile = filePath.startsWith(worktreePath)
               ? filePath.slice(worktreePath.length).replace(/^[/\\]/, "")
               : filePath;
-            store.openDiffTab(wtId, relFile, worktreePath, "uncommitted");
+            store.openFileTab(wtId, relFile, worktreePath);
           }
           break;
         }

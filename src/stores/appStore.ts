@@ -257,7 +257,7 @@ export async function flushAllAgentTabCaches(): Promise<void> {
 
 export interface TabInfo {
   id: string;
-  type: "terminal" | "claude" | "agent" | "diff";
+  type: "terminal" | "claude" | "agent" | "diff" | "file";
   label: string;
   command?: string;
   cwd: string;
@@ -271,6 +271,8 @@ export interface TabInfo {
   diffFile?: string;
   diffMode?: "uncommitted" | "pr";
   diffBaseBranch?: string;
+  // For file viewer tabs
+  filePath?: string;
 }
 
 export type RunnerStatus = "running" | "stopped" | "idle";
@@ -415,6 +417,7 @@ interface AppState {
   restoreCliTabs: () => void;
   addTab: (worktreeId: string, type: "terminal" | "claude", cwd: string, command?: string) => void;
   openDiffTab: (worktreeId: string, file: string, cwd: string, mode: "uncommitted" | "pr", baseBranch?: string) => void;
+  openFileTab: (worktreeId: string, file: string, cwd: string) => void;
   closeTab: (worktreeId: string, tabId: string) => void;
   setActiveTab: (worktreeId: string, tabId: string) => void;
   cycleTab: (worktreeId: string, direction: 1 | -1) => void;
@@ -1075,6 +1078,36 @@ export const useAppStore = create<AppState>((set, get) => ({
       diffFile: file,
       diffMode: mode,
       diffBaseBranch: baseBranch,
+    };
+    set((s) => ({
+      tabsByWorktree: {
+        ...s.tabsByWorktree,
+        [worktreeId]: [...(s.tabsByWorktree[worktreeId] ?? []), tab],
+      },
+      activeTabByWorktree: {
+        ...s.activeTabByWorktree,
+        [worktreeId]: tab.id,
+      },
+      tabWorktreeIndex: { ...s.tabWorktreeIndex, [tab.id]: worktreeId },
+    }));
+  },
+
+  openFileTab: (worktreeId, file, cwd) => {
+    const tabs = get().tabsByWorktree[worktreeId] ?? [];
+    const existing = tabs.find((t) => t.type === "file" && t.filePath === file);
+    if (existing) {
+      set((s) => ({
+        activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: existing.id },
+      }));
+      return;
+    }
+    const shortName = file.split(/[/\\]/).pop() ?? file;
+    const tab: TabInfo = {
+      id: `file-${worktreeId}-${Date.now()}`,
+      type: "file",
+      label: shortName,
+      cwd,
+      filePath: file,
     };
     set((s) => ({
       tabsByWorktree: {

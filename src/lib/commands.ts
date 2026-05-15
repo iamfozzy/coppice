@@ -69,6 +69,22 @@ export async function getFileContent(
   return invoke("get_file_content", { path, file, gitRef });
 }
 
+export interface FilePreviewContent {
+  kind: "text" | "image" | "pdf" | "audio" | "video" | "binary";
+  mime_type: string;
+  text?: string | null;
+  data?: string | null;
+  size: number;
+}
+
+export async function getFilePreview(
+  path: string,
+  file: string,
+  gitRef?: string
+): Promise<FilePreviewContent> {
+  return invoke("get_file_preview", { path, file, gitRef });
+}
+
 export async function getMergeBase(path: string, baseBranch?: string): Promise<string> {
   return invoke("get_merge_base", { path, baseBranch });
 }

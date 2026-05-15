@@ -271,18 +271,26 @@ function ProjectNode({
                 }`}
                 onClick={() => !isDeleting && onSelectWorktree(wt)}
               >
-                <svg
-                  className={`shrink-0 ${isSelected ? "text-accent-hover/80" : "text-text-tertiary group-hover/wt:text-text-secondary"}`}
-                  width="13"
-                  height="13"
-                  viewBox="0 0 16 16"
-                  fill="none"
+                <span
+                  className={`-ml-1 shrink-0 flex h-5 w-5 items-center justify-center rounded-md transition-colors ${
+                    isSelected
+                      ? "bg-accent/20 text-accent-hover shadow-sm"
+                      : "bg-bg-tertiary text-accent/80 group-hover/wt:bg-accent/10 group-hover/wt:text-accent-hover"
+                  }`}
                   aria-hidden="true"
                 >
-                  <path d="M5 3.5v5A3.5 3.5 0 0 0 8.5 12H11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                  <circle cx="5" cy="3.5" r="1.7" stroke="currentColor" strokeWidth="1.4" />
-                  <circle cx="11.5" cy="12" r="1.7" stroke="currentColor" strokeWidth="1.4" />
-                </svg>
+                  <svg
+                    className="shrink-0"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                  >
+                    <path d="M5 3.5v5A3.5 3.5 0 0 0 8.5 12H11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    <circle cx="5" cy="3.5" r="1.7" stroke="currentColor" strokeWidth="1.5" />
+                    <circle cx="11.5" cy="12" r="1.7" stroke="currentColor" strokeWidth="1.5" />
+                  </svg>
+                </span>
                 <div className="flex-1 min-w-0">
                   {isDeleting ? (
                     <span className="truncate italic text-text-tertiary">Deleting...</span>

@@ -3,13 +3,10 @@ import { DiffEditor } from "@monaco-editor/react";
 import type { editor as monacoEditor } from "monaco-editor";
 import { useAppStore } from "../../stores/appStore";
 import * as commands from "../../lib/commands";
-import type { PrComment } from "../../lib/commands";
-import {
-  resolveTheme,
-  MONACO_DARK_RULES, MONACO_DARK_COLORS, MONACO_DIM_COLORS, MONACO_ATOM_COLORS,
-  MONACO_LIGHT_RULES, MONACO_LIGHT_COLORS,
-} from "../../lib/theme";
+import type { FilePreviewContent, PrComment } from "../../lib/commands";
+import { getMonacoThemeName } from "../../lib/theme";
 import { DEFAULT_APP_FONT_SIZE, getScaledFontSize } from "../../lib/fontScale";
+import { configureMonaco, getLanguage } from "../../lib/monaco";
 
 interface Props {
   cwd: string;
@@ -17,49 +14,6 @@ interface Props {
   mode: "uncommitted" | "pr";
   baseBranch?: string;
   comments?: PrComment[];
-}
-
-// Map file extensions to Monaco language IDs
-function getLanguage(file: string): string {
-  const ext = file.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    ts: "typescript",
-    tsx: "typescript",
-    js: "javascript",
-    jsx: "javascript",
-    json: "json",
-    html: "html",
-    css: "css",
-    scss: "scss",
-    less: "less",
-    md: "markdown",
-    rs: "rust",
-    py: "python",
-    rb: "ruby",
-    go: "go",
-    java: "java",
-    kt: "kotlin",
-    swift: "swift",
-    c: "c",
-    cpp: "cpp",
-    h: "c",
-    hpp: "cpp",
-    cs: "csharp",
-    php: "php",
-    sql: "sql",
-    sh: "shell",
-    bash: "shell",
-    zsh: "shell",
-    yml: "yaml",
-    yaml: "yaml",
-    toml: "ini",
-    xml: "xml",
-    svg: "xml",
-    graphql: "graphql",
-    dockerfile: "dockerfile",
-    makefile: "makefile",
-  };
-  return map[ext] ?? "plaintext";
 }
 
 function escapeHtml(str: string): string {
@@ -146,13 +100,57 @@ function createCommentZoneNode(lineComments: PrComment[]): HTMLDivElement {
   return container;
 }
 
+function dataUrl(preview: FilePreviewContent): string | null {
+  if (!preview.data || !preview.mime_type) return null;
+  return `data:${preview.mime_type};base64,${preview.data}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function PreviewPane({ title, preview }: { title: string; preview: FilePreviewContent | null }) {
+  const url = preview ? dataUrl(preview) : null;
+  return (
+    <div className="flex flex-col min-w-0 min-h-0 border border-border-primary rounded bg-bg-secondary/40 overflow-hidden">
+      <div className="px-3 py-1.5 border-b border-border-primary text-[length:var(--app-font-11)] text-text-tertiary flex justify-between gap-3">
+        <span>{title}</span>
+        {preview && <span>{preview.mime_type} · {formatBytes(preview.size)}</span>}
+      </div>
+      <div className="flex-1 min-h-0 flex items-center justify-center p-4 overflow-auto bg-bg-primary">
+        {!preview || preview.size === 0 ? (
+          <span className="text-sm text-text-tertiary">No file at this revision</span>
+        ) : preview.kind === "image" && url ? (
+          <img src={url} alt={title} className="max-w-full max-h-full object-contain" />
+        ) : preview.kind === "pdf" && url ? (
+          <object data={url} type={preview.mime_type} className="w-full h-full">
+            <span className="text-sm text-text-tertiary">PDF preview is not available.</span>
+          </object>
+        ) : preview.kind === "video" && url ? (
+          <video src={url} controls className="max-w-full max-h-full" />
+        ) : preview.kind === "audio" && url ? (
+          <audio src={url} controls className="w-full" />
+        ) : (
+          <div className="text-center text-sm text-text-tertiary">
+            <div className="mb-1">Binary preview is not available</div>
+            {preview && <div className="text-xs">{preview.mime_type} · {formatBytes(preview.size)}</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
   const appSettings = useAppStore((s) => s.appSettings);
   const themeMode = appSettings?.theme ?? "dim";
-  const resolved = resolveTheme(themeMode);
-  const monacoThemeName = { light: "coppice-light", dim: "coppice-dim", atom: "coppice-atom", dark: "coppice-dark" }[resolved];
+  const monacoThemeName = getMonacoThemeName(themeMode);
   const [original, setOriginal] = useState<string>("");
   const [modified, setModified] = useState<string>("");
+  const [originalPreview, setOriginalPreview] = useState<FilePreviewContent | null>(null);
+  const [modifiedPreview, setModifiedPreview] = useState<FilePreviewContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -169,32 +167,40 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
 
     (async () => {
       try {
+        const emptyPreview: FilePreviewContent = { kind: "text", mime_type: "text/plain", text: "", size: 0 };
         if (mode === "uncommitted") {
           // Original = HEAD version, Modified = working tree
           const [orig, mod] = await Promise.all([
-            commands.getFileContent(cwd, file, "HEAD").catch(() => ""),
-            commands.getFileContent(cwd, file).catch(() => ""),
+            commands.getFilePreview(cwd, file, "HEAD").catch(() => emptyPreview),
+            commands.getFilePreview(cwd, file).catch(() => emptyPreview),
           ]);
           if (!cancelled) {
-            setOriginal(orig);
-            setModified(mod);
+            setOriginalPreview(orig);
+            setModifiedPreview(mod);
+            setOriginal(orig.kind === "text" ? orig.text ?? "" : "");
+            setModified(mod.kind === "text" ? mod.text ?? "" : "");
           }
         } else {
           // PR mode: Original = merge-base version, Modified = HEAD version
           const base = await commands.getMergeBase(cwd, baseBranch).catch(() => "");
           if (base) {
             const [orig, mod] = await Promise.all([
-              commands.getFileContent(cwd, file, base).catch(() => ""),
-              commands.getFileContent(cwd, file, "HEAD").catch(() => ""),
+              commands.getFilePreview(cwd, file, base).catch(() => emptyPreview),
+              commands.getFilePreview(cwd, file, "HEAD").catch(() => emptyPreview),
             ]);
             if (!cancelled) {
-              setOriginal(orig);
-              setModified(mod);
+              setOriginalPreview(orig);
+              setModifiedPreview(mod);
+              setOriginal(orig.kind === "text" ? orig.text ?? "" : "");
+              setModified(mod.kind === "text" ? mod.text ?? "" : "");
             }
           } else {
+            const mod = await commands.getFilePreview(cwd, file, "HEAD").catch(() => emptyPreview);
             if (!cancelled) {
+              setOriginalPreview(emptyPreview);
+              setModifiedPreview(mod);
               setOriginal("");
-              setModified(await commands.getFileContent(cwd, file, "HEAD").catch(() => ""));
+              setModified(mod.kind === "text" ? mod.text ?? "" : "");
             }
           }
         }
@@ -324,11 +330,29 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
   const commentCount = comments?.filter((c) => c.line).length ?? 0;
   const appFontSize = appSettings?.app_font_size ?? DEFAULT_APP_FONT_SIZE;
   const diffFontSize = appSettings?.terminal_font_size || getScaledFontSize(12, appFontSize);
+  const isTextDiff = (originalPreview?.kind ?? "text") === "text" && (modifiedPreview?.kind ?? "text") === "text";
+
+  if (!isTextDiff) {
+    return (
+      <div className="h-full flex flex-col">
+        <div className="flex items-center gap-2 px-4 py-1.5 bg-bg-primary border-b border-border-primary shrink-0">
+          <span className="text-xs text-text-primary font-medium font-mono">{file}</span>
+          <span className="text-[length:var(--app-font-11)] text-text-tertiary">
+            {mode === "pr" ? `vs ${baseBranch ?? "main"}` : "uncommitted changes (vs HEAD)"}
+          </span>
+        </div>
+        <div className="flex-1 min-h-0 grid grid-cols-2 gap-3 p-3">
+          <PreviewPane title="Original" preview={originalPreview} />
+          <PreviewPane title="Modified" preview={modifiedPreview} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col">
       {/* File header */}
-      <div className="flex items-center gap-2 px-4 py-1.5 bg-bg-secondary border-b border-border-primary shrink-0">
+      <div className="flex items-center gap-2 px-4 py-1.5 bg-bg-primary border-b border-border-primary shrink-0">
         <span className="text-xs text-text-primary font-medium font-mono">{file}</span>
         <span className="text-[length:var(--app-font-11)] text-text-tertiary">
           {mode === "pr" ? `vs ${baseBranch ?? "main"}` : "uncommitted changes (vs HEAD)"}
@@ -366,51 +390,7 @@ export function DiffViewer({ cwd, file, mode, baseBranch, comments }: Props) {
             glyphMargin: commentCount > 0,
           }}
           onMount={handleMount}
-          beforeMount={(monaco) => {
-            monaco.languages.typescript?.typescriptDefaults?.setDiagnosticsOptions({
-              noSemanticValidation: true,
-              noSyntaxValidation: true,
-            });
-            monaco.languages.typescript?.javascriptDefaults?.setDiagnosticsOptions({
-              noSemanticValidation: true,
-              noSyntaxValidation: true,
-            });
-            monaco.languages.json?.jsonDefaults?.setDiagnosticsOptions({
-              validate: false,
-            });
-            monaco.languages.css?.cssDefaults?.setOptions({ validate: false });
-            monaco.languages.css?.lessDefaults?.setOptions({ validate: false });
-            monaco.languages.css?.scssDefaults?.setOptions({ validate: false });
-            monaco.languages.html?.htmlDefaults?.setOptions?.({ validate: false } as any);
-
-            monaco.editor.setModelMarkers = () => {};
-
-            // Define both themes so switching is instant
-            monaco.editor.defineTheme("coppice-dark", {
-              base: "vs-dark",
-              inherit: true,
-              rules: MONACO_DARK_RULES,
-              colors: MONACO_DARK_COLORS,
-            });
-            monaco.editor.defineTheme("coppice-dim", {
-              base: "vs-dark",
-              inherit: true,
-              rules: MONACO_DARK_RULES,
-              colors: MONACO_DIM_COLORS,
-            });
-            monaco.editor.defineTheme("coppice-atom", {
-              base: "vs-dark",
-              inherit: true,
-              rules: MONACO_DARK_RULES,
-              colors: MONACO_ATOM_COLORS,
-            });
-            monaco.editor.defineTheme("coppice-light", {
-              base: "vs",
-              inherit: true,
-              rules: MONACO_LIGHT_RULES,
-              colors: MONACO_LIGHT_COLORS,
-            });
-          }}
+          beforeMount={configureMonaco}
         />
       </div>
 
