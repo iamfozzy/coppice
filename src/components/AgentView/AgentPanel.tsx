@@ -764,6 +764,9 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           content: `${label} — context summarized${preTokens ? ` (was ${Math.round(preTokens / 1000)}K tokens)` : ""}.`,
           timestamp: Date.now(),
         });
+        // Pi reports context usage as unknown immediately after compaction
+        // until the next model response; clear the stale pre-compaction value.
+        useAppStore.getState().setAgentLastTurnCost(sessionId, null);
         break;
       }
 

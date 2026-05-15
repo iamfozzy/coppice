@@ -380,7 +380,7 @@ interface AppState {
   setAgentChatMode: (tabId: string, enabled: boolean) => void;
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
   replaceAgentCost: (tabId: string, cost: AgentCost) => void;
-  setAgentLastTurnCost: (tabId: string, cost: TokenUsage) => void;
+  setAgentLastTurnCost: (tabId: string, cost: TokenUsage | null) => void;
   accumulateQueryOutput: (tabId: string, outputTokens: number) => void;
   resetQueryOutput: (tabId: string) => void;
   setAgentSdkContextWindow: (tabId: string, contextWindow: number) => void;
