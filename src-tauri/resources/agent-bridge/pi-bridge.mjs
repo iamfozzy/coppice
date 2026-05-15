@@ -742,12 +742,14 @@ async function runChildSession({ task, agent: roleName, childId, signal, model: 
   function summarizeToolArgs(toolName, args) {
     if (!args) return "";
     const a = typeof args === "object" ? args : {};
-    switch (toolName) {
+    const name = String(toolName || "").toLowerCase();
+    const filePath = a.file_path || a.path;
+    switch (name) {
       case "read":
-        return a.file_path ? shortPath(a.file_path) : "";
+        return [filePath ? shortPath(filePath) : "", a.offset ? `:${a.offset}` : ""].filter(Boolean).join("");
       case "edit":
       case "write":
-        return a.file_path ? shortPath(a.file_path) : "";
+        return filePath ? shortPath(filePath) : "";
       case "grep":
       case "code_search":
         return [a.pattern, a.path ? `in ${shortPath(a.path)}` : ""].filter(Boolean).join(" ");
