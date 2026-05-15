@@ -27,10 +27,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
+          # Pin macOS runners by architecture. `macos-latest` is arm64 and can
+          # change underneath us; running the x86_64 build on an arm64 runner
+          # also exposed GitHub runner rustup/cargo shim regressions before the
+          # Tauri build even reached our code.
+          - platform: macos-15
             args: "--target aarch64-apple-darwin"
             rust_target: aarch64-apple-darwin
-          - platform: macos-latest
+          - platform: macos-15-intel
             args: "--target x86_64-apple-darwin"
             rust_target: x86_64-apple-darwin
           - platform: ubuntu-22.04
@@ -77,10 +81,30 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Install upstream rustup (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # GitHub macOS images can ship a Homebrew rustup/rustup-init that
+          # breaks cargo subcommands such as `cargo metadata`. Install the
+          # upstream rustup first and put it ahead of Homebrew on PATH.
+          curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused -fsSL https://sh.rustup.rs -o rustup-init.sh
+          sh rustup-init.sh -y --no-modify-path --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
+
+      - name: Verify Rust toolchain
+        shell: bash
+        run: |
+          command -v rustup
+          rustup --version
+          command -v cargo
+          cargo --version
+          cargo metadata --manifest-path src-tauri/Cargo.toml --format-version 1 --no-deps > /dev/null
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
