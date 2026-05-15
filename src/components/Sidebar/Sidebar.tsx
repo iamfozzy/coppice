@@ -339,7 +339,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto py-1 min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0">
         <ScratchpadNode />
         <ProjectTree />
       </div>

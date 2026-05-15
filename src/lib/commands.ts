@@ -417,6 +417,10 @@ export async function agentCheckAvailable(): Promise<AgentAvailability> {
   return invoke("agent_check_available");
 }
 
+export async function agentGenerateTitle(prompt: string, cwd?: string): Promise<string> {
+  return invoke("agent_generate_title", { prompt, cwd });
+}
+
 /** Start Pi OAuth login flow for a provider. Opens browser for auth. */
 export async function piOAuthLogin(provider: string): Promise<void> {
   return invoke("pi_oauth_login", { provider });

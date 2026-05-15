@@ -163,7 +163,7 @@ export function WorktreeView() {
       </header>
 
       {/* Tab bar */}
-      <div className="flex h-10 shrink-0 bg-bg-secondary">
+      <div className="relative flex h-10 shrink-0 bg-bg-secondary after:absolute after:bottom-0 after:left-0 after:right-0 after:h-px after:bg-border-primary/70 after:content-['']">
         <NewTabButton
           defaultLabel={getDefaultNewTabLabel(appSettings)}
           onDefault={() => newDefaultSessionTab(wtId)}
@@ -172,7 +172,7 @@ export function WorktreeView() {
           onPiAgent={() => newAgentTab(wtId, "pi")}
           onTerminal={() => newTerminalTab(wtId)}
         />
-        <div className="flex flex-1 min-w-0 overflow-x-auto">
+        <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden">
           {tabs.map((tab) => (
             <Tab
               key={tab.id}
@@ -270,7 +270,7 @@ function NewTabButton({
   };
 
   return (
-    <div className="relative flex h-full shrink-0" ref={ref} aria-label="Create new tab">
+    <div className="relative flex h-full shrink-0 border-r border-border-primary/70" ref={ref} aria-label="Create new tab">
       <Tooltip text={`Default: ${defaultLabel}`} side="bottom" align="left">
         <button
           className="flex items-center justify-center w-10 h-full text-text-tertiary transition-colors outline-none hover:text-accent hover:bg-bg-hover"
@@ -283,14 +283,14 @@ function NewTabButton({
         </button>
       </Tooltip>
       <button
-        className={`flex items-center justify-center w-6 h-full text-text-tertiary transition-colors outline-none hover:text-accent hover:bg-bg-hover ${open ? "text-accent bg-bg-hover" : ""}`}
+        className={`flex items-center justify-center w-6 h-full border-l border-border-primary/70 text-text-tertiary transition-colors outline-none hover:text-accent hover:bg-bg-hover ${open ? "text-accent bg-bg-hover" : ""}`}
         onClick={() => setOpen((value) => !value)}
         aria-label="Choose new tab type"
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <svg className={`transition-transform ${open ? "rotate-180" : ""}`} width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M2 3.5L5 6.5L8 3.5" />
+        <svg className={`transition-transform ${open ? "rotate-180" : ""}`} width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3.5 5L7 8.5L10.5 5" />
         </svg>
       </button>
 
@@ -448,7 +448,7 @@ function Tab({
     <div
       className={`flex items-center gap-2 px-3 text-xs cursor-pointer group relative select-none outline-none ${
         active
-          ? "text-text-primary bg-bg-primary"
+          ? "z-10 text-text-primary bg-bg-primary"
           : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover/50"
       }`}
       onClick={editing ? undefined : onClick}
@@ -461,7 +461,10 @@ function Tab({
       tabIndex={-1}
     >
       {active && (
-        <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-accent" />
+        <>
+          <div className="absolute top-0 left-0 right-0 z-10 h-[2px] bg-accent" />
+          <div className="absolute bottom-0 left-0 right-0 z-10 h-px bg-bg-primary" />
+        </>
       )}
       {/* Fixed-width status dot container — 16×16 so the label never shifts */}
       <span className="w-4 h-4 flex items-center justify-center shrink-0">

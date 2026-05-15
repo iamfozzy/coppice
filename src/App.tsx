@@ -189,13 +189,46 @@ function App() {
   // the Rust backend. Map them into the same tab/sidebar/dock notification
   // path used by SDK agent tabs.
   useEffect(() => {
-    const unlisten = listen<{ sessionId: string; notificationType?: string; claudeSessionId?: string; notifyUser?: boolean }>("claude-cli-notification", (event) => {
+    const unlisten = listen<{ sessionId: string; notificationType?: string; claudeSessionId?: string; prompt?: string; notifyUser?: boolean }>("claude-cli-notification", (event) => {
       const sessionId = event.payload?.sessionId;
       if (!sessionId) return;
       const store = useAppStore.getState();
       if (event.payload?.claudeSessionId) {
         store.setClaudeCliSessionId(sessionId, event.payload.claudeSessionId);
       }
+      if (event.payload?.prompt) {
+        const prompt = event.payload.prompt;
+        const fallbackLabel = store.autoRenameClaudeTabFromPrompt(sessionId, prompt);
+        if (fallbackLabel) {
+          const cwd = Object.values(store.tabsByWorktree)
+            .flat()
+            .find((tab) => tab.id === sessionId)?.cwd;
+          commands.agentGenerateTitle(prompt, cwd)
+            .then((title) => {
+              useAppStore.getState().applyClaudeTabGeneratedTitle(sessionId, title, fallbackLabel);
+            })
+            .catch(() => {
+              // Keep the immediate prompt-derived fallback title if SDK title
+              // generation fails (offline, auth issue, timeout, etc.).
+            });
+        }
+      }
+      if (event.payload?.notificationType === "UserPromptSubmit") {
+        store.setClaudeStatus(sessionId, "active");
+        return;
+      }
+
+      if (event.payload?.notificationType === "Stop" || event.payload?.notificationType === "StopFailure") {
+        if (event.payload?.notifyUser !== false) {
+          store.setClaudeStatus(sessionId, "idle");
+        } else {
+          // CLI notifications disabled: clear any active spinner without
+          // lighting the idle badge or firing app-level notifications.
+          store.removeClaudeStatus(sessionId);
+        }
+        return;
+      }
+
       if (event.payload?.notifyUser !== false) {
         store.setClaudeStatus(sessionId, "idle");
       }

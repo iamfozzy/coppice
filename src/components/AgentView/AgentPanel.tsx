@@ -93,9 +93,11 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
   // Recent structured stdout error event time, used to suppress duplicate
   // stderr echoes from the bridge process.
   const lastStructuredErrorAtRef = useRef(0);
-  // Whether we've already renamed this tab (to avoid overwriting Haiku title with truncated prompt).
-  // If the tab was restored from cache (has existing messages), treat it as already renamed.
-  const tabRenamedRef = useRef((session?.messages?.length ?? 0) > 0);
+  // Only brand-new tabs should accept automatic titles. Restored tabs may
+  // start a fresh bridge process for a follow-up prompt; ignore title events
+  // there so a later prompt cannot rename an existing session.
+  const autoTitleEligibleRef = useRef((session?.messages?.length ?? 0) === 0);
+  const quickTitleAppliedRef = useRef(false);
 
   // Stall detection — track last event from bridge, warn if no events for 30s while busy
   const lastEventTimeRef = useRef(Date.now());
@@ -133,10 +135,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
     }
   };
 
-  /** Immediately rename tab to a truncated version of the prompt. */
+  /** Immediately rename tab to a truncated version of the first prompt. */
   const applyQuickTitle = (prompt: string) => {
-    if (tabRenamedRef.current) return;
-    tabRenamedRef.current = true;
+    if (!autoTitleEligibleRef.current || quickTitleAppliedRef.current) return;
+    quickTitleAppliedRef.current = true;
     const words = prompt.trim().split(/\s+/).slice(0, 6).join(" ");
     const label = words.length > 30 ? words.slice(0, 30) + "..." : words;
     if (label) renameThisTab(label);
@@ -634,7 +636,10 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
 
       case "title": {
         const title = msg.title as string;
-        if (title) renameThisTab(title);
+        if (title && autoTitleEligibleRef.current) {
+          renameThisTab(title);
+          autoTitleEligibleRef.current = false;
+        }
         break;
       }
 

@@ -38,7 +38,7 @@ export function ScratchpadNode() {
   return (
     <>
       <div
-        className={`flex items-center gap-2 px-3 py-1.5 text-[length:var(--app-font-11)] cursor-pointer transition-colors ${
+        className={`flex items-center gap-2 px-3 py-2 text-[length:var(--app-font-11)] cursor-pointer transition-colors ${
           isSelected
             ? "bg-accent-muted text-accent-hover"
             : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
@@ -67,7 +67,7 @@ export function ScratchpadNode() {
           </span>
         )}
       </div>
-      <div className="border-b border-border-primary mx-3 my-1" />
+      <div className="border-b border-border-primary" />
     </>
   );
 }

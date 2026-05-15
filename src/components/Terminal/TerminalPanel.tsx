@@ -161,12 +161,6 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       return true;
     });
 
-    const bellDisposable = term.onBell(() => {
-      if (isClaude) {
-        useAppStore.getState().setClaudeStatus(sessionId, "idle");
-      }
-    });
-
     const osc9Disposable = term.parser.registerOscHandler(9, (data) => {
       // iTerm2/ConEmu progress convention: OSC 9;4;state;percent BEL.
       // state 0 clears; state 1/3 are normal/indeterminate; 2/4 are error/warn.
@@ -232,11 +226,10 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     };
     window.addEventListener("terminal-clear", onClear);
 
-    // Send input to backend
+    // Send input to backend. Claude CLI activity is tracked via its lifecycle
+    // hooks (UserPromptSubmit/Stop) rather than raw Enter keypresses, because
+    // startup prompts such as "trust this folder" also use Enter.
     const dataDisposable = term.onData((data) => {
-      if (isClaude && data.includes("\r")) {
-        useAppStore.getState().setClaudeStatus(sessionId, "active");
-      }
       commands.terminalWrite(sessionId, data).catch(() => {});
     });
 
@@ -311,7 +304,6 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       resizeObserver.disconnect();
       window.removeEventListener("sidebar-resize-end", onSidebarResizeEnd);
       dataDisposable.dispose();
-      bellDisposable.dispose();
       osc9Disposable.dispose();
       container.removeEventListener("paste", onPaste, true);
       container.removeEventListener("contextmenu", onContextMenu, true);

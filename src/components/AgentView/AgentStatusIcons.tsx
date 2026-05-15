@@ -1,29 +1,34 @@
 import { useEffect, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
-// Randomized thinking phrases — Claude-flavored personality
+// Randomized thinking phrases — comedy loading screen edition
 // ---------------------------------------------------------------------------
 const THINKING_PHRASES = [
-  "Thinking...",
-  "Pondering...",
-  "Mulling it over...",
-  "Reasoning...",
-  "Considering...",
-  "Working through it...",
-  "Turning it over...",
-  "Piecing it together...",
-  "Connecting the dots...",
-  "Noodling on it...",
-  "Deliberating...",
-  "Processing...",
-  "Weighing options...",
-  "Reflecting...",
-  "Chewing on that...",
-  "Let me think...",
-  "Hmm, let me see...",
-  "Figuring it out...",
-  "Spinning up thoughts...",
-  "On it...",
+  "Consulting the rubber duck...",
+  "Teaching a toaster to reason...",
+  "Convincing electrons to cooperate...",
+  "Shaking the magic 8-ball...",
+  "Asking the void nicely...",
+  "Warming up the tiny brain hamsters...",
+  "Untangling spaghetti logic...",
+  "Summoning a useful thought...",
+  "Recalculating, but with drama...",
+  "Putting on my serious goggles...",
+  "Searching under the couch cushions...",
+  "Persuading the bits to line up...",
+  "Running the vibes through a compiler...",
+  "Interrogating a suspicious semicolon...",
+  "Turning caffeine into answers...",
+  "Herding Schrödinger's cats...",
+  "Loading wisdom from floppy disk...",
+  "Polishing the crystal ball...",
+  "Negotiating with the stack trace...",
+  "Making the interns in my GPU sweat...",
+  "Checking if this is a feature...",
+  "Spinning up the brain carousel...",
+  "Consulting the council of tabs...",
+  "Staring intensely at the problem...",
+  "Performing artisanal overthinking...",
 ];
 
 /** Pick a random thinking phrase. Stable per mount — only changes on remount. */

@@ -93,6 +93,7 @@ pub fn run() {
             commands::agent::agent_close,
             commands::agent::agent_exists,
             commands::agent::agent_check_available,
+            commands::agent::agent_generate_title,
             commands::agent::pi_get_models,
             commands::agent::pi_oauth_login,
             commands::agent::pi_oauth_check,

@@ -57,6 +57,20 @@ function clearIdleClaudeStatus(
   return rest;
 }
 
+function isDefaultClaudeLabel(label: string) {
+  return /^Claude #(\d+)$/.test(label);
+}
+
+function titleFromPrompt(prompt: string) {
+  const cleaned = prompt
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/^[/\\][\w-]+\s*/, "");
+  const words = cleaned.split(/\s+/).filter(Boolean).slice(0, 6).join(" ");
+  if (!words) return "";
+  return words.length > 30 ? `${words.slice(0, 30)}...` : words;
+}
+
 const CLI_TABS_STORAGE_KEY = "coppice:cliTabs:v1";
 
 interface PersistedCliTabs {
@@ -249,6 +263,8 @@ export interface TabInfo {
   cwd: string;
   /** Claude Code CLI session id captured from hooks, used to resume restored CLI tabs. */
   claudeSessionId?: string;
+  /** True after the first Claude CLI user prompt has been used/considered for auto-title. */
+  claudeFirstPromptTitleSet?: boolean;
   /** Transient: true only for CLI tabs restored after app launch. */
   resumeOnLaunch?: boolean;
   // For diff tabs
@@ -406,6 +422,8 @@ interface AppState {
   newTerminalTab: (worktreeId: string) => void;
   newClaudeTab: (worktreeId: string) => void;
   setClaudeCliSessionId: (tabId: string, claudeSessionId: string) => void;
+  autoRenameClaudeTabFromPrompt: (tabId: string, prompt: string) => string | null;
+  applyClaudeTabGeneratedTitle: (tabId: string, title: string, expectedCurrentLabel: string) => void;
   addAgentTab: (worktreeId: string, cwd: string, prompt?: string, model?: string, backend?: AgentBackend) => void;
   newAgentTab: (worktreeId: string, backend?: AgentBackend) => void;
   newDefaultSessionTab: (worktreeId: string, cwd?: string) => void;
@@ -889,7 +907,16 @@ export const useAppStore = create<AppState>((set, get) => ({
             tab.cwd &&
             !existingIds.has(tab.id)
           )
-          .map((tab) => tab.type === "claude" ? { ...tab, resumeOnLaunch: true } : tab);
+          .map((tab) => tab.type === "claude"
+            ? {
+              ...tab,
+              // Existing Claude sessions should not be retitled from a later
+              // prompt after app restart. Preserve an explicit flag when
+              // present, otherwise treat resumable/non-default tabs as done.
+              claudeFirstPromptTitleSet: tab.claudeFirstPromptTitleSet ?? (!!tab.claudeSessionId || !isDefaultClaudeLabel(tab.label)),
+              resumeOnLaunch: true,
+            }
+            : tab);
         if (restored.length === 0) continue;
         nextTabsByWorktree[worktreeId] = [...existing, ...restored];
         for (const tab of restored) nextIndex[tab.id] = worktreeId;
@@ -1179,6 +1206,56 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...state.tabsByWorktree,
         [worktreeId]: (state.tabsByWorktree[worktreeId] ?? []).map((t) =>
           t.id === tabId ? { ...t, claudeSessionId } : t
+        ),
+      },
+    }));
+    persistCliTabsSnapshot(get());
+  },
+
+  autoRenameClaudeTabFromPrompt: (tabId, prompt) => {
+    const s = get();
+    const worktreeId = s.tabWorktreeIndex[tabId];
+    if (!worktreeId || !prompt.trim()) return null;
+    const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab || tab.type !== "claude" || tab.claudeFirstPromptTitleSet) return null;
+
+    const nextLabel = isDefaultClaudeLabel(tab.label) ? titleFromPrompt(prompt) : "";
+    set((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [worktreeId]: (state.tabsByWorktree[worktreeId] ?? []).map((t) => {
+          if (t.id !== tabId) return t;
+          return {
+            ...t,
+            ...(nextLabel ? { label: nextLabel } : {}),
+            claudeFirstPromptTitleSet: true,
+          };
+        }),
+      },
+    }));
+    persistCliTabsSnapshot(get());
+    return nextLabel || null;
+  },
+
+  applyClaudeTabGeneratedTitle: (tabId, title, expectedCurrentLabel) => {
+    const nextLabel = title.trim();
+    if (!nextLabel || !expectedCurrentLabel) return;
+    const s = get();
+    const worktreeId = s.tabWorktreeIndex[tabId];
+    if (!worktreeId) return;
+    const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab || tab.type !== "claude") return;
+    // Do not overwrite a user/manual rename that happened while the SDK title
+    // request was in flight.
+    if (tab.label !== expectedCurrentLabel) return;
+
+    set((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [worktreeId]: (state.tabsByWorktree[worktreeId] ?? []).map((t) =>
+          t.id === tabId ? { ...t, label: nextLabel } : t
         ),
       },
     }));

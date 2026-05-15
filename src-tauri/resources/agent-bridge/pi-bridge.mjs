@@ -1778,17 +1778,18 @@ let titleGenerated = false;
  */
 async function generateTitle(prompt, provider, modelId) {
   log("Generating title for prompt:", prompt.slice(0, 80));
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 30_000);
   try {
     // Ensure the provider's API key env var is set — completeSimple runs
-    // outside AgentSession and doesn't have access to authStorage directly.
+    // outside AgentSession and may not share AgentSession's authStorage path.
+    let apiKey;
     if (authStorage) {
       const envVar = PROVIDER_ENV_VARS[provider];
-      if (envVar && !process.env[envVar]) {
-        const key = await authStorage.getApiKey(provider);
-        if (key) {
-          process.env[envVar] = key;
-          log("Title: set", envVar, "from authStorage");
-        }
+      apiKey = await authStorage.getApiKey(provider).catch(() => undefined);
+      if (envVar && apiKey && !process.env[envVar]) {
+        process.env[envVar] = apiKey;
+        log("Title: set", envVar, "from authStorage");
       }
     }
 
@@ -1805,8 +1806,15 @@ async function generateTitle(prompt, provider, modelId) {
       ],
     }, {
       maxTokens: 100,
+      signal: abort.signal,
+      timeoutMs: 30_000,
+      ...(apiKey ? { apiKey } : {}),
     });
-    let title = (result.content || [])
+    if (result.stopReason === "error") {
+      throw new Error(result.errorMessage || "title model returned an error");
+    }
+    const blocks = Array.isArray(result.content) ? result.content : [];
+    let title = blocks
       .filter((b) => b.type === "text" && b.text)
       .map((b) => b.text)
       .join("");
@@ -1815,6 +1823,8 @@ async function generateTitle(prompt, provider, modelId) {
     if (title) emit({ type: "title", title });
   } catch (err) {
     log("Title generation failed:", err.message);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
