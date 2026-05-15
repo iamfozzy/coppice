@@ -306,7 +306,7 @@ interface AppState {
   sidebarWidth: number;
   collapsedProjectIds: Set<string>;
   pendingClaudeCommand: string | null;
-  pendingAgentPrompt: { prompt: string; model?: string } | null;
+  pendingAgentPrompt: { prompt: string; model?: string; backend?: AgentBackend } | null;
   pendingRunner: { key: string } | null;
   deletingWorktreeIds: Set<string>;
 
@@ -362,8 +362,8 @@ interface AppState {
   toggleProjectCollapsed: (projectId: string) => void;
   requestClaudeTab: (command: string) => void;
   consumeClaudeCommand: () => string | null;
-  requestAgentTab: (prompt: string, model?: string) => void;
-  consumeAgentPrompt: () => { prompt: string; model?: string } | null;
+  requestAgentTab: (prompt: string, model?: string, backend?: AgentBackend) => void;
+  consumeAgentPrompt: () => { prompt: string; model?: string; backend?: AgentBackend } | null;
   requestRunner: (key: string) => void;
   consumeRunner: () => { key: string } | null;
 
@@ -572,7 +572,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (cmd) set({ pendingClaudeCommand: null });
     return cmd;
   },
-  requestAgentTab: (prompt, model) => set({ pendingAgentPrompt: { prompt, model } }),
+  requestAgentTab: (prompt, model, backend) => set({ pendingAgentPrompt: { prompt, model, backend } }),
   consumeAgentPrompt: () => {
     const p = get().pendingAgentPrompt;
     if (p) set({ pendingAgentPrompt: null });

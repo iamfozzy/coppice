@@ -24,9 +24,12 @@ pub fn terminal_spawn(
     rows: Option<u16>,
     cols: Option<u16>,
 ) -> Result<(), String> {
-    let shell_override = {
+    let (shell_override, compact_prompt) = {
         let s = settings.0.lock().unwrap();
-        if s.shell.is_empty() { None } else { Some(s.shell.clone()) }
+        (
+            if s.shell.is_empty() { None } else { Some(s.shell.clone()) },
+            s.terminal_compact_prompt,
+        )
     };
     pty.spawn(
         &session_id,
@@ -36,6 +39,7 @@ pub fn terminal_spawn(
         cols.unwrap_or(80),
         &app,
         shell_override.as_deref(),
+        compact_prompt,
     )
 }
 
@@ -87,7 +91,26 @@ pub fn terminal_spawn_claude(
         cols.unwrap_or(80),
         &app,
         shell_override.as_deref(),
+        false,
     )
+}
+
+#[tauri::command]
+pub fn build_claude_prompt_command(
+    settings: State<'_, SettingsState>,
+    claude_command: Option<String>,
+    prompt: String,
+) -> Result<String, String> {
+    let shell_override = {
+        let s = settings.0.lock().unwrap();
+        if s.shell.is_empty() { None } else { Some(s.shell.clone()) }
+    };
+    let command = claude_command
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .unwrap_or("claude");
+    Ok(format!("{} {}", command, shell_quote_prompt_arg(&prompt, shell_override.as_deref())))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -551,7 +574,18 @@ fn inject_claude_cli_args(command: &str, settings_path: &Path, mcp_config_path: 
         });
 
     if let Some(idx) = insert_at {
-        format!("{}{}{}", &command[..idx], extra_args, &command[idx..])
+        if command[idx..].trim().is_empty() {
+            format!("{}{}{}", &command[..idx], extra_args, &command[idx..])
+        } else {
+            // `--mcp-config` is a variadic Claude CLI option (`<configs...>`),
+            // so putting it before an existing prompt makes Claude treat that
+            // prompt as another MCP config file. When the command already has
+            // arguments after `claude` (prompt, model flags, resume flags, ...),
+            // append our settings/MCP args at the end instead; Claude accepts
+            // options after the prompt and the variadic option then only sees
+            // the generated config path.
+            format!("{}{}", command, extra_args)
+        }
     } else {
         format!("{}{}", command, extra_args)
     }
@@ -615,10 +649,44 @@ fn unquote_shell_token(token: &str) -> String {
 
 fn shell_quote_arg(arg: &str) -> String {
     if cfg!(target_os = "windows") {
-        format!("\"{}\"", arg.replace('"', "\\\""))
+        shell_quote_powershell_arg(arg)
     } else {
         format!("'{}'", arg.replace('\'', "'\\''"))
     }
+}
+
+fn shell_quote_prompt_arg(arg: &str, shell_override: Option<&str>) -> String {
+    if cfg!(target_os = "windows") && shell_override.map(is_cmd_shell).unwrap_or(false) {
+        shell_quote_cmd_arg(arg)
+    } else {
+        shell_quote_arg(arg)
+    }
+}
+
+fn shell_quote_powershell_arg(arg: &str) -> String {
+    // Claude CLI commands run in a PowerShell-family shell by default on
+    // Windows (see the deferred-type path in PtyManager). Escape the
+    // PowerShell metacharacters that are still active inside double quotes
+    // so prompts containing `$`, backticks, or quotes reach Claude intact.
+    let escaped = arg
+        .replace('`', "``")
+        .replace('"', "`\"")
+        .replace('$', "`$");
+    format!("\"{}\"", escaped)
+}
+
+fn shell_quote_cmd_arg(arg: &str) -> String {
+    format!("\"{}\"", arg.replace('"', "\\\""))
+}
+
+fn is_cmd_shell(shell: &str) -> bool {
+    let name = shell
+        .replace('\\', "/")
+        .rsplit('/')
+        .next()
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
+    name == "cmd" || name == "cmd.exe"
 }
 
 fn path_to_string(path: &Path) -> Result<String, String> {

@@ -520,6 +520,7 @@ pub fn github_auth_login(
         cols.unwrap_or(80),
         &app,
         None,
+        false,
     )
 }
 

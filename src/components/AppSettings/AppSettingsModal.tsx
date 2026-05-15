@@ -46,6 +46,7 @@ const defaultSettings: AppSettings = {
   app_font_size: 16,
   terminal_emulator: "",
   shell: "",
+  terminal_compact_prompt: true,
   theme: "dim",
   window_decorations: true,
   notification_sound: true,
@@ -189,6 +190,12 @@ export function AppSettingsModal() {
             onChange={(shell) => setForm({ ...form, shell })}
             placeholder="$SHELL"
             hint="Override default shell for terminal sessions"
+          />
+          <Toggle
+            label="Compact terminal prompt"
+            checked={form.terminal_compact_prompt}
+            onChange={(terminal_compact_prompt) => setForm({ ...form, terminal_compact_prompt })}
+            hint="Shortens new plain terminal prompts so long worktree paths don't fill the command line."
           />
           <div>
             <label className="block text-xs text-text-secondary mb-1">Theme</label>

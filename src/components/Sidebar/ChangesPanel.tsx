@@ -34,6 +34,32 @@ function buildTooltipPath(basePath: string, file: string) {
   return `${trimmedBase}/${file}`;
 }
 
+function fallbackDoubleQuoteArg(value: string) {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\$/g, "\\$").replace(/`/g, "\\`")}"`;
+}
+
+function firstShellToken(command: string) {
+  const trimmed = command.trim();
+  if (!trimmed) return "";
+  const quote = trimmed[0] === '"' || trimmed[0] === "'" ? trimmed[0] : "";
+  if (quote) {
+    for (let i = 1; i < trimmed.length; i += 1) {
+      if (trimmed[i] === quote && trimmed[i - 1] !== "\\") return trimmed.slice(1, i);
+    }
+  }
+  return trimmed.split(/\s+/, 1)[0] ?? "";
+}
+
+function commandBasename(token: string) {
+  return token.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
+}
+
+function looksLikeClaudeCliCommand(command: string, configuredClaudeCommand: string) {
+  const first = commandBasename(firstShellToken(command));
+  const configured = commandBasename(firstShellToken(configuredClaudeCommand));
+  return first === configured || first === "claude" || first === "claude.exe" || first === "claude.cmd";
+}
+
 export const ChangesPanel = memo(function ChangesPanel() {
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
   const selectedWorktreeId = useAppStore((s) => s.selectedWorktreeId);
@@ -220,13 +246,19 @@ export const ChangesPanel = memo(function ChangesPanel() {
 
   const defaultSessionMode = resolveDefaultSessionMode(appSettings);
   const useAgent = defaultSessionMode !== "terminal";
-  const backend = defaultSessionMode === "pi" ? "pi" : appSettings?.agent_backend || "claude";
+  const backend = defaultSessionMode === "pi" ? "pi" : "claude";
   const sendToAgent = (prompt: string, model?: string) => {
     if (useAgent) {
-      requestAgentTab(prompt, model);
-    } else {
-      requestClaudeTab(`${claudeCmd} "${prompt}"`);
+      requestAgentTab(prompt, model, backend);
+      return;
     }
+
+    commands.buildClaudePromptCommand(claudeCmd, prompt)
+      .then(requestClaudeTab)
+      .catch((error) => {
+        console.error("Failed to build Claude CLI prompt command:", error);
+        requestClaudeTab(`${claudeCmd} ${fallbackDoubleQuoteArg(prompt)}`);
+      });
   };
 
   // In Pi mode, use the user's default model (no override needed).
@@ -303,11 +335,14 @@ export const ChangesPanel = memo(function ChangesPanel() {
             branch={worktree.branch}
             worktreePath={worktree.path}
             onCreatePR={() => {
-              if (project.pr_create_skill) {
+              const prCreateSkill = project.pr_create_skill.trim();
+              if (prCreateSkill) {
                 if (useAgent) {
-                  requestAgentTab(project.pr_create_skill);
+                  requestAgentTab(prCreateSkill, undefined, backend);
+                } else if (looksLikeClaudeCliCommand(prCreateSkill, claudeCmd)) {
+                  requestClaudeTab(prCreateSkill);
                 } else {
-                  requestClaudeTab(project.pr_create_skill);
+                  sendToAgent(prCreateSkill);
                 }
               } else {
                 sendToAgent(

@@ -59,6 +59,7 @@ pub fn run() {
             // Terminal commands
             commands::terminal::terminal_spawn,
             commands::terminal::terminal_spawn_claude,
+            commands::terminal::build_claude_prompt_command,
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_exists,

@@ -97,7 +97,7 @@ export function WorktreeView() {
     if (pendingAgentPrompt && worktree) {
       const pending = consumeAgentPrompt();
       if (pending) {
-        addAgentTab(worktree.id, worktree.path, pending.prompt, pending.model);
+        addAgentTab(worktree.id, worktree.path, pending.prompt, pending.model, pending.backend);
       }
     }
   }, [pendingAgentPrompt, worktree, consumeAgentPrompt, addAgentTab]);

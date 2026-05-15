@@ -65,6 +65,7 @@ export interface AppSettings {
   app_font_size: number;
   terminal_emulator: string;
   shell: string;
+  terminal_compact_prompt: boolean;
   theme: ThemeMode;
   window_decorations: boolean;
   notification_sound: boolean;
