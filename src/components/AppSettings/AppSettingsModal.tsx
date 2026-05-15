@@ -123,14 +123,14 @@ export function AppSettingsModal() {
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200]"
+      className="fixed inset-0 z-[200] bg-bg-secondary"
       onClick={(e) => {
         if (e.target === e.currentTarget) closeAppSettings();
       }}
     >
-      <div className="bg-bg-secondary border border-border-primary rounded-lg w-[640px] max-w-[calc(100vw-2rem)] max-h-[85vh] overflow-y-auto shadow-2xl">
+      <div className="flex h-full w-full flex-col bg-bg-secondary">
         {/* Header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-border-primary bg-bg-secondary">
+        <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-border-primary bg-bg-secondary">
           <h2 className="text-sm font-semibold text-text-primary">App Settings</h2>
           <button
             onClick={closeAppSettings}
@@ -143,7 +143,7 @@ export function AppSettingsModal() {
         </div>
 
         {/* Form */}
-        <div className="px-6 py-5 space-y-5">
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           <p className="text-[length:var(--app-font-11)] text-text-tertiary">
             Global defaults. Leave blank to use platform defaults. Per-project settings override these.
           </p>
@@ -411,7 +411,7 @@ export function AppSettingsModal() {
         </div>
 
         {/* Footer */}
-        <div className="sticky bottom-0 flex items-center justify-end px-6 py-4 border-t border-border-primary gap-2 bg-bg-secondary">
+        <div className="shrink-0 flex items-center justify-end px-6 py-4 border-t border-border-primary gap-2 bg-bg-secondary">
           <button
             onClick={closeAppSettings}
             className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
