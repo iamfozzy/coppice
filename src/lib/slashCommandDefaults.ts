@@ -25,7 +25,7 @@ export const DEFAULT_CLAUDE_SLASH_COMMANDS: SlashCommand[] = [
  */
 export const DEFAULT_PI_SLASH_COMMANDS: SlashCommand[] = [
   { name: "compact", description: "Compact the conversation history", argumentHint: "[instructions]" },
-  { name: "model", description: "Change the model", argumentHint: "[model]" },
+  { name: "model", description: "Change the model", argumentHint: "[provider/model]" },
   { name: "session", description: "Show session info and stats", argumentHint: "" },
 ];
 

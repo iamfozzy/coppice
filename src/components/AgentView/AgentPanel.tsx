@@ -773,6 +773,12 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
       case "heartbeat":
         break;
 
+      case "model_changed": {
+        const model = msg.model as string | undefined;
+        if (model) setModel(sessionId, model);
+        break;
+      }
+
       // Pi bridge: dynamic model list from all available providers
       case "pi_models": {
         const models = msg.models as Array<{
