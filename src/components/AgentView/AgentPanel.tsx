@@ -764,11 +764,20 @@ export function AgentPanel({ sessionId, cwd, initialPrompt, visible }: Props) {
           content: `${label} — context summarized${preTokens ? ` (was ${Math.round(preTokens / 1000)}K tokens)` : ""}.`,
           timestamp: Date.now(),
         });
+        // Pi reports context usage as unknown immediately after compaction
+        // until the next model response; clear the stale pre-compaction value.
+        useAppStore.getState().setAgentLastTurnCost(sessionId, null);
         break;
       }
 
       case "heartbeat":
         break;
+
+      case "model_changed": {
+        const model = msg.model as string | undefined;
+        if (model) setModel(sessionId, model);
+        break;
+      }
 
       // Pi bridge: dynamic model list from all available providers
       case "pi_models": {

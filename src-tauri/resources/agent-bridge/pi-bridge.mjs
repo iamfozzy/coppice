@@ -742,12 +742,14 @@ async function runChildSession({ task, agent: roleName, childId, signal, model: 
   function summarizeToolArgs(toolName, args) {
     if (!args) return "";
     const a = typeof args === "object" ? args : {};
-    switch (toolName) {
+    const name = String(toolName || "").toLowerCase();
+    const filePath = a.file_path || a.path;
+    switch (name) {
       case "read":
-        return a.file_path ? shortPath(a.file_path) : "";
+        return [filePath ? shortPath(filePath) : "", a.offset ? `:${a.offset}` : ""].filter(Boolean).join("");
       case "edit":
       case "write":
-        return a.file_path ? shortPath(a.file_path) : "";
+        return filePath ? shortPath(filePath) : "";
       case "grep":
       case "code_search":
         return [a.pattern, a.path ? `in ${shortPath(a.path)}` : ""].filter(Boolean).join(" ");
@@ -1523,6 +1525,32 @@ let currentCwd = process.cwd();
 let currentPermissionMode = "default";
 let heartbeatTimer = null;
 
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => emit({ type: "heartbeat" }), 10_000);
+}
+
+function emitSessionResult(subtype = "success") {
+  const contextUsage = session?.getContextUsage?.();
+  const currentModel = session?.model;
+  const contextWindow = contextUsage?.contextWindow || currentModel?.contextWindow || 0;
+  emit({
+    type: "result",
+    subtype,
+    sessionId: "",
+    contextWindow,
+    durationMs: 0,
+    numTurns: 0,
+  });
+}
+
 /**
  * Env var names per provider — matches Pi's own getApiKeyEnvVars() mapping
  * from @earendil-works/pi-ai/dist/env-api-keys.js so credential resolution
@@ -1905,10 +1933,7 @@ function subscribeToSessionEvents(agentSession) {
         });
 
         lastTurnUsage = null;
-        if (heartbeatTimer) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
-        }
+        stopHeartbeat();
         break;
       }
 
@@ -1928,12 +1953,17 @@ function subscribeToSessionEvents(agentSession) {
           emit({
             type: "compact_boundary",
             summary: event.result.summary || "",
+            trigger: event.reason,
+            preTokens: event.result.tokensBefore,
           });
         } else if (event.aborted) {
           log("compaction aborted");
         } else if (event.errorMessage) {
-          log(`compaction failed: ${event.errorMessage}`);
-          emit({ type: "error", message: `Compaction failed: ${event.errorMessage}` });
+          const message = event.errorMessage.startsWith("Compaction failed:")
+            ? event.errorMessage
+            : `Compaction failed: ${event.errorMessage}`;
+          log(message);
+          emit({ type: "error", message });
         }
         break;
 
@@ -2059,6 +2089,285 @@ async function expandClaudeCommand(prompt, cwd) {
   return null;
 }
 
+function parseCompactCommand(text) {
+  if (typeof text !== "string") return null;
+  const match = text.match(/^\/compact(?:\s+([\s\S]*))?$/);
+  if (!match) return null;
+  const customInstructions = match[1]?.trim();
+  return { customInstructions: customInstructions || undefined };
+}
+
+function parseModelCommand(text) {
+  if (typeof text !== "string") return null;
+  const match = text.match(/^\/model(?:\s+([\s\S]*))?$/);
+  if (!match) return null;
+  const modelReference = match[1]?.trim();
+  return { modelReference: modelReference || undefined };
+}
+
+function parseSessionCommand(text) {
+  if (typeof text !== "string") return null;
+  const match = text.match(/^\/session(?:\s+([\s\S]*))?$/);
+  if (!match) return null;
+  const args = match[1]?.trim();
+  return { args: args || undefined };
+}
+
+function formatModelRef(model) {
+  if (!model) return "SDK default";
+  return `${model.provider}/${model.id}`;
+}
+
+function modelDisplayName(model) {
+  const ref = formatModelRef(model);
+  return model?.name && model.name !== model.id ? `${ref} (${model.name})` : ref;
+}
+
+function findExactModelReferenceMatch(modelReference, availableModels) {
+  const trimmedReference = modelReference.trim();
+  if (!trimmedReference) return undefined;
+  const normalizedReference = trimmedReference.toLowerCase();
+
+  const canonicalMatches = availableModels.filter(
+    (model) => `${model.provider}/${model.id}`.toLowerCase() === normalizedReference,
+  );
+  if (canonicalMatches.length === 1) return canonicalMatches[0];
+  if (canonicalMatches.length > 1) return undefined;
+
+  const slashIndex = trimmedReference.indexOf("/");
+  if (slashIndex !== -1) {
+    const provider = trimmedReference.substring(0, slashIndex).trim().toLowerCase();
+    const modelId = trimmedReference.substring(slashIndex + 1).trim().toLowerCase();
+    if (provider && modelId) {
+      const providerMatches = availableModels.filter(
+        (model) => model.provider.toLowerCase() === provider && model.id.toLowerCase() === modelId,
+      );
+      if (providerMatches.length === 1) return providerMatches[0];
+      if (providerMatches.length > 1) return undefined;
+    }
+  }
+
+  const idMatches = availableModels.filter((model) => model.id.toLowerCase() === normalizedReference);
+  return idMatches.length === 1 ? idMatches[0] : undefined;
+}
+
+function getModelCandidates() {
+  const candidates = [];
+  const seen = new Set();
+  const add = (model) => {
+    if (!model) return;
+    const key = `${model.provider}/${model.id}`.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(model);
+  };
+
+  add(session?.model);
+  let providers = [];
+  try {
+    providers = getProviders();
+  } catch {
+    providers = [];
+  }
+  for (const provider of providers) {
+    try {
+      for (const model of getModels(provider)) add(model);
+    } catch {
+      // Provider may not be available in this environment — skip it.
+    }
+  }
+  return candidates;
+}
+
+function resolveModelReference(modelReference) {
+  const trimmed = modelReference.trim();
+  if (!trimmed) throw new Error("No model specified");
+
+  const candidates = getModelCandidates();
+  const exact = findExactModelReferenceMatch(trimmed, candidates);
+  if (exact) return exact;
+
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex !== -1) {
+    const provider = trimmed.substring(0, slashIndex).trim();
+    const modelId = trimmed.substring(slashIndex + 1).trim();
+    if (!provider || !modelId) throw new Error(`Invalid model reference: ${trimmed}`);
+    return getModel(provider, modelId);
+  }
+
+  const currentProvider = session?.model?.provider || "anthropic";
+  try {
+    return getModel(currentProvider, trimmed);
+  } catch {
+    // Fall through to an Anthropic fallback for common bare Claude model IDs.
+  }
+
+  if (currentProvider !== "anthropic") {
+    try {
+      return getModel("anthropic", trimmed);
+    } catch {
+      // Fall through to a helpful error below.
+    }
+  }
+
+  throw new Error(`Unknown model: ${trimmed}. Use /model provider/model-id for non-current providers.`);
+}
+
+function formatNumber(value) {
+  return Math.round(value || 0).toLocaleString();
+}
+
+function formatCost(value) {
+  return `$${(value || 0).toFixed(4)}`;
+}
+
+function formatSessionStats() {
+  const stats = session.getSessionStats();
+  const contextUsage = stats.contextUsage || session.getContextUsage?.();
+  const totalCost = stats.cost > 0 ? stats.cost : sessionTotals.totalCostUsd;
+  const lines = [
+    "## Session Info",
+    "",
+    `Model: \`${formatModelRef(session.model)}\``,
+    `File: \`${stats.sessionFile || "In-memory"}\``,
+    `ID: \`${stats.sessionId}\``,
+    "",
+    "## Messages",
+    `- User: ${formatNumber(stats.userMessages)}`,
+    `- Assistant: ${formatNumber(stats.assistantMessages)}`,
+    `- Tool calls: ${formatNumber(stats.toolCalls)}`,
+    `- Tool results: ${formatNumber(stats.toolResults)}`,
+    `- Total: ${formatNumber(stats.totalMessages)}`,
+    "",
+    "## Tokens",
+    `- Input: ${formatNumber(stats.tokens.input)}`,
+    `- Output: ${formatNumber(stats.tokens.output)}`,
+  ];
+
+  if (stats.tokens.cacheRead > 0) lines.push(`- Cache read: ${formatNumber(stats.tokens.cacheRead)}`);
+  if (stats.tokens.cacheWrite > 0) lines.push(`- Cache write: ${formatNumber(stats.tokens.cacheWrite)}`);
+  lines.push(`- Total: ${formatNumber(stats.tokens.total)}`);
+
+  if (totalCost > 0) {
+    lines.push("", "## Cost", `- Total: ${formatCost(totalCost)}`);
+  }
+
+  if (contextUsage) {
+    const contextText = contextUsage.tokens === null || contextUsage.tokens === undefined
+      ? "unknown until the next model response"
+      : `${formatNumber(contextUsage.tokens)} / ${formatNumber(contextUsage.contextWindow)} (${Math.min(100, contextUsage.percent || 0).toFixed(1)}%)`;
+    lines.push("", "## Context", `- Current: ${contextText}`);
+  }
+
+  return lines.join("\n");
+}
+
+async function switchModel(modelReference, source = "command") {
+  if (!session || typeof session.setModel !== "function") {
+    throw new Error("Model switching is not available for this session.");
+  }
+  const nextModel = resolveModelReference(modelReference);
+  await session.setModel(nextModel);
+  const modelRef = formatModelRef(nextModel);
+  log(`model switched to ${modelRef} via ${source}`);
+  emit({ type: "model_changed", model: modelRef });
+  return nextModel;
+}
+
+async function runCompactCommand(text) {
+  const parsed = parseCompactCommand(text);
+  if (!parsed) return false;
+
+  if (!session || typeof session.compact !== "function") {
+    emit({ type: "error", message: "Compaction is not available for this session." });
+    emitSessionResult("error");
+    stopHeartbeat();
+    return true;
+  }
+
+  try {
+    log(`manual compaction requested${parsed.customInstructions ? " with custom instructions" : ""}`);
+    await session.compact(parsed.customInstructions);
+    emitSessionResult("success");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`manual compaction command failed: ${message}`);
+    // Non-abort failures are already surfaced by the compaction_end event.
+    // Aborts don't emit an error, so complete the lifecycle to unblock input.
+    if (message === "Compaction cancelled" || err?.name === "AbortError") {
+      emitSessionResult("interrupted");
+    }
+  } finally {
+    stopHeartbeat();
+  }
+
+  return true;
+}
+
+async function runModelCommand(text) {
+  const parsed = parseModelCommand(text);
+  if (!parsed) return false;
+
+  try {
+    if (!parsed.modelReference) {
+      emit({
+        type: "slash_output",
+        stdout: `Current model: \`${formatModelRef(session?.model)}\`\n\nUse the toolbar model picker, or type \`/model provider/model-id\` to switch from chat.`,
+      });
+      emitSessionResult("success");
+      return true;
+    }
+
+    const nextModel = await switchModel(parsed.modelReference, "slash");
+    emit({ type: "slash_output", stdout: `Model switched to \`${modelDisplayName(nextModel)}\`.` });
+    emitSessionResult("success");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`model command failed: ${message}`);
+    emit({ type: "error", message: `Model switch failed: ${message}` });
+    emitSessionResult("error");
+  } finally {
+    stopHeartbeat();
+  }
+
+  return true;
+}
+
+async function runSessionCommand(text, { complete = true } = {}) {
+  const parsed = parseSessionCommand(text);
+  if (!parsed) return false;
+
+  try {
+    if (parsed.args) {
+      emit({ type: "slash_output", stdout: "Usage: `/session`" });
+    } else if (!session || typeof session.getSessionStats !== "function") {
+      emit({ type: "error", message: "Session stats are not available for this session." });
+      if (complete) emitSessionResult("error");
+      return true;
+    } else {
+      emit({ type: "slash_output", stdout: formatSessionStats() });
+    }
+    if (complete) emitSessionResult("success");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`session command failed: ${message}`);
+    emit({ type: "error", message: `Session command failed: ${message}` });
+    if (complete) emitSessionResult("error");
+  } finally {
+    if (complete) stopHeartbeat();
+  }
+
+  return true;
+}
+
+async function runBuiltinCommand(text) {
+  return (await runCompactCommand(text)) || (await runModelCommand(text)) || (await runSessionCommand(text));
+}
+
+function isBuiltinCommand(text) {
+  return !!(parseCompactCommand(text) || parseModelCommand(text) || parseSessionCommand(text));
+}
+
 /**
  * Emit the slash command list for the frontend command picker.
  * Includes: allowed Pi builtins + prompt templates from .pi/prompts/
@@ -2073,7 +2382,7 @@ async function emitSlashCommands() {
   // Add allowed built-in commands
   commands.push(
     { name: "compact", description: "Compact the conversation history", argumentHint: "[instructions]" },
-    { name: "model", description: "Change the model", argumentHint: "[model]" },
+    { name: "model", description: "Change the model", argumentHint: "[provider/model]" },
     { name: "session", description: "Show session info and stats", argumentHint: "" },
   );
   for (const c of commands) seen.add(c.name);
@@ -2359,12 +2668,15 @@ async function startSession(msg) {
   }
 
   // Heartbeat for network stall detection
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(() => emit({ type: "heartbeat" }), 10_000);
+  startHeartbeat();
 
-  // Run the prompt — expand .claude/commands/ templates first (Pi SDK
-  // only expands .pi/prompts/ internally via session.prompt()).
-  let promptText = msg.prompt;
+  // Run the prompt. Built-in commands must be handled by the bridge; Pi's
+  // AgentSession.prompt() only handles extension commands and prompt templates.
+  let promptText = msg.prompt || "";
+  if (await runBuiltinCommand(promptText)) return;
+
+  // Expand .claude/commands/ templates first (Pi SDK only expands .pi/prompts/
+  // internally via session.prompt()).
   if (promptText.startsWith("/")) {
     const expanded = await expandClaudeCommand(promptText, currentCwd);
     if (expanded) {
@@ -2382,10 +2694,7 @@ async function startSession(msg) {
   } catch (err) {
     log("Session error:", err.message, err.stack);
     emit({ type: "error", message: err.message || String(err) });
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-    }
+    stopHeartbeat();
   }
 }
 
@@ -2423,6 +2732,18 @@ async function handleCommand(msg) {
     case "input":
       if (!session) break;
       if (session.isStreaming) {
+        if (isBuiltinCommand(msg.text)) {
+          if (parseSessionCommand(msg.text)) {
+            await runSessionCommand(msg.text, { complete: false });
+          } else {
+            emit({
+              type: "error",
+              message: "Cannot run this slash command while the agent is running. Stop the current run or wait for it to finish, then try again.",
+            });
+          }
+          break;
+        }
+
         // Agent is busy — steer (redirect without losing work).
         // AgentSession.steer() handles slash command validation (throws
         // if it's an extension command) and prompt template expansion.
@@ -2440,9 +2761,14 @@ async function handleCommand(msg) {
           }
         }
       } else {
-        // Agent is idle — new prompt. Expand .claude/commands/ templates first
-        // (Pi SDK only handles .pi/prompts/ templates internally).
-        let inputText = msg.text;
+        // Agent is idle — new prompt. Built-in commands must be handled by the
+        // bridge before falling through to AgentSession.prompt().
+        let inputText = msg.text || "";
+        startHeartbeat();
+        if (await runBuiltinCommand(inputText)) break;
+
+        // Expand .claude/commands/ templates first (Pi SDK only handles
+        // .pi/prompts/ templates internally).
         if (inputText.startsWith("/")) {
           const expanded = await expandClaudeCommand(inputText, currentCwd);
           if (expanded) {
@@ -2450,8 +2776,6 @@ async function handleCommand(msg) {
             inputText = expanded;
           }
         }
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
-        heartbeatTimer = setInterval(() => emit({ type: "heartbeat" }), 10_000);
         try {
           const promptOpts = {};
           const images = parseImages(msg.images);
@@ -2462,6 +2786,7 @@ async function handleCommand(msg) {
         } catch (err) {
           log("Session prompt error:", err.message);
           emit({ type: "error", message: err.message });
+          stopHeartbeat();
         }
       }
       break;
@@ -2476,19 +2801,12 @@ async function handleCommand(msg) {
     case "set_model":
       if (session && msg.model) {
         try {
-          // Parse "provider/modelId" format or just modelId
-          let newProvider, newModelId;
-          if (msg.model.includes("/")) {
-            [newProvider, newModelId] = msg.model.split("/", 2);
-          } else {
-            newProvider = "anthropic";
-            newModelId = msg.model;
-          }
-          const newModel = getModel(newProvider, newModelId);
-          await session.setModel(newModel);
-          log(`Model switched to ${newProvider}/${newModelId}`);
+          await switchModel(msg.model, "toolbar");
         } catch (err) {
-          log("setModel error:", err.message);
+          const message = err instanceof Error ? err.message : String(err);
+          log("setModel error:", message);
+          emit({ type: "model_changed", model: formatModelRef(session.model) });
+          emit({ type: "error", message: `Model switch failed: ${message}` });
         }
       }
       break;
@@ -2597,10 +2915,7 @@ function parseImages(images) {
 
 function cleanup() {
   flushPartialBuffers();
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
+  stopHeartbeat();
   if (sessionUnsubscribe) {
     sessionUnsubscribe();
     sessionUnsubscribe = null;

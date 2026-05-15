@@ -380,7 +380,7 @@ interface AppState {
   setAgentChatMode: (tabId: string, enabled: boolean) => void;
   setAgentPermissionMode: (tabId: string, mode: AgentPermissionMode) => void;
   replaceAgentCost: (tabId: string, cost: AgentCost) => void;
-  setAgentLastTurnCost: (tabId: string, cost: TokenUsage) => void;
+  setAgentLastTurnCost: (tabId: string, cost: TokenUsage | null) => void;
   accumulateQueryOutput: (tabId: string, outputTokens: number) => void;
   resetQueryOutput: (tabId: string) => void;
   setAgentSdkContextWindow: (tabId: string, contextWindow: number) => void;
@@ -969,10 +969,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       claudeStatusByTab: claudeStatus,
       agentSessionByTab: agentSession,
     });
-    // Close the agent bridge process and remove cached state if this was an agent tab
+    // Tear down backend resources for closed tabs. Terminal panels are kept
+    // alive while switching tabs, so their React unmount cleanup intentionally
+    // does not kill the PTY; tab closure must do it explicitly here.
     if (closedTab?.type === "agent") {
       commands.agentClose(tabId).catch(() => {});
       commands.deleteAgentTabCache(tabId).catch(() => {});
+    } else if (closedTab?.type === "terminal" || closedTab?.type === "claude") {
+      commands.terminalKill(tabId).catch(() => {});
     }
   },
 

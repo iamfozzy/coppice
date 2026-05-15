@@ -156,7 +156,7 @@ function ProjectNode({
     <div>
       {/* Project header */}
       <div
-        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[length:var(--app-font-10)] font-medium uppercase tracking-wide text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors group cursor-pointer"
+        className={`w-full flex items-center gap-1.5 px-3 py-1.5 text-[length:var(--app-font-10)] font-medium uppercase tracking-wide text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors group cursor-pointer ${expanded ? "bg-bg-hover" : ""}`}
         onClick={() => !searchOpen && onToggleCollapse()}
         onContextMenu={(e) => {
           e.preventDefault();
