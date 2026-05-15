@@ -29,21 +29,28 @@ function App() {
 
   // Memoize terminal tab list — only recompute when tabs/active/selection change
   const terminalTabs = useMemo(() => {
-    const result: Array<{ id: string; cwd: string; command?: string; visible: boolean }> = [];
+    const result: Array<{ id: string; cwd: string; command?: string; visible: boolean; kind: "terminal" | "claude"; resumeSessionId?: string; resumeLatest?: boolean }> = [];
     for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
       const activeTab = activeTabByWorktree[wtId];
       for (const tab of tabs) {
         if (tab.type === "diff" || tab.type === "agent") continue;
+        // When tile view is open, Claude CLI tabs are rendered inside tiles.
+        // Keep them out of the always-mounted terminal layer to avoid two
+        // xterm panels racing to spawn/attach to the same PTY session.
+        if (showTileView && tab.type === "claude") continue;
         result.push({
           id: tab.id,
           cwd: tab.cwd,
           command: tab.command,
           visible: wtId === selectedWorktreeId && tab.id === activeTab,
+          kind: tab.type,
+          resumeSessionId: tab.claudeSessionId,
+          resumeLatest: tab.type === "claude" ? tab.resumeOnLaunch : false,
         });
       }
     }
     return result;
-  }, [tabsByWorktree, activeTabByWorktree, selectedWorktreeId]);
+  }, [tabsByWorktree, activeTabByWorktree, selectedWorktreeId, showTileView]);
 
   // Memoize agent tab list
   const agentTabs = useMemo(() => {
@@ -176,6 +183,24 @@ function App() {
       }
     });
     return unsub;
+  }, []);
+
+  // Claude CLI Notification hooks arrive through a tiny local HTTP bridge in
+  // the Rust backend. Map them into the same tab/sidebar/dock notification
+  // path used by SDK agent tabs.
+  useEffect(() => {
+    const unlisten = listen<{ sessionId: string; notificationType?: string; claudeSessionId?: string; notifyUser?: boolean }>("claude-cli-notification", (event) => {
+      const sessionId = event.payload?.sessionId;
+      if (!sessionId) return;
+      const store = useAppStore.getState();
+      if (event.payload?.claudeSessionId) {
+        store.setClaudeCliSessionId(sessionId, event.payload.claudeSessionId);
+      }
+      if (event.payload?.notifyUser !== false) {
+        store.setClaudeStatus(sessionId, "idle");
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
   }, []);
 
   // Bring window to foreground when user clicks an OS notification.
@@ -349,6 +374,27 @@ function App() {
           break;
         }
 
+        case "run_runner": {
+          const projectId = (action.projectId as string) || "";
+          const worktreeId = (action.worktreeId as string) || "";
+          const runner = (action.runner as string) || "";
+          const command = (action.command as string) || "";
+          const cwd = (action.cwd as string) || "";
+          if (projectId) store.selectProject(projectId);
+          if (worktreeId) store.selectWorktree(worktreeId);
+          if (worktreeId && runner && command && cwd) {
+            store.openOrRestartRunner(worktreeId, runner, command, cwd);
+          }
+          break;
+        }
+
+        case "runner_stopped": {
+          const worktreeId = (action.worktreeId as string) || "";
+          const runner = (action.runner as string) || "";
+          if (worktreeId && runner) store.setRunnerStatus(worktreeId, runner, "stopped");
+          break;
+        }
+
       }
     });
     return () => { unlisten.then((fn) => fn()); };
@@ -389,13 +435,8 @@ function App() {
         if (e.code === "KeyT") {
           e.preventDefault();
           e.stopImmediatePropagation();
-          // Ctrl+Shift+T creates the default Claude tab type
-          const mode = state.appSettings?.default_claude_mode;
-          if (mode === "agent") {
-            state.newAgentTab(wt);
-          } else {
-            state.newClaudeTab(wt);
-          }
+          // Ctrl+Shift+T creates the app's default new-session type.
+          state.newDefaultSessionTab(wt);
         } else if (e.code === "KeyA") {
           // Ctrl+Shift+A always creates an agent tab
           e.preventDefault();
@@ -450,7 +491,7 @@ function App() {
                 pointerEvents: t.visible ? "auto" : "none",
               }}
             >
-              <TerminalPanel sessionId={t.id} cwd={t.cwd} command={t.command} fontSize={termFontSize} fontFamily={termFontFamily} keepAlive />
+              <TerminalPanel sessionId={t.id} cwd={t.cwd} command={t.command} fontSize={termFontSize} fontFamily={termFontFamily} kind={t.kind} resumeSessionId={t.resumeSessionId} resumeLatest={t.resumeLatest} keepAlive />
             </div>
           ))}
           {agentTabs.map((t) => (

@@ -6,6 +6,7 @@ import { Tooltip } from "../ui/Tooltip";
 import * as commands from "../../lib/commands";
 import type { GitFileStatus } from "../../lib/commands";
 import { useWindowFocused } from "../../lib/windowFocus";
+import { resolveDefaultSessionMode } from "../../lib/defaultSessionMode";
 
 type Tab = "uncommitted" | "pr-changes" | "pr-status";
 type FileContextMenuState = {
@@ -38,6 +39,8 @@ export const ChangesPanel = memo(function ChangesPanel() {
   const selectedWorktreeId = useAppStore((s) => s.selectedWorktreeId);
   const worktreesByProject = useAppStore((s) => s.worktreesByProject);
   const projects = useAppStore((s) => s.projects);
+  const tabsByWorktree = useAppStore((s) => s.tabsByWorktree);
+  const activeTabByWorktree = useAppStore((s) => s.activeTabByWorktree);
   const requestClaudeTab = useAppStore((s) => s.requestClaudeTab);
   const requestAgentTab = useAppStore((s) => s.requestAgentTab);
   const openDiffTab = useAppStore((s) => s.openDiffTab);
@@ -173,6 +176,10 @@ export const ChangesPanel = memo(function ChangesPanel() {
   if (!worktree || !project || selectedWorktreeId === "__scratchpad__") return null;
 
   const baseBranch = baseBranchRef.current;
+  const activeTabId = activeTabByWorktree[worktree.id] ?? null;
+  const activeTab = (tabsByWorktree[worktree.id] ?? []).find((t) => t.id === activeTabId);
+  const activeDiffFile = activeTab?.type === "diff" ? activeTab.diffFile : undefined;
+  const activeDiffMode = activeTab?.type === "diff" ? activeTab.diffMode : undefined;
   const claudeCmd = project.claude_command || appSettings?.claude_command || "claude";
   const hasLocalChanges = uncommittedFiles.length > 0 || unpushedCount > 0;
   const contextMenuLeft = contextMenu ? Math.max(8, Math.min(contextMenu.x, window.innerWidth - 196)) : 0;
@@ -211,8 +218,9 @@ export const ChangesPanel = memo(function ChangesPanel() {
     }
   };
 
-  const useAgent = appSettings?.default_claude_mode === "agent";
-  const backend = appSettings?.agent_backend || "claude";
+  const defaultSessionMode = resolveDefaultSessionMode(appSettings);
+  const useAgent = defaultSessionMode !== "terminal";
+  const backend = defaultSessionMode === "pi" ? "pi" : appSettings?.agent_backend || "claude";
   const sendToAgent = (prompt: string, model?: string) => {
     if (useAgent) {
       requestAgentTab(prompt, model);
@@ -264,6 +272,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
             loading={loadingUncommitted}
             emptyMessage="No uncommitted changes"
             worktreePath={worktree.path}
+            activeFile={activeDiffMode === "uncommitted" ? activeDiffFile : undefined}
             onFileClick={(f) => openDiffTab(worktree.id, f, worktree.path, "uncommitted")}
             onFileContextMenu={(event, file, status) => {
               event.preventDefault();
@@ -284,6 +293,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
             loading={loadingPr}
             emptyMessage={`No PR changes (or no common ancestor with ${baseBranch})`}
             worktreePath={worktree.path}
+            activeFile={activeDiffMode === "pr" ? activeDiffFile : undefined}
             onFileClick={(f) => openDiffTab(worktree.id, f, worktree.path, "pr", baseBranch)}
           />
         )}
@@ -387,11 +397,12 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
   );
 }
 
-function FileList({ files, loading, emptyMessage, worktreePath, onFileClick, onFileContextMenu, onRevert, revertingFile }: {
+function FileList({ files, loading, emptyMessage, worktreePath, activeFile, onFileClick, onFileContextMenu, onRevert, revertingFile }: {
   files: GitFileStatus[];
   loading: boolean;
   emptyMessage: string;
   worktreePath: string;
+  activeFile?: string;
   onFileClick: (file: string) => void;
   onFileContextMenu?: (event: React.MouseEvent<HTMLDivElement>, file: string, status: string) => void;
   onRevert?: (file: string, status: string) => void;
@@ -401,24 +412,37 @@ function FileList({ files, loading, emptyMessage, worktreePath, onFileClick, onF
   if (files.length === 0) return <div className="px-3 py-2 text-[length:var(--app-font-11)] text-text-tertiary">{emptyMessage}</div>;
   return (
     <div className="py-0.5">
-      {files.map((f) => (
+      {files.map((f) => {
+        const active = activeFile === f.file;
+        return (
         <div
           key={f.file}
-          className="group w-full flex items-center gap-2 px-3 py-0.5 text-[length:var(--app-font-11)] hover:bg-bg-hover transition-colors"
+          role="button"
+          tabIndex={0}
+          className={`group w-full flex items-center gap-2 px-3 py-0.5 text-[length:var(--app-font-11)] transition-colors cursor-pointer outline-none ${
+            active
+              ? "bg-accent-muted text-accent-hover"
+              : "text-text-secondary hover:bg-bg-hover hover:text-text-primary focus:bg-bg-hover focus:text-text-primary"
+          }`}
+          onClick={() => onFileClick(f.file)}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onFileClick(f.file);
+            }
+          }}
           onContextMenu={onFileContextMenu ? (event) => onFileContextMenu(event, f.file, f.status) : undefined}
+          title={buildTooltipPath(worktreePath, f.file)}
         >
-          <button
-            className="flex items-center gap-2 min-w-0 flex-1 text-left"
-            onClick={() => onFileClick(f.file)}
-            title={buildTooltipPath(worktreePath, f.file)}
-          >
+          <div className="flex items-center gap-2 min-w-0 flex-1 text-left">
             <StatusBadge status={f.status} />
-            <FilePathLabel file={f.file} />
-          </button>
+            <FilePathLabel file={f.file} active={active} />
+          </div>
           {onRevert && (
             <Tooltip text="Revert changes" side="top" align="right">
               <button
-                className="opacity-0 group-hover:opacity-100 shrink-0 px-1 py-0.5 text-[length:var(--app-font-10)] text-text-tertiary hover:text-error transition-all"
+                className="opacity-0 group-hover:opacity-100 focus:opacity-100 shrink-0 px-1 py-0.5 text-[length:var(--app-font-10)] text-text-tertiary hover:text-error transition-all"
                 disabled={revertingFile === f.file}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -430,22 +454,23 @@ function FileList({ files, loading, emptyMessage, worktreePath, onFileClick, onF
             </Tooltip>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
-function FilePathLabel({ file }: { file: string }) {
+function FilePathLabel({ file, active }: { file: string; active?: boolean }) {
   const { directory, fileName } = splitDisplayPath(file);
 
   return (
     <span className="flex min-w-0 items-baseline gap-1 font-mono">
       {directory && (
-        <span className="min-w-0 flex-1 truncate text-text-tertiary" dir="rtl">
+        <span className={`min-w-0 flex-1 truncate ${active ? "text-accent-hover/80" : "text-text-tertiary"}`} dir="rtl">
           {directory}/
         </span>
       )}
-      <span className="shrink-0 text-text-secondary">{fileName}</span>
+      <span className={`shrink-0 ${active ? "text-accent-hover" : "text-text-secondary group-hover:text-text-primary"}`}>{fileName}</span>
     </span>
   );
 }

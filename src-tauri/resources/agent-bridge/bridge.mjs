@@ -182,7 +182,9 @@ const NO_ATTRIBUTION_INSTRUCTION = `IMPORTANT: Do NOT add any Co-Authored-By lin
  * tools over shell equivalents when the action benefits from IDE awareness.
  */
 const COPPICE_TOOLS_INSTRUCTION = `You are running inside the Coppice desktop IDE. You have access to Coppice-specific tools (prefixed "coppice_") that interact directly with the IDE:
+- Use coppice_list_projects and coppice_list_worktrees when you are in the scratchpad or otherwise need to choose a Coppice project/worktree. If the target project or worktree name is ambiguous, ask the user before creating anything.
 - Use coppice_create_worktree instead of git worktree commands — it registers the worktree in the IDE's project model and copies env files. When you need to do work in the new worktree, pass the task as the 'prompt' parameter — Coppice will switch to the new worktree and spawn a separate agent tab to execute it. NEVER cd into the new worktree yourself after creating it.
+- Use coppice_list_runners, coppice_run_runner, coppice_stop_runner, and coppice_runner_status for project setup/build/run tasks configured in Coppice's sidepanel. Do not run configured app setup/build/run commands through bash internally. If a requested runner is unavailable (for example no build command), do not invent an equivalent shell command unless the user explicitly asks.
 - Use coppice_spawn_terminal to open new terminal tabs in the IDE, optionally running a command.
 - Use coppice_open_file to surface files in the IDE's editor tabs so the user can see them.
 - Use coppice_open_url for links the user should visit (PR URLs, documentation).
@@ -402,9 +404,35 @@ function callCoppice(toolName, args) {
 function buildCoppiceTools() {
   return [
     tool(
-      "coppice_create_worktree",
-      "Create a new git worktree in the Coppice IDE. Registers it in the project model and copies env files. Provide an existing branch name to check out, OR set new_branch + base_branch to create a new branch. When you have a task to perform in the new worktree, pass it as 'prompt' — Coppice will switch to the new worktree and spawn a new agent tab with that task. Do NOT cd into the worktree yourself after creating it.",
+      "coppice_list_projects",
+      "List Coppice projects available in the IDE. Use this from the scratchpad before asking the user which project to target.",
+      {},
+      async () => callCoppice("list_projects", {}),
+      { annotations: { readOnlyHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_create_project",
+      "Create a Coppice project. Ask the user for the project name and local repository path before calling this tool.",
       {
+        name: z.string().describe("Project display name"),
+        local_path: z.string().describe("Absolute path to the repository/project root"),
+        github_remote: z.string().optional().describe("GitHub remote URL"),
+        base_branch: z.string().optional().describe("Base branch (defaults to main)"),
+        target_branch: z.string().optional().describe("Default PR target branch"),
+        setup_scripts: z.array(z.string()).optional().describe("Setup scripts shown in the sidepanel"),
+        build_command: z.string().optional().describe("Build command shown in the sidepanel"),
+        run_command: z.string().optional().describe("Run command shown in the sidepanel"),
+        env_files: z.array(z.string()).optional().describe("Env files/directories to copy to new worktrees"),
+      },
+      async (args) => callCoppice("create_project", args),
+      { annotations: { destructiveHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_create_worktree",
+      "Create a new git worktree in the Coppice IDE. Registers it in the project model and copies env files. Provide project_id/project_name when calling from scratchpad. Provide an existing branch name to check out, OR set new_branch + base_branch to create a new branch. When you have a task to perform in the new worktree, pass it as 'prompt' — Coppice will switch to the new worktree and spawn a new agent tab with that task. Do NOT cd into the worktree yourself after creating it.",
+      {
+        project_id: z.string().optional().describe("Target Coppice project ID (required from scratchpad)"),
+        project_name: z.string().optional().describe("Target Coppice project name if project_id is unknown"),
         branch: z.string().optional().describe("Existing branch to check out"),
         new_branch: z.string().optional().describe("Name for a new branch to create"),
         base_branch: z.string().optional().describe("Base branch for new_branch (defaults to main)"),
@@ -416,9 +444,63 @@ function buildCoppiceTools() {
     ),
     tool(
       "coppice_list_worktrees",
-      "List all worktrees registered in the current Coppice project.",
-      {},
-      async () => callCoppice("list_worktrees", {}),
+      "List worktrees registered in a Coppice project. If project_id/project_name is omitted, lists the current project, or all projects when called from scratchpad.",
+      {
+        project_id: z.string().optional().describe("Project ID to list"),
+        project_name: z.string().optional().describe("Project name to list"),
+      },
+      async (args) => callCoppice("list_worktrees", args),
+      { annotations: { readOnlyHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_list_runners",
+      "List Coppice sidepanel runners (setup/build/run) available for a worktree and their running status.",
+      {
+        project_id: z.string().optional().describe("Target project ID"),
+        project_name: z.string().optional().describe("Target project name"),
+        worktree_id: z.string().optional().describe("Target worktree ID"),
+        worktree_name: z.string().optional().describe("Target worktree name or branch"),
+      },
+      async (args) => callCoppice("list_runners", args),
+      { annotations: { readOnlyHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_run_runner",
+      "Run a configured Coppice sidepanel runner (setup, build, or run) so output/status appears in the UI. Do not use this if the runner is unavailable.",
+      {
+        runner: z.enum(["setup", "build", "run"]).describe("Runner to start"),
+        project_id: z.string().optional().describe("Target project ID"),
+        project_name: z.string().optional().describe("Target project name"),
+        worktree_id: z.string().optional().describe("Target worktree ID"),
+        worktree_name: z.string().optional().describe("Target worktree name or branch"),
+      },
+      async (args) => callCoppice("run_runner", args),
+      { annotations: { destructiveHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_stop_runner",
+      "Stop a running Coppice sidepanel runner.",
+      {
+        runner: z.enum(["setup", "build", "run"]).describe("Runner to stop"),
+        project_id: z.string().optional().describe("Target project ID"),
+        project_name: z.string().optional().describe("Target project name"),
+        worktree_id: z.string().optional().describe("Target worktree ID"),
+        worktree_name: z.string().optional().describe("Target worktree name or branch"),
+      },
+      async (args) => callCoppice("stop_runner", args),
+      { annotations: { destructiveHint: true }, alwaysLoad: true },
+    ),
+    tool(
+      "coppice_runner_status",
+      "Check whether a configured Coppice sidepanel runner is available and currently running.",
+      {
+        runner: z.enum(["setup", "build", "run"]).describe("Runner to inspect"),
+        project_id: z.string().optional().describe("Target project ID"),
+        project_name: z.string().optional().describe("Target project name"),
+        worktree_id: z.string().optional().describe("Target worktree ID"),
+        worktree_name: z.string().optional().describe("Target worktree name or branch"),
+      },
+      async (args) => callCoppice("runner_status", args),
       { annotations: { readOnlyHint: true }, alwaysLoad: true },
     ),
     tool(

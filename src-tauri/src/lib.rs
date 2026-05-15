@@ -27,6 +27,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(database)
         .manage(pty_manager)
         .manage(agent_manager)
@@ -57,6 +58,7 @@ pub fn run() {
             commands::worktree::update_base_branch,
             // Terminal commands
             commands::terminal::terminal_spawn,
+            commands::terminal::terminal_spawn_claude,
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_exists,

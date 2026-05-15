@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useAppStore, type TabInfo } from "../../stores/appStore";
 import { MessageList } from "../AgentView/MessageList";
 import { AgentInputBar } from "../AgentView/AgentInputBar";
+import { TerminalPanel } from "../Terminal/TerminalPanel";
 import { CreateWorktreeModal } from "../Sidebar/CreateWorktreeModal";
 import { Tooltip } from "../ui/Tooltip";
 import { TileViewToggleButton } from "../ui/TileViewToggleButton";
@@ -12,6 +13,8 @@ import { CLAUDE_EFFORT_LEVELS, EffortPicker, ModelPicker, PI_EFFORT_LEVELS } fro
 import * as commands from "../../lib/commands";
 import type { AgentBackend, ImageAttachment, EffortLevel, AgentPermissionMode, Project } from "../../lib/types";
 import { SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
+import { getDefaultSessionModeLabel, getDefaultSessionModeShortLabel, getNextDefaultSessionMode, isAgentDefaultSessionMode, resolveDefaultSessionMode } from "../../lib/defaultSessionMode";
+import { DEFAULT_APP_FONT_SIZE, getScaledFontSize } from "../../lib/fontScale";
 import { PermissionDialog } from "../AgentView/PermissionDialog";
 import { AskUserDialog } from "../AgentView/AskUserDialog";
 import { isPlanPermission } from "../AgentView/PlanApprovalDialog";
@@ -45,14 +48,14 @@ export function TileView() {
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree);
   const worktreesByProject = useAppStore((s) => s.worktreesByProject);
   const projects = useAppStore((s) => s.projects);
-  const addAgentTab = useAppStore((s) => s.addAgentTab);
+  const newDefaultSessionTab = useAppStore((s) => s.newDefaultSessionTab);
 
   const [creatingForProject, setCreatingForProject] = useState<string | null>(null);
 
-  // Add an agent tab to an existing worktree
+  // Add a tab to an existing worktree using the app's default new-session setting.
   const handleAddExisting = useCallback((worktreeId: string, worktreePath: string) => {
-    addAgentTab(worktreeId, worktreePath);
-  }, [addAgentTab]);
+    newDefaultSessionTab(worktreeId, worktreePath);
+  }, [newDefaultSessionTab]);
 
   // Open CreateWorktreeModal for a project
   const handleCreateNew = useCallback((projectId: string) => {
@@ -64,12 +67,12 @@ export function TileView() {
   }, []);
 
   // Called by CreateWorktreeModal after a worktree is successfully created
-  // and selected. Immediately creates an agent tab for the tile view.
+  // and selected. Immediately creates the app's default session type for the tile view.
   const handleWorktreeCreated = useCallback((worktreeId: string) => {
     const state = useAppStore.getState();
     const path = state.getWorktreePath(worktreeId);
     if (path) {
-      state.addAgentTab(worktreeId, path);
+      state.newDefaultSessionTab(worktreeId, path);
     }
   }, []);
 
@@ -78,7 +81,7 @@ export function TileView() {
     // Include scratchpad agent tabs
     const spTabs = tabsByWorktree[SCRATCHPAD_WORKTREE_ID] ?? [];
     for (const tab of spTabs) {
-      if (tab.type === "agent") {
+      if (tab.type === "agent" || tab.type === "claude") {
         result.push({
           tab,
           worktreeId: SCRATCHPAD_WORKTREE_ID,
@@ -92,7 +95,7 @@ export function TileView() {
       for (const wt of worktrees) {
         const tabs = tabsByWorktree[wt.id] ?? [];
         for (const tab of tabs) {
-          if (tab.type === "agent") {
+          if (tab.type === "agent" || tab.type === "claude") {
             result.push({
               tab,
               worktreeId: wt.id,
@@ -157,7 +160,7 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
   const openAppSettings = useAppStore((s) => s.openAppSettings);
   const appSettings = useAppStore((s) => s.appSettings);
   const saveSettings = useAppStore((s) => s.saveSettings);
-  const setDefaultAgentBackend = useAppStore((s) => s.setDefaultAgentBackend);
+  const setDefaultSessionMode = useAppStore((s) => s.setDefaultSessionMode);
   const setAgentBackend = useAppStore((s) => s.setAgentBackend);
   const setAgentModel = useAppStore((s) => s.setAgentModel);
   const piAvailableModels = useAppStore((s) => s.piAvailableModels);
@@ -171,7 +174,8 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
 
-  const currentBackend = appSettings?.agent_backend ?? "claude";
+  const currentDefaultMode = resolveDefaultSessionMode(appSettings);
+  const currentBackend: AgentBackend = currentDefaultMode === "pi" ? "pi" : "claude";
   const currentClaudeModel = appSettings?.agent_default_model || "";
   const currentClaudePreset = CLAUDE_MODELS.find((model) => model.value === currentClaudeModel);
   const claudeModelLabel = currentClaudePreset?.label || currentClaudeModel || "SDK default";
@@ -252,33 +256,35 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
   const handleBackendToggle = useCallback(async () => {
     const settings = useAppStore.getState().appSettings;
     if (!settings) return;
-    const nextBackend: AgentBackend = settings.agent_backend === "pi" ? "claude" : "pi";
+    const nextMode = getNextDefaultSessionMode(resolveDefaultSessionMode(settings));
     setSwitchingBackend(true);
     try {
-      await setDefaultAgentBackend(nextBackend);
-      const s = useAppStore.getState();
-      const wtId = s.selectedWorktreeId;
-      const activeTabId = wtId ? s.activeTabByWorktree[wtId] : null;
-      const activeTab = wtId && activeTabId ? s.tabsByWorktree[wtId]?.find((tab) => tab.id === activeTabId) : null;
-      const activeSession = activeTabId ? s.agentSessionByTab[activeTabId] : null;
-      if (
-        activeTabId
-        && activeTab?.type === "agent"
-        && activeSession
-        && activeSession.status === "idle"
-        && activeSession.messages.length === 0
-        && !activeSession.sdkSessionId
-      ) {
-        setAgentBackend(
-          activeTabId,
-          nextBackend,
-          nextBackend === "pi" ? settings.pi_default_model || "" : settings.agent_default_model || "",
-        );
+      await setDefaultSessionMode(nextMode);
+      if (isAgentDefaultSessionMode(nextMode)) {
+        const s = useAppStore.getState();
+        const wtId = s.selectedWorktreeId;
+        const activeTabId = wtId ? s.activeTabByWorktree[wtId] : null;
+        const activeTab = wtId && activeTabId ? s.tabsByWorktree[wtId]?.find((tab) => tab.id === activeTabId) : null;
+        const activeSession = activeTabId ? s.agentSessionByTab[activeTabId] : null;
+        if (
+          activeTabId
+          && activeTab?.type === "agent"
+          && activeSession
+          && activeSession.status === "idle"
+          && activeSession.messages.length === 0
+          && !activeSession.sdkSessionId
+        ) {
+          setAgentBackend(
+            activeTabId,
+            nextMode,
+            nextMode === "pi" ? settings.pi_default_model || "" : settings.agent_default_model || "",
+          );
+        }
       }
     } finally {
       setSwitchingBackend(false);
     }
-  }, [setDefaultAgentBackend, setAgentBackend]);
+  }, [setDefaultSessionMode, setAgentBackend]);
 
   const handleClaudeModelSelect = useCallback(async (model: string) => {
     const settings = useAppStore.getState().appSettings;
@@ -315,7 +321,12 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
     syncActiveIdleAgentModel("pi", nextModel);
   }, [saveSettings, syncActiveIdleAgentModel]);
 
-  const backendTooltip = currentBackend === "pi" ? "Switch to CL" : "Switch to PI";
+  const backendTooltip = `Switch to ${getDefaultSessionModeLabel(getNextDefaultSessionMode(currentDefaultMode))}`;
+  const modeButtonClass = currentDefaultMode === "terminal"
+    ? "bg-sky-500/10 text-sky-400 border-sky-500/20"
+    : currentDefaultMode === "pi"
+      ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
+      : "bg-orange-500/10 text-orange-400 border-orange-500/20";
   const modelTooltip = currentBackend === "pi"
     ? `${formatPiProvider(currentPiProvider)} · ${piModelLabel}`
     : claudeModelLabel;
@@ -347,27 +358,29 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
               type="button"
               onClick={() => void handleBackendToggle()}
               disabled={!appSettings || switchingBackend}
-              className={`h-7 min-w-8 px-2.5 flex items-center justify-center rounded-md text-[length:var(--app-font-11)] font-semibold uppercase border transition-colors ${currentBackend === "pi" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"} ${appSettings && !switchingBackend ? "hover:brightness-125" : ""} disabled:opacity-50`}
+              className={`h-7 min-w-8 px-2.5 flex items-center justify-center rounded-md text-[length:var(--app-font-11)] font-semibold uppercase border transition-colors ${modeButtonClass} ${appSettings && !switchingBackend ? "hover:brightness-125" : ""} disabled:opacity-50`}
             >
-              {currentBackend === "pi" ? "Pi" : "Cl"}
+              {getDefaultSessionModeShortLabel(currentDefaultMode)}
             </button>
           </Tooltip>
 
-          <ModelConfigPopover
-            tone={currentBackend}
-            backend={currentBackend}
-            disabled={!appSettings || switchingBackend}
-            tooltip={modelTooltip}
-            dropdownAlign="left"
-            providerLabel={formatPiProvider(currentPiProvider)}
-            providerValue={currentPiProvider}
-            providerOptions={piProviderOptions}
-            onProviderSelect={handlePiProviderSelect}
-            modelLabel={currentBackend === "pi" ? piModelLabel : claudeModelLabel}
-            modelValue={currentBackend === "pi" ? currentPiModelId : currentClaudeModel}
-            modelOptions={currentBackend === "pi" ? piModelOptions : claudeModelOptions}
-            onModelSelect={currentBackend === "pi" ? handlePiModelSelect : handleClaudeModelSelect}
-          />
+          {currentDefaultMode !== "terminal" && (
+            <ModelConfigPopover
+              tone={currentBackend}
+              backend={currentBackend}
+              disabled={!appSettings || switchingBackend}
+              tooltip={modelTooltip}
+              dropdownAlign="left"
+              providerLabel={formatPiProvider(currentPiProvider)}
+              providerValue={currentPiProvider}
+              providerOptions={piProviderOptions}
+              onProviderSelect={handlePiProviderSelect}
+              modelLabel={currentBackend === "pi" ? piModelLabel : claudeModelLabel}
+              modelValue={currentBackend === "pi" ? currentPiModelId : currentClaudeModel}
+              modelOptions={currentBackend === "pi" ? piModelOptions : claudeModelOptions}
+              onModelSelect={currentBackend === "pi" ? handlePiModelSelect : handleClaudeModelSelect}
+            />
+          )}
 
           <McpStatusPopover
             configuredServers={appSettings?.mcp_servers ?? {}}
@@ -436,6 +449,13 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
 // ── Individual tile ──
 
 function Tile({ tile }: { tile: TileTab }) {
+  if (tile.tab.type === "claude") {
+    return <ClaudeCliTile tile={tile} />;
+  }
+  return <AgentTile tile={tile} />;
+}
+
+function AgentTile({ tile }: { tile: TileTab }) {
   const { tab, worktreeId, worktreeName, projectName } = tile;
   const session = useAppStore((s) => s.agentSessionByTab[tab.id]);
   const claudeStatus = useAppStore((s) => s.claudeStatusByTab[tab.id] ?? null);
@@ -748,6 +768,112 @@ function Tile({ tile }: { tile: TileTab }) {
           }
         />
       </div>
+    </div>
+  );
+}
+
+function ClaudeCliTile({ tile }: { tile: TileTab }) {
+  const { tab, worktreeId, worktreeName, projectName } = tile;
+  const claudeStatus = useAppStore((s) => s.claudeStatusByTab[tab.id] ?? null);
+  const appSettings = useAppStore((s) => s.appSettings);
+  const selectProject = useAppStore((s) => s.selectProject);
+  const selectWorktree = useAppStore((s) => s.selectWorktree);
+  const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const clearClaudeIdleStatus = useAppStore((s) => s.clearClaudeIdleStatus);
+  const toggleTileView = useAppStore((s) => s.toggleTileView);
+  const { requestCloseTab, closeConfirmation } = useAgentTabCloseConfirmation();
+
+  const appFontSize = appSettings?.app_font_size ?? DEFAULT_APP_FONT_SIZE;
+  const termFontSize = appSettings?.terminal_font_size || getScaledFontSize(13, appFontSize);
+  const termFontFamily = appSettings?.terminal_font_family || undefined;
+
+  const clearTileNotification = useCallback(() => {
+    clearClaudeIdleStatus(tab.id);
+  }, [clearClaudeIdleStatus, tab.id]);
+
+  const handleNavigate = useCallback(() => {
+    const store = useAppStore.getState();
+    for (const [projectId, worktrees] of Object.entries(store.worktreesByProject)) {
+      if (worktrees.some((w) => w.id === worktreeId)) {
+        selectProject(projectId);
+        break;
+      }
+    }
+    selectWorktree(worktreeId);
+    setActiveTab(worktreeId, tab.id);
+    toggleTileView();
+  }, [worktreeId, tab.id, selectProject, selectWorktree, setActiveTab, toggleTileView]);
+
+  let dotInner: React.ReactNode;
+  if (claudeStatus === "active") {
+    dotInner = (
+      <span className="relative flex h-2 w-2 shrink-0">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
+      </span>
+    );
+  } else if (claudeStatus === "idle") {
+    dotInner = <span className="w-2 h-2 rounded-full bg-warning shrink-0" />;
+  } else {
+    dotInner = <span className="w-2 h-2 rounded-full bg-text-tertiary shrink-0" />;
+  }
+
+  return (
+    <div className="bg-bg-primary flex flex-col min-h-0 min-w-0 overflow-hidden relative">
+      <div className="flex items-center gap-2 px-3 h-8 shrink-0 border-b border-border-primary bg-bg-secondary">
+        <span className="w-4 h-4 flex items-center justify-center shrink-0">
+          {dotInner}
+        </span>
+        <span className="text-[length:var(--app-font-11)] text-text-secondary truncate min-w-0">
+          {projectName}
+          <span className="text-text-tertiary mx-1">/</span>
+          {worktreeName}
+          <span className="text-text-tertiary mx-1">&mdash;</span>
+          <span className="font-semibold">{tab.label}</span>
+        </span>
+        <span className="shrink-0 rounded border border-border-primary px-1.5 py-0.5 text-[length:var(--app-font-10)] uppercase tracking-wide text-text-tertiary">
+          CLI
+        </span>
+        <div className="ml-auto flex items-center gap-2.5">
+          <TileRunnerButtons worktreeId={worktreeId} />
+          <Tooltip text="Go to tab" align="right">
+            <button
+              className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
+              onClick={handleNavigate}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M4.5 2.5h5v5M9.5 2.5L4 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </Tooltip>
+          <Tooltip text="Close tab" align="right">
+            <button
+              className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
+              onClick={(event) => requestCloseTab(worktreeId, tab.id, event)}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 relative" onPointerDown={clearTileNotification}>
+        <TerminalPanel
+          sessionId={tab.id}
+          cwd={tab.cwd}
+          command={tab.command}
+          fontSize={termFontSize}
+          fontFamily={termFontFamily}
+          kind="claude"
+          resumeSessionId={tab.claudeSessionId}
+          resumeLatest={tab.resumeOnLaunch}
+          keepAlive
+        />
+      </div>
+
+      {closeConfirmation}
     </div>
   );
 }

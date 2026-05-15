@@ -4,7 +4,8 @@ import { DiffViewer } from "../DiffViewer/DiffViewer";
 import { Tooltip } from "../ui/Tooltip";
 import { useAgentTabCloseConfirmation } from "../ui/useAgentTabCloseConfirmation";
 import * as commands from "../../lib/commands";
-import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
+import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID, type AppSettings } from "../../lib/types";
+import { getDefaultSessionModeLabel, resolveDefaultSessionMode } from "../../lib/defaultSessionMode";
 import { useWindowFocused } from "../../lib/windowFocus";
 
 export function WorktreeView() {
@@ -12,6 +13,7 @@ export function WorktreeView() {
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
   const worktreesByProject = useAppStore((s) => s.worktreesByProject);
   const projects = useAppStore((s) => s.projects);
+  const appSettings = useAppStore((s) => s.appSettings);
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree);
   const activeTabByWorktree = useAppStore((s) => s.activeTabByWorktree);
   const addTab = useAppStore((s) => s.addTab);
@@ -19,6 +21,7 @@ export function WorktreeView() {
   const newTerminalTab = useAppStore((s) => s.newTerminalTab);
   const newClaudeTab = useAppStore((s) => s.newClaudeTab);
   const newAgentTab = useAppStore((s) => s.newAgentTab);
+  const newDefaultSessionTab = useAppStore((s) => s.newDefaultSessionTab);
   const addAgentTab = useAppStore((s) => s.addAgentTab);
   const setWorktreeTargetBranch = useAppStore((s) => s.setWorktreeTargetBranch);
   const pendingClaudeCommand = useAppStore((s) => s.pendingClaudeCommand);
@@ -44,6 +47,7 @@ export function WorktreeView() {
   // Only subscribe to Claude statuses for tabs in the current worktree.
   // useShallow ensures re-render only when the picked values change.
   const claudeStatusByTab = useAppStore((s) => s.claudeStatusByTab);
+  const terminalProgressByTab = useAppStore((s) => s.terminalProgressByTab);
 
   const [liveBranch, setLiveBranch] = useState<string | null>(null);
   const [lastBranchWtId, setLastBranchWtId] = useState<string | null>(null);
@@ -160,22 +164,14 @@ export function WorktreeView() {
 
       {/* Tab bar */}
       <div className="flex h-10 shrink-0 bg-bg-secondary">
-        <Tooltip text="New Agent session" side="bottom" align="left">
-          <button
-            className="flex items-center justify-center w-10 h-full shrink-0 text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none"
-            onClick={() => newAgentTab(wtId)}
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="5" width="10" height="8" rx="1.5" />
-              <path d="M5.5 2.5h5" />
-              <line x1="8" y1="2.5" x2="8" y2="5" />
-              <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
-              <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
-              <line x1="1" y1="8.5" x2="3" y2="8.5" />
-              <line x1="13" y1="8.5" x2="15" y2="8.5" />
-            </svg>
-          </button>
-        </Tooltip>
+        <NewTabButton
+          defaultLabel={getDefaultNewTabLabel(appSettings)}
+          onDefault={() => newDefaultSessionTab(wtId)}
+          onClaudeCli={() => newClaudeTab(wtId)}
+          onClaudeSdk={() => newAgentTab(wtId, "claude")}
+          onPiAgent={() => newAgentTab(wtId, "pi")}
+          onTerminal={() => newTerminalTab(wtId)}
+        />
         <div className="flex flex-1 min-w-0 overflow-x-auto">
           {tabs.map((tab) => (
             <Tab
@@ -184,41 +180,14 @@ export function WorktreeView() {
               type={tab.type}
               active={tab.id === activeTabId}
               claudeStatus={tab.type === "claude" || tab.type === "agent" ? claudeStatusByTab[tab.id] ?? null : null}
+              progress={terminalProgressByTab[tab.id] ?? null}
               onClick={() => setActiveTab(wtId, tab.id)}
               onClose={(event) => requestCloseTab(wtId, tab.id, event)}
               onRename={(newLabel) => renameTab(wtId, tab.id, newLabel)}
             />
           ))}
         </div>
-        <div className="flex shrink-0">
-          <Tooltip text="New terminal" side="bottom">
-            <button
-              className="flex items-center justify-center w-10 h-full text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-colors outline-none"
-              onClick={() => newTerminalTab(wtId)}
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M2 4l4 3-4 3M7 10h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-          </Tooltip>
-          <Tooltip text="New Claude CLI terminal" side="bottom" align="right">
-            <button
-              className="flex items-center justify-center gap-1 px-2 h-full text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors outline-none text-[length:var(--app-font-11)]"
-              onClick={() => newClaudeTab(wtId)}
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="5" width="10" height="8" rx="1.5" />
-                <path d="M5.5 2.5h5" />
-                <line x1="8" y1="2.5" x2="8" y2="5" />
-                <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
-                <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
-                <line x1="1" y1="8.5" x2="3" y2="8.5" />
-                <line x1="13" y1="8.5" x2="15" y2="8.5" />
-              </svg>
-              CLI
-            </button>
-          </Tooltip>
-        </div>
+
       </div>
 
       {/* Content area — terminals rendered in App.tsx, diffs rendered here */}
@@ -257,11 +226,172 @@ export function WorktreeView() {
   );
 }
 
+function getDefaultNewTabLabel(settings: AppSettings | null | undefined): string {
+  return `New ${getDefaultSessionModeLabel(resolveDefaultSessionMode(settings))}`;
+}
+
+function NewTabButton({
+  defaultLabel,
+  onDefault,
+  onClaudeCli,
+  onClaudeSdk,
+  onPiAgent,
+  onTerminal,
+}: {
+  defaultLabel: string;
+  onDefault: () => void;
+  onClaudeCli: () => void;
+  onClaudeSdk: () => void;
+  onPiAgent: () => void;
+  onTerminal: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const runAndClose = (action: () => void) => {
+    action();
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative flex h-full shrink-0" ref={ref} aria-label="Create new tab">
+      <Tooltip text={`Default: ${defaultLabel}`} side="bottom" align="left">
+        <button
+          className="flex items-center justify-center w-10 h-full text-text-tertiary transition-colors outline-none hover:text-accent hover:bg-bg-hover"
+          onClick={() => runAndClose(onDefault)}
+          aria-label={`New tab (${defaultLabel})`}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+            <path d="M7 2.5v9M2.5 7h9" />
+          </svg>
+        </button>
+      </Tooltip>
+      <button
+        className={`flex items-center justify-center w-6 h-full text-text-tertiary transition-colors outline-none hover:text-accent hover:bg-bg-hover ${open ? "text-accent bg-bg-hover" : ""}`}
+        onClick={() => setOpen((value) => !value)}
+        aria-label="Choose new tab type"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <svg className={`transition-transform ${open ? "rotate-180" : ""}`} width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 3.5L5 6.5L8 3.5" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-1 top-9 z-40 w-60 rounded-xl border border-border-primary bg-bg-secondary shadow-2xl shadow-black/30 ring-1 ring-white/5 p-1.5" role="menu">
+          <NewTabMenuItem icon="claudeCli" label="New Claude CLI" hint="Run Claude Code in a terminal" onClick={() => runAndClose(onClaudeCli)} />
+          <NewTabMenuItem icon="claudeSdk" label="New Claude SDK" hint="Agent tab using Claude SDK" onClick={() => runAndClose(onClaudeSdk)} />
+          <NewTabMenuItem icon="pi" label="New Pi Agent" hint="Agent tab using Pi providers" onClick={() => runAndClose(onPiAgent)} />
+          <div className="my-1.5 h-px bg-border-primary/80" />
+          <NewTabMenuItem icon="terminal" label="New Terminal Tab" hint="Plain shell session" onClick={() => runAndClose(onTerminal)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NewTabMenuItem({
+  icon,
+  label,
+  hint,
+  onClick,
+}: {
+  icon: "claudeCli" | "claudeSdk" | "pi" | "terminal";
+  label: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  const toneClass = icon === "pi"
+    ? "text-purple-300 bg-purple-500/10 border-purple-400/20 group-hover:bg-purple-500/20"
+    : icon === "claudeSdk"
+    ? "text-orange-300 bg-orange-500/10 border-orange-400/20 group-hover:bg-orange-500/20"
+    : icon === "claudeCli"
+    ? "text-accent bg-accent/10 border-accent/20 group-hover:bg-accent/20"
+    : "text-text-tertiary bg-bg-tertiary border-border-primary group-hover:text-text-secondary";
+
+  return (
+    <button
+      type="button"
+      className="group w-full flex items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-all hover:bg-bg-hover/80 hover:translate-x-0.5"
+      onClick={onClick}
+      role="menuitem"
+    >
+      <span className={`w-7 h-7 flex items-center justify-center rounded-lg border shrink-0 transition-colors ${toneClass}`}>
+        <NewTabMenuIcon icon={icon} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-xs font-medium text-text-primary truncate">{label}</span>
+        <span className="block text-[length:var(--app-font-10)] text-text-tertiary truncate">{hint}</span>
+      </span>
+      <svg className="opacity-0 -translate-x-1 text-text-tertiary transition-all group-hover:opacity-100 group-hover:translate-x-0" width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 2l3.5 3.5L4 9" />
+      </svg>
+    </button>
+  );
+}
+
+function NewTabMenuIcon({ icon }: { icon: "claudeCli" | "claudeSdk" | "pi" | "terminal" }) {
+  if (icon === "claudeSdk") {
+    return (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="5" width="10" height="8" rx="1.5" />
+        <path d="M5.5 2.5h5" />
+        <line x1="8" y1="2.5" x2="8" y2="5" />
+        <circle cx="6" cy="9" r="1" fill="currentColor" stroke="none" />
+        <circle cx="10" cy="9" r="1" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+
+  if (icon === "pi") {
+    return (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 1.5l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5 1.5-4z" />
+        <path d="M12.5 1.5v2M11.5 2.5h2" />
+      </svg>
+    );
+  }
+
+  if (icon === "claudeCli") {
+    return (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 4l3 3-3 3" />
+        <path d="M6.5 10h5" />
+        <rect x="1" y="2" width="12" height="10" rx="1.5" opacity="0.45" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 4l4 3-4 3M7 10h5" />
+    </svg>
+  );
+}
+
 function Tab({
   label,
   type,
   active,
   claudeStatus,
+  progress,
   onClick,
   onClose,
   onRename,
@@ -270,6 +400,7 @@ function Tab({
   type: "terminal" | "claude" | "agent" | "diff";
   active: boolean;
   claudeStatus: ClaudeStatus | null;
+  progress: number | null;
   onClick: () => void;
   onClose: (event: React.MouseEvent) => void;
   onRename: (newLabel: string) => void;
@@ -336,6 +467,11 @@ function Tab({
       <span className="w-4 h-4 flex items-center justify-center shrink-0">
         {dotInner}
       </span>
+      {progress !== null && !editing && (
+        <span className="absolute left-0 right-0 bottom-0 h-0.5 bg-accent/20 overflow-hidden">
+          <span className="block h-full bg-accent transition-all" style={{ width: `${progress}%` }} />
+        </span>
+      )}
       {editing ? (
         <input
           ref={inputRef}

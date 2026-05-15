@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../../stores/appStore";
-import type { AppSettings, McpServerEntry, ThemeMode } from "../../lib/types";
+import type { AppSettings, McpServerEntry, ThemeMode, DefaultSessionMode } from "../../lib/types";
 import { SUPPORTED_MODELS } from "../../lib/supportedModels";
 import { GitHubAuthSection } from "./GitHubAuthSection";
 import { normalizeAppFontSize } from "../../lib/fontScale";
+import { resolveDefaultSessionMode } from "../../lib/defaultSessionMode";
 import {
   piGetModels,
   piOAuthLogin,
@@ -49,7 +50,13 @@ const defaultSettings: AppSettings = {
   window_decorations: true,
   notification_sound: true,
   notification_popup: true,
-  default_claude_mode: "agent",
+  default_claude_mode: "claude",
+  claude_cli_statusline_enabled: true,
+  claude_cli_statusline_git: true,
+  claude_cli_statusline_colors: true,
+  claude_cli_notifications: true,
+  claude_cli_fullscreen: true,
+  claude_cli_terminal_progress: true,
   agent_default_model: "",
   agent_default_effort: "high",
   agent_default_extended_context: false,
@@ -78,6 +85,7 @@ export function AppSettingsModal() {
 
   const [form, setForm] = useState<AppSettings>(defaultSettings);
   const [saving, setSaving] = useState(false);
+  const [agentConfigTab, setAgentConfigTab] = useState<"cli" | "claude" | "pi">("cli");
 
   useEffect(() => {
     if (appSettings) {
@@ -85,10 +93,26 @@ export function AppSettingsModal() {
     }
   }, [appSettings]);
 
+  const defaultSessionMode = resolveDefaultSessionMode(form);
+
+  const setDefaultSessionMode = (mode: DefaultSessionMode) => {
+    setForm({
+      ...form,
+      default_claude_mode: mode,
+      ...(mode === "terminal" ? {} : { agent_backend: mode }),
+    });
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
-      await saveSettings({ ...form, app_font_size: normalizeAppFontSize(form.app_font_size) });
+      const mode = resolveDefaultSessionMode(form);
+      await saveSettings({
+        ...form,
+        default_claude_mode: mode,
+        ...(mode === "terminal" ? {} : { agent_backend: mode }),
+        app_font_size: normalizeAppFontSize(form.app_font_size),
+      });
       closeAppSettings();
     } finally {
       setSaving(false);
@@ -130,13 +154,6 @@ export function AppSettingsModal() {
             onChange={(editor_command) => setForm({ ...form, editor_command })}
             placeholder="code"
             hint="Command to open your editor (e.g., cursor, code, codium)"
-          />
-          <Field
-            label="Claude command"
-            value={form.claude_command}
-            onChange={(claude_command) => setForm({ ...form, claude_command })}
-            placeholder="claude"
-            hint="Default Claude Code command for all projects"
           />
           <Field
             label="Terminal font family"
@@ -210,54 +227,96 @@ export function AppSettingsModal() {
             label="Notification sound"
             checked={form.notification_sound}
             onChange={(notification_sound) => setForm({ ...form, notification_sound })}
-            hint="Play a chime when an agent finishes and is waiting for input"
+            hint="Play a chime when an agent or Claude CLI tab needs attention"
           />
           <Toggle
             label="OS notifications"
             checked={form.notification_popup}
             onChange={(notification_popup) => setForm({ ...form, notification_popup })}
-            hint="Show a system notification when an agent finishes (visible even when Coppice is minimized)"
+            hint="Show a system notification when an agent or Claude CLI tab needs attention"
           />
 
-          {/* Agent mode selector — three top-level options */}
-          <div className="pt-4 border-t border-border-primary">
-            <label className="block text-xs text-text-secondary mb-1">Agent mode</label>
-            <div className="flex gap-1">
-              {([
-                { mode: "terminal", backend: "claude", label: "Terminal (CLI)" },
-                { mode: "agent", backend: "claude", label: "Claude Agent" },
-                { mode: "agent", backend: "pi", label: "Pi Agent" },
-              ] as const).map(({ mode, backend, label }) => {
-                const isActive =
-                  form.default_claude_mode === mode &&
-                  (mode === "terminal" || (form.agent_backend || "claude") === backend);
-                return (
+          <div className="pt-5 border-t border-border-primary space-y-5">
+            <div className="space-y-1.5">
+              <label className="block text-xs text-text-secondary">Default new session shortcut</label>
+              <div className="flex gap-1.5">
+                {([
+                  ["terminal", "Claude CLI"],
+                  ["claude", "Claude SDK"],
+                  ["pi", "Pi Agent"],
+                ] as const).map(([mode, label]) => (
                   <button
-                    key={label}
+                    key={mode}
                     type="button"
-                    onClick={() => setForm({ ...form, default_claude_mode: mode, agent_backend: backend })}
+                    onClick={() => setDefaultSessionMode(mode)}
                     className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                      isActive
-                        ? backend === "pi" ? "bg-purple-500 text-white" : "bg-accent text-white"
+                      defaultSessionMode === mode
+                        ? mode === "pi" ? "bg-purple-500 text-white" : "bg-accent text-white"
                         : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
                     }`}
                   >
                     {label}
                   </button>
-                );
-              })}
+                ))}
+              </div>
+              <p className="text-[length:var(--app-font-10)] text-text-tertiary">
+                Controls what the tab bar <span className="font-mono">+</span> button, app header switcher, and <span className="font-mono">Cmd/Ctrl+Shift+T</span> open.
+              </p>
             </div>
-            <p className="mt-1 text-[length:var(--app-font-10)] text-text-tertiary">
-              {form.default_claude_mode === "terminal"
-                ? "Runs Claude Code CLI in a PTY terminal (requires claude CLI installed)"
-                : (form.agent_backend || "claude") === "pi"
-                  ? "Pi Agent: 25+ LLM providers (Claude, GPT, Gemini, Ollama, etc.), built-in coding tools, web access"
-                  : "Claude Agent SDK with the full claude_code system prompt (requires Anthropic API key)"}
-            </p>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs text-text-secondary">Configure</label>
+              <div className="flex border-b border-border-primary">
+                {([
+                  ["cli", "Claude CLI"],
+                  ["claude", "Claude SDK"],
+                  ["pi", "Pi Agent"],
+                ] as const).map(([tab, label]) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setAgentConfigTab(tab)}
+                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+                      agentConfigTab === tab
+                        ? "border-accent text-text-primary"
+                        : "border-transparent text-text-tertiary hover:text-text-primary"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
+          {agentConfigTab === "cli" && (
+            <div className="space-y-5 rounded-lg border border-accent/20 bg-accent/[0.03] p-4">
+              <Field
+                label="Claude command"
+                value={form.claude_command}
+                onChange={(claude_command) => setForm({ ...form, claude_command })}
+                placeholder="claude"
+                hint="Claude Code CLI command. Per-project settings can override this."
+              />
+              <div className="space-y-3">
+                <Toggle label="Coppice statusline" checked={form.claude_cli_statusline_enabled} onChange={(claude_cli_statusline_enabled) => setForm({ ...form, claude_cli_statusline_enabled })} hint="Show a compact colored statusline in Claude CLI tabs." />
+                {form.claude_cli_statusline_enabled && (
+                  <div className="ml-5 space-y-3 border-l border-border-primary pl-3">
+                    <Toggle label="Statusline colors" checked={form.claude_cli_statusline_colors} onChange={(claude_cli_statusline_colors) => setForm({ ...form, claude_cli_statusline_colors })} hint="Use ANSI colors in the Coppice statusline." />
+                    <Toggle label="Git info in statusline" checked={form.claude_cli_statusline_git} onChange={(claude_cli_statusline_git) => setForm({ ...form, claude_cli_statusline_git })} hint="Show branch and changed-file counts. Cost, username, and account are never shown." />
+                  </div>
+                )}
+              </div>
+              <div className="space-y-3">
+                <Toggle label="CLI notifications" checked={form.claude_cli_notifications} onChange={(claude_cli_notifications) => setForm({ ...form, claude_cli_notifications })} hint="Use Claude Code notification hooks and terminal bell fallback to alert Coppice when CLI tabs need attention." />
+                <Toggle label="Fullscreen TUI" checked={form.claude_cli_fullscreen} onChange={(claude_cli_fullscreen) => setForm({ ...form, claude_cli_fullscreen })} hint="Use Claude Code's fullscreen renderer to avoid duplicate redraws in scrollback." />
+                <Toggle label="Terminal progress" checked={form.claude_cli_terminal_progress} onChange={(claude_cli_terminal_progress) => setForm({ ...form, claude_cli_terminal_progress })} hint="Let Claude Code emit terminal progress updates; Coppice displays them on the tab." />
+              </div>
+            </div>
+          )}
+
           {/* Claude Agent settings */}
-          {form.default_claude_mode === "agent" && (form.agent_backend || "claude") === "claude" && (
+          {agentConfigTab === "claude" && (
             <div className="space-y-4 rounded-lg border border-accent/20 bg-accent/[0.03] p-4">
               <ClaudeAuthSection />
               <div className="flex items-center gap-2">
@@ -349,7 +408,7 @@ export function AppSettingsModal() {
           )}
 
           {/* Pi Agent settings */}
-          {form.default_claude_mode === "agent" && form.agent_backend === "pi" && (
+          {agentConfigTab === "pi" && (
             <div className="space-y-5 rounded-lg border border-purple-400/20 bg-purple-500/[0.04] p-4">
               <PiSettingsSection form={form} setForm={setForm} />
             </div>
