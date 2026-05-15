@@ -969,10 +969,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       claudeStatusByTab: claudeStatus,
       agentSessionByTab: agentSession,
     });
-    // Close the agent bridge process and remove cached state if this was an agent tab
+    // Tear down backend resources for closed tabs. Terminal panels are kept
+    // alive while switching tabs, so their React unmount cleanup intentionally
+    // does not kill the PTY; tab closure must do it explicitly here.
     if (closedTab?.type === "agent") {
       commands.agentClose(tabId).catch(() => {});
       commands.deleteAgentTabCache(tabId).catch(() => {});
+    } else if (closedTab?.type === "terminal" || closedTab?.type === "claude") {
+      commands.terminalKill(tabId).catch(() => {});
     }
   },
 

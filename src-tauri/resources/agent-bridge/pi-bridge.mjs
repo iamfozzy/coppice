@@ -1523,6 +1523,32 @@ let currentCwd = process.cwd();
 let currentPermissionMode = "default";
 let heartbeatTimer = null;
 
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => emit({ type: "heartbeat" }), 10_000);
+}
+
+function emitSessionResult(subtype = "success") {
+  const contextUsage = session?.getContextUsage?.();
+  const currentModel = session?.model;
+  const contextWindow = contextUsage?.contextWindow || currentModel?.contextWindow || 0;
+  emit({
+    type: "result",
+    subtype,
+    sessionId: "",
+    contextWindow,
+    durationMs: 0,
+    numTurns: 0,
+  });
+}
+
 /**
  * Env var names per provider — matches Pi's own getApiKeyEnvVars() mapping
  * from @earendil-works/pi-ai/dist/env-api-keys.js so credential resolution
@@ -1905,10 +1931,7 @@ function subscribeToSessionEvents(agentSession) {
         });
 
         lastTurnUsage = null;
-        if (heartbeatTimer) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
-        }
+        stopHeartbeat();
         break;
       }
 
@@ -1928,12 +1951,17 @@ function subscribeToSessionEvents(agentSession) {
           emit({
             type: "compact_boundary",
             summary: event.result.summary || "",
+            trigger: event.reason,
+            preTokens: event.result.tokensBefore,
           });
         } else if (event.aborted) {
           log("compaction aborted");
         } else if (event.errorMessage) {
-          log(`compaction failed: ${event.errorMessage}`);
-          emit({ type: "error", message: `Compaction failed: ${event.errorMessage}` });
+          const message = event.errorMessage.startsWith("Compaction failed:")
+            ? event.errorMessage
+            : `Compaction failed: ${event.errorMessage}`;
+          log(message);
+          emit({ type: "error", message });
         }
         break;
 
@@ -2057,6 +2085,42 @@ async function expandClaudeCommand(prompt, cwd) {
     }
   }
   return null;
+}
+
+function parseCompactCommand(text) {
+  if (typeof text !== "string") return null;
+  const match = text.match(/^\/compact(?:\s+([\s\S]*))?$/);
+  if (!match) return null;
+  const customInstructions = match[1]?.trim();
+  return { customInstructions: customInstructions || undefined };
+}
+
+async function runCompactCommand(text) {
+  const parsed = parseCompactCommand(text);
+  if (!parsed) return false;
+
+  if (!session || typeof session.compact !== "function") {
+    emit({ type: "error", message: "Compaction is not available for this session." });
+    return true;
+  }
+
+  try {
+    log(`manual compaction requested${parsed.customInstructions ? " with custom instructions" : ""}`);
+    await session.compact(parsed.customInstructions);
+    emitSessionResult("success");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`manual compaction command failed: ${message}`);
+    // Non-abort failures are already surfaced by the compaction_end event.
+    // Aborts don't emit an error, so complete the lifecycle to unblock input.
+    if (message === "Compaction cancelled" || err?.name === "AbortError") {
+      emitSessionResult("interrupted");
+    }
+  } finally {
+    stopHeartbeat();
+  }
+
+  return true;
 }
 
 /**
@@ -2359,12 +2423,15 @@ async function startSession(msg) {
   }
 
   // Heartbeat for network stall detection
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(() => emit({ type: "heartbeat" }), 10_000);
+  startHeartbeat();
 
-  // Run the prompt — expand .claude/commands/ templates first (Pi SDK
-  // only expands .pi/prompts/ internally via session.prompt()).
-  let promptText = msg.prompt;
+  // Run the prompt. Built-in commands must be handled by the bridge; Pi's
+  // AgentSession.prompt() only handles extension commands and prompt templates.
+  let promptText = msg.prompt || "";
+  if (await runCompactCommand(promptText)) return;
+
+  // Expand .claude/commands/ templates first (Pi SDK only expands .pi/prompts/
+  // internally via session.prompt()).
   if (promptText.startsWith("/")) {
     const expanded = await expandClaudeCommand(promptText, currentCwd);
     if (expanded) {
@@ -2382,10 +2449,7 @@ async function startSession(msg) {
   } catch (err) {
     log("Session error:", err.message, err.stack);
     emit({ type: "error", message: err.message || String(err) });
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-    }
+    stopHeartbeat();
   }
 }
 
@@ -2423,6 +2487,14 @@ async function handleCommand(msg) {
     case "input":
       if (!session) break;
       if (session.isStreaming) {
+        if (parseCompactCommand(msg.text)) {
+          emit({
+            type: "error",
+            message: "Cannot compact while the agent is running. Stop the current run or wait for it to finish, then try /compact again.",
+          });
+          break;
+        }
+
         // Agent is busy — steer (redirect without losing work).
         // AgentSession.steer() handles slash command validation (throws
         // if it's an extension command) and prompt template expansion.
@@ -2440,9 +2512,14 @@ async function handleCommand(msg) {
           }
         }
       } else {
-        // Agent is idle — new prompt. Expand .claude/commands/ templates first
-        // (Pi SDK only handles .pi/prompts/ templates internally).
-        let inputText = msg.text;
+        // Agent is idle — new prompt. Built-in commands must be handled by the
+        // bridge before falling through to AgentSession.prompt().
+        let inputText = msg.text || "";
+        startHeartbeat();
+        if (await runCompactCommand(inputText)) break;
+
+        // Expand .claude/commands/ templates first (Pi SDK only handles
+        // .pi/prompts/ templates internally).
         if (inputText.startsWith("/")) {
           const expanded = await expandClaudeCommand(inputText, currentCwd);
           if (expanded) {
@@ -2450,8 +2527,6 @@ async function handleCommand(msg) {
             inputText = expanded;
           }
         }
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
-        heartbeatTimer = setInterval(() => emit({ type: "heartbeat" }), 10_000);
         try {
           const promptOpts = {};
           const images = parseImages(msg.images);
@@ -2462,6 +2537,7 @@ async function handleCommand(msg) {
         } catch (err) {
           log("Session prompt error:", err.message);
           emit({ type: "error", message: err.message });
+          stopHeartbeat();
         }
       }
       break;
@@ -2597,10 +2673,7 @@ function parseImages(images) {
 
 function cleanup() {
   flushPartialBuffers();
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
+  stopHeartbeat();
   if (sessionUnsubscribe) {
     sessionUnsubscribe();
     sessionUnsubscribe = null;
