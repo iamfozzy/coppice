@@ -161,6 +161,25 @@ export async function terminalSpawn(
   return invoke("terminal_spawn", { sessionId, cwd, command, rows, cols });
 }
 
+export async function terminalSpawnClaude(
+  sessionId: string,
+  cwd: string,
+  command?: string,
+  rows?: number,
+  cols?: number,
+  resumeSessionId?: string,
+  resumeLatest?: boolean,
+): Promise<void> {
+  return invoke("terminal_spawn_claude", { sessionId, cwd, command, rows, cols, resumeSessionId, resumeLatest });
+}
+
+export async function buildClaudePromptCommand(
+  claudeCommand: string | undefined,
+  prompt: string,
+): Promise<string> {
+  return invoke("build_claude_prompt_command", { claudeCommand, prompt });
+}
+
 export async function terminalWrite(
   sessionId: string,
   data: string

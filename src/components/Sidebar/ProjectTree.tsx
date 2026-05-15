@@ -156,7 +156,7 @@ function ProjectNode({
     <div>
       {/* Project header */}
       <div
-        className={`w-full flex items-center gap-1.5 px-3 py-1.5 text-[length:var(--app-font-10)] font-medium uppercase tracking-wide text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors group cursor-pointer ${expanded ? "bg-bg-hover" : ""}`}
+        className={`w-full flex items-center gap-1.5 px-3 py-1.5 text-[length:var(--app-font-10)] font-medium uppercase tracking-wide text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors group cursor-pointer ${expanded ? "bg-bg-tertiary/40" : ""}`}
         onClick={() => !searchOpen && onToggleCollapse()}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -262,7 +262,7 @@ function ProjectNode({
               return (
               <div
                 key={wt.id}
-                className={`flex items-center gap-2 pl-3 pr-3 py-1.5 text-[length:var(--app-font-11)] transition-colors group/wt ${
+                className={`flex items-center gap-2 pl-3 pr-3 py-1.5 text-[length:var(--app-font-12)] leading-5 transition-colors group/wt ${
                   isDeleting
                     ? "opacity-40 pointer-events-none"
                     : isSelected
@@ -271,11 +271,23 @@ function ProjectNode({
                 }`}
                 onClick={() => !isDeleting && onSelectWorktree(wt)}
               >
+                <svg
+                  className={`shrink-0 ${isSelected ? "text-accent-hover/80" : "text-text-tertiary group-hover/wt:text-text-secondary"}`}
+                  width="13"
+                  height="13"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path d="M5 3.5v5A3.5 3.5 0 0 0 8.5 12H11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                  <circle cx="5" cy="3.5" r="1.7" stroke="currentColor" strokeWidth="1.4" />
+                  <circle cx="11.5" cy="12" r="1.7" stroke="currentColor" strokeWidth="1.4" />
+                </svg>
                 <div className="flex-1 min-w-0">
                   {isDeleting ? (
                     <span className="truncate italic text-text-tertiary">Deleting...</span>
                   ) : (
-                    <span className="truncate font-mono">
+                    <span className="truncate font-sans font-medium tracking-normal">
                       {wt.branch}
                       {wt.pr_number != null && (
                         <span className={isSelected ? "text-accent-hover/80" : "text-text-secondary"}> #{wt.pr_number}</span>

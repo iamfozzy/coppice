@@ -215,21 +215,57 @@ function coppiceExecute(toolName) {
 }
 
 /**
- * Build the 7 Coppice IDE tools as ToolDefinition[] for AgentSession.
+ * Build Coppice IDE tools as ToolDefinition[] for AgentSession.
  * These are passed via the `customTools` option to createAgentSession().
  */
 function buildCoppiceToolDefinitions() {
   return [
     defineTool({
+      name: "coppice_list_projects",
+      label: "List Projects",
+      description:
+        "List Coppice projects available in the IDE. Use this from the scratchpad before asking the user which project to target.",
+      promptSnippet: "List Coppice projects",
+      parameters: Type.Object({}),
+      execute: coppiceExecute("list_projects"),
+    }),
+    defineTool({
+      name: "coppice_create_project",
+      label: "Create Project",
+      description:
+        "Create a Coppice project. Ask the user for the project name and local repository path before calling this tool.",
+      promptSnippet: "Create a Coppice project",
+      parameters: Type.Object({
+        name: Type.String({ description: "Project display name" }),
+        local_path: Type.String({ description: "Absolute path to the repository/project root" }),
+        github_remote: Type.Optional(Type.String({ description: "GitHub remote URL" })),
+        base_branch: Type.Optional(Type.String({ description: "Base branch (defaults to main)" })),
+        target_branch: Type.Optional(Type.String({ description: "Default PR target branch" })),
+        setup_scripts: Type.Optional(Type.Array(Type.String({ description: "Setup script" }))),
+        build_command: Type.Optional(Type.String({ description: "Build command shown in the sidepanel" })),
+        run_command: Type.Optional(Type.String({ description: "Run command shown in the sidepanel" })),
+        env_files: Type.Optional(Type.Array(Type.String({ description: "Env file/directory to copy" }))),
+      }),
+      executionMode: "sequential",
+      execute: coppiceExecute("create_project"),
+    }),
+    defineTool({
       name: "coppice_create_worktree",
       label: "Create Worktree",
       description:
-        "Create a new git worktree in the Coppice IDE. Registers it in the project model and copies env files. Provide an existing branch name to check out, OR set new_branch + base_branch to create a new branch. When you have a task to perform in the new worktree, pass it as 'prompt' — Coppice will switch to the new worktree and spawn a new agent tab with that task. Do NOT cd into the worktree yourself after creating it.",
+        "Create a new git worktree in the Coppice IDE. Registers it in the project model and copies env files. Provide project_id/project_name when calling from scratchpad. Provide an existing branch name to check out, OR set new_branch + base_branch to create a new branch. When you have a task to perform in the new worktree, pass it as 'prompt' — Coppice will switch to the new worktree and spawn a new agent tab with that task. Do NOT cd into the worktree yourself after creating it.",
       promptSnippet: "Create a git worktree registered in the Coppice IDE",
       promptGuidelines: [
+        "Use coppice_list_projects/coppice_list_worktrees from scratchpad, then ask the user for any ambiguous project/worktree choice.",
         "Use coppice_create_worktree instead of raw git worktree commands — it registers the worktree in the IDE and copies env files. Pass work as the 'prompt' parameter; NEVER cd into the new worktree yourself.",
       ],
       parameters: Type.Object({
+        project_id: Type.Optional(
+          Type.String({ description: "Target Coppice project ID (required from scratchpad)" }),
+        ),
+        project_name: Type.Optional(
+          Type.String({ description: "Target Coppice project name if project_id is unknown" }),
+        ),
         branch: Type.Optional(
           Type.String({ description: "Existing branch to check out" }),
         ),
@@ -260,10 +296,77 @@ function buildCoppiceToolDefinitions() {
       name: "coppice_list_worktrees",
       label: "List Worktrees",
       description:
-        "List all worktrees registered in the current Coppice project.",
+        "List worktrees registered in a Coppice project. If project_id/project_name is omitted, lists the current project, or all projects when called from scratchpad.",
       promptSnippet: "List IDE-registered worktrees",
-      parameters: Type.Object({}),
+      parameters: Type.Object({
+        project_id: Type.Optional(Type.String({ description: "Project ID to list" })),
+        project_name: Type.Optional(Type.String({ description: "Project name to list" })),
+      }),
       execute: coppiceExecute("list_worktrees"),
+    }),
+    defineTool({
+      name: "coppice_list_runners",
+      label: "List Runners",
+      description:
+        "List Coppice sidepanel runners (setup/build/run) available for a worktree and their running status.",
+      promptSnippet: "List Coppice setup/build/run runners",
+      parameters: Type.Object({
+        project_id: Type.Optional(Type.String()),
+        project_name: Type.Optional(Type.String()),
+        worktree_id: Type.Optional(Type.String()),
+        worktree_name: Type.Optional(Type.String()),
+      }),
+      execute: coppiceExecute("list_runners"),
+    }),
+    defineTool({
+      name: "coppice_run_runner",
+      label: "Run Runner",
+      description:
+        "Run a configured Coppice sidepanel runner (setup, build, or run) so output/status appears in the UI. Do not use this if the runner is unavailable.",
+      promptSnippet: "Run a Coppice setup/build/run runner",
+      promptGuidelines: [
+        "Use Coppice runners for configured setup/build/run tasks instead of running those app commands via bash internally.",
+        "If a runner is unavailable, do not invent an equivalent command unless the user explicitly asks.",
+      ],
+      parameters: Type.Object({
+        runner: Type.Union([Type.Literal("setup"), Type.Literal("build"), Type.Literal("run")]),
+        project_id: Type.Optional(Type.String()),
+        project_name: Type.Optional(Type.String()),
+        worktree_id: Type.Optional(Type.String()),
+        worktree_name: Type.Optional(Type.String()),
+      }),
+      executionMode: "sequential",
+      execute: coppiceExecute("run_runner"),
+    }),
+    defineTool({
+      name: "coppice_stop_runner",
+      label: "Stop Runner",
+      description: "Stop a running Coppice sidepanel runner.",
+      promptSnippet: "Stop a Coppice runner",
+      parameters: Type.Object({
+        runner: Type.Union([Type.Literal("setup"), Type.Literal("build"), Type.Literal("run")]),
+        project_id: Type.Optional(Type.String()),
+        project_name: Type.Optional(Type.String()),
+        worktree_id: Type.Optional(Type.String()),
+        worktree_name: Type.Optional(Type.String()),
+      }),
+      executionMode: "sequential",
+      execute: coppiceExecute("stop_runner"),
+    }),
+    defineTool({
+      name: "coppice_runner_status",
+      label: "Runner Status",
+      description:
+        "Check whether a configured Coppice sidepanel runner is available and currently running.",
+      promptSnippet: "Check Coppice runner status",
+      parameters: Type.Object({
+        runner: Type.Union([Type.Literal("setup"), Type.Literal("build"), Type.Literal("run")]),
+        project_id: Type.Optional(Type.String()),
+        project_name: Type.Optional(Type.String()),
+        worktree_id: Type.Optional(Type.String()),
+        worktree_name: Type.Optional(Type.String()),
+      }),
+      execute: coppiceExecute("runner_status"),
     }),
     defineTool({
       name: "coppice_spawn_terminal",

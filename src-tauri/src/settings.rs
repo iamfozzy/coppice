@@ -74,11 +74,19 @@ pub struct AppSettings {
     pub app_font_size: u16,
     pub terminal_emulator: String,
     pub shell: String,
+    #[serde(default = "default_true")]
+    pub terminal_compact_prompt: bool,
     pub theme: String,
     pub window_decorations: bool,
     pub notification_sound: bool,
     pub notification_popup: bool,
     pub default_claude_mode: String,
+    pub claude_cli_statusline_enabled: bool,
+    pub claude_cli_statusline_git: bool,
+    pub claude_cli_statusline_colors: bool,
+    pub claude_cli_notifications: bool,
+    pub claude_cli_fullscreen: bool,
+    pub claude_cli_terminal_progress: bool,
     pub agent_default_model: String,
     pub agent_default_effort: String,
     pub agent_default_extended_context: bool,
@@ -102,6 +110,10 @@ pub struct AppSettings {
     pub pi_configured_providers: Vec<String>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -112,11 +124,18 @@ impl Default for AppSettings {
             app_font_size: 16,
             terminal_emulator: String::new(),
             shell: String::new(),
+            terminal_compact_prompt: true,
             theme: "dim".to_string(),
             window_decorations: true,
             notification_sound: true,
             notification_popup: true,
-            default_claude_mode: "agent".to_string(),
+            default_claude_mode: "claude".to_string(),
+            claude_cli_statusline_enabled: true,
+            claude_cli_statusline_git: true,
+            claude_cli_statusline_colors: true,
+            claude_cli_notifications: true,
+            claude_cli_fullscreen: true,
+            claude_cli_terminal_progress: true,
             agent_default_model: String::new(),
             agent_default_effort: "medium".to_string(),
             agent_default_extended_context: false,

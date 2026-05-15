@@ -10,6 +10,8 @@
     "core:window:allow-set-badge-count",
     "shell:allow-open",
     "dialog:default",
-    "notification:default"
+    "notification:default",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text"
   ]
 }

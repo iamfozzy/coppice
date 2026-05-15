@@ -1,7 +1,8 @@
 import { create } from "zustand";
-import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment, QueuedMessage, AgentBackend, McpServerStatus } from "../lib/types";
+import type { Project, Worktree, AppSettings, AgentSessionState, AgentMessage, AgentStatus, AgentCost, TokenUsage, AgentPendingPermission, AgentPendingQuestion, EffortLevel, AgentPermissionMode, SlashCommand, ImageAttachment, QueuedMessage, AgentBackend, McpServerStatus, DefaultSessionMode } from "../lib/types";
 import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID } from "../lib/types";
 import { getDefaultSlashCommands } from "../lib/slashCommandDefaults";
+import { resolveDefaultSessionMode } from "../lib/defaultSessionMode";
 import * as commands from "../lib/commands";
 import { playNotificationSound } from "../lib/sounds";
 import { isWindowFocused } from "../lib/windowFocus";
@@ -54,6 +55,39 @@ function clearIdleClaudeStatus(
   if (claudeStatusByTab[tabId] !== "idle") return null;
   const { [tabId]: _, ...rest } = claudeStatusByTab;
   return rest;
+}
+
+const CLI_TABS_STORAGE_KEY = "coppice:cliTabs:v1";
+
+interface PersistedCliTabs {
+  tabsByWorktree: Record<string, TabInfo[]>;
+  activeTabByWorktree: Record<string, string | null>;
+}
+
+function persistCliTabsSnapshot(state: Pick<AppState, "tabsByWorktree" | "activeTabByWorktree">) {
+  const tabsByWorktree: Record<string, TabInfo[]> = {};
+  for (const [worktreeId, tabs] of Object.entries(state.tabsByWorktree)) {
+    const cliTabs = tabs
+      .filter((tab) => tab.type === "terminal" || tab.type === "claude")
+      .map((tab) => {
+        // resumeOnLaunch is intentionally transient: it means "this tab was
+        // restored from a previous app run" and should be recomputed on load.
+        const { resumeOnLaunch: _resumeOnLaunch, ...persisted } = tab;
+        return persisted;
+      });
+    if (cliTabs.length > 0) tabsByWorktree[worktreeId] = cliTabs;
+  }
+  localStorage.setItem(CLI_TABS_STORAGE_KEY, JSON.stringify({ tabsByWorktree, activeTabByWorktree: state.activeTabByWorktree }));
+}
+
+function readPersistedCliTabs(): PersistedCliTabs | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CLI_TABS_STORAGE_KEY) || "null") as PersistedCliTabs | null;
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 // ── Agent tab cache persistence ──
@@ -213,6 +247,10 @@ export interface TabInfo {
   label: string;
   command?: string;
   cwd: string;
+  /** Claude Code CLI session id captured from hooks, used to resume restored CLI tabs. */
+  claudeSessionId?: string;
+  /** Transient: true only for CLI tabs restored after app launch. */
+  resumeOnLaunch?: boolean;
   // For diff tabs
   diffFile?: string;
   diffMode?: "uncommitted" | "pr";
@@ -268,7 +306,7 @@ interface AppState {
   sidebarWidth: number;
   collapsedProjectIds: Set<string>;
   pendingClaudeCommand: string | null;
-  pendingAgentPrompt: { prompt: string; model?: string } | null;
+  pendingAgentPrompt: { prompt: string; model?: string; backend?: AgentBackend } | null;
   pendingRunner: { key: string } | null;
   deletingWorktreeIds: Set<string>;
 
@@ -285,6 +323,9 @@ interface AppState {
 
   // Claude tab activity status (keyed by tab ID — covers both claude and agent tabs)
   claudeStatusByTab: Record<string, ClaudeStatus>;
+
+  // Terminal progress by tab (0-100, keyed by terminal/Claude tab ID)
+  terminalProgressByTab: Record<string, number>;
 
   // Agent session state (keyed by tab ID)
   agentSessionByTab: Record<string, AgentSessionState>;
@@ -307,6 +348,7 @@ interface AppState {
   refreshClaudeAuth: () => void;
   ensurePiModelsLoaded: () => Promise<void>;
   setDefaultAgentBackend: (backend: AgentBackend) => Promise<void>;
+  setDefaultSessionMode: (mode: DefaultSessionMode) => Promise<void>;
 
   // Actions — general
   loadProjects: () => Promise<void>;
@@ -320,8 +362,8 @@ interface AppState {
   toggleProjectCollapsed: (projectId: string) => void;
   requestClaudeTab: (command: string) => void;
   consumeClaudeCommand: () => string | null;
-  requestAgentTab: (prompt: string, model?: string) => void;
-  consumeAgentPrompt: () => { prompt: string; model?: string } | null;
+  requestAgentTab: (prompt: string, model?: string, backend?: AgentBackend) => void;
+  consumeAgentPrompt: () => { prompt: string; model?: string; backend?: AgentBackend } | null;
   requestRunner: (key: string) => void;
   consumeRunner: () => { key: string } | null;
 
@@ -347,12 +389,14 @@ interface AppState {
   setClaudeStatus: (tabId: string, status: ClaudeStatus) => void;
   clearClaudeIdleStatus: (tabId: string) => void;
   removeClaudeStatus: (tabId: string) => void;
+  setTerminalProgress: (tabId: string, progress: number | null) => void;
 
   // Actions — tile view
   toggleTileView: () => void;
 
   // Actions — tabs
   restoreAgentTabs: (worktreeId: string) => Promise<void>;
+  restoreCliTabs: () => void;
   addTab: (worktreeId: string, type: "terminal" | "claude", cwd: string, command?: string) => void;
   openDiffTab: (worktreeId: string, file: string, cwd: string, mode: "uncommitted" | "pr", baseBranch?: string) => void;
   closeTab: (worktreeId: string, tabId: string) => void;
@@ -361,8 +405,10 @@ interface AppState {
   closeActiveTab: (worktreeId: string) => void;
   newTerminalTab: (worktreeId: string) => void;
   newClaudeTab: (worktreeId: string) => void;
-  addAgentTab: (worktreeId: string, cwd: string, prompt?: string, model?: string) => void;
-  newAgentTab: (worktreeId: string) => void;
+  setClaudeCliSessionId: (tabId: string, claudeSessionId: string) => void;
+  addAgentTab: (worktreeId: string, cwd: string, prompt?: string, model?: string, backend?: AgentBackend) => void;
+  newAgentTab: (worktreeId: string, backend?: AgentBackend) => void;
+  newDefaultSessionTab: (worktreeId: string, cwd?: string) => void;
   renameTab: (worktreeId: string, tabId: string, newLabel: string) => void;
 
   // Actions — agent session state
@@ -438,6 +484,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   tabWorktreeIndex: {},
   runnersByWorktree: {},
   claudeStatusByTab: {},
+  terminalProgressByTab: {},
   agentSessionByTab: {},
   cachedTabCountByWorktree: {},
   showTileView: false,
@@ -499,6 +546,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().saveSettings({ ...settings, agent_backend: backend });
   },
 
+  setDefaultSessionMode: async (mode) => {
+    const settings = get().appSettings;
+    if (!settings) return;
+    const nextSettings: AppSettings = {
+      ...settings,
+      default_claude_mode: mode,
+      ...(mode === "terminal" ? {} : { agent_backend: mode }),
+    };
+    if (
+      settings.default_claude_mode === nextSettings.default_claude_mode
+      && settings.agent_backend === nextSettings.agent_backend
+    ) return;
+    await get().saveSettings(nextSettings);
+  },
+
   openAppSettings: () => set({ editingAppSettings: true }),
   closeAppSettings: () => set({ editingAppSettings: false }),
 
@@ -510,7 +572,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (cmd) set({ pendingClaudeCommand: null });
     return cmd;
   },
-  requestAgentTab: (prompt, model) => set({ pendingAgentPrompt: { prompt, model } }),
+  requestAgentTab: (prompt, model, backend) => set({ pendingAgentPrompt: { prompt, model, backend } }),
   consumeAgentPrompt: () => {
     const p = get().pendingAgentPrompt;
     if (p) set({ pendingAgentPrompt: null });
@@ -538,6 +600,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         scratchpadWorktree,
         worktreesByProject: { ...s.worktreesByProject, [SCRATCHPAD_PROJECT_ID]: worktrees },
       }));
+      get().restoreCliTabs();
     }
     // Eagerly load cached tab counts so the sidebar shows them before
     // the user clicks into each worktree.
@@ -556,6 +619,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({
       worktreesByProject: { ...s.worktreesByProject, [projectId]: worktrees },
     }));
+    get().restoreCliTabs();
   },
 
   selectProject: (id) => set({ selectedProjectId: id }),
@@ -738,6 +802,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         const tabLocation = findTabLocation(s, tabId);
         const tabLabel = tabLocation?.tab.label ?? "";
         const worktreeName = tabLocation ? (tabLocation.worktree.name || tabLocation.worktree.branch) : "";
+        const isCliTab = tabLocation?.tab.type === "claude";
 
         (async () => {
           try {
@@ -749,10 +814,10 @@ export const useAppStore = create<AppState>((set, get) => ({
             if (granted) {
               sendNotification({
                 id: (_notifIdCounter = (_notifIdCounter + 1) % 0x7FFF_FFFF),
-                title: "Agent finished",
+                title: isCliTab ? "Claude needs attention" : "Agent finished",
                 body: worktreeName
                   ? `${tabLabel} in ${worktreeName}`
-                  : tabLabel || "An agent tab has finished responding",
+                  : tabLabel || (isCliTab ? "A Claude CLI tab needs attention" : "An agent tab has finished responding"),
                 ...(tabLocation ? {
                   extra: {
                     projectId: tabLocation.projectId,
@@ -777,6 +842,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ claudeStatusByTab: rest });
   },
 
+  setTerminalProgress: (tabId, progress) => {
+    const s = get();
+    if (progress === null || progress <= 0 || progress >= 100) {
+      if (!(tabId in s.terminalProgressByTab)) return;
+      const { [tabId]: _, ...rest } = s.terminalProgressByTab;
+      set({ terminalProgressByTab: rest });
+      return;
+    }
+    const bounded = Math.max(0, Math.min(100, Math.round(progress)));
+    if (s.terminalProgressByTab[tabId] === bounded) return;
+    set({ terminalProgressByTab: { ...s.terminalProgressByTab, [tabId]: bounded } });
+  },
+
   clearClaudeIdleStatus: (tabId) => {
     const s = get();
     const nextClaudeStatus = clearIdleClaudeStatus(s.claudeStatusByTab, tabId);
@@ -785,6 +863,46 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // ── Tabs ──
+
+  restoreCliTabs: () => {
+    const persisted = readPersistedCliTabs();
+    if (!persisted) return;
+    const s = get();
+    const knownWorktreeIds = new Set(
+      Object.values(s.worktreesByProject).flat().map((worktree) => worktree.id)
+    );
+    if (s.scratchpadWorktree) knownWorktreeIds.add(s.scratchpadWorktree.id);
+
+    set((state) => {
+      const nextTabsByWorktree = { ...state.tabsByWorktree };
+      const nextActive = { ...state.activeTabByWorktree };
+      const nextIndex = { ...state.tabWorktreeIndex };
+      let changed = false;
+
+      for (const [worktreeId, tabs] of Object.entries(persisted.tabsByWorktree)) {
+        if (!knownWorktreeIds.has(worktreeId)) continue;
+        const existing = nextTabsByWorktree[worktreeId] ?? [];
+        const existingIds = new Set(existing.map((tab) => tab.id));
+        const restored = tabs
+          .filter((tab) =>
+            (tab.type === "terminal" || tab.type === "claude") &&
+            tab.cwd &&
+            !existingIds.has(tab.id)
+          )
+          .map((tab) => tab.type === "claude" ? { ...tab, resumeOnLaunch: true } : tab);
+        if (restored.length === 0) continue;
+        nextTabsByWorktree[worktreeId] = [...existing, ...restored];
+        for (const tab of restored) nextIndex[tab.id] = worktreeId;
+        const active = persisted.activeTabByWorktree[worktreeId];
+        if (active && restored.some((tab) => tab.id === active)) nextActive[worktreeId] = active;
+        else if (!nextActive[worktreeId]) nextActive[worktreeId] = restored[0]?.id ?? null;
+        changed = true;
+      }
+
+      if (!changed) return {};
+      return { tabsByWorktree: nextTabsByWorktree, activeTabByWorktree: nextActive, tabWorktreeIndex: nextIndex };
+    });
+  },
 
   restoreAgentTabs: async (worktreeId) => {
     try {
@@ -906,6 +1024,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
       tabWorktreeIndex: { ...s.tabWorktreeIndex, [tab.id]: worktreeId },
     }));
+    persistCliTabsSnapshot(get());
   },
 
   openDiffTab: (worktreeId, file, cwd, mode, baseBranch) => {
@@ -962,13 +1081,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     const tabIndex = tabId in s.tabWorktreeIndex
       ? (() => { const { [tabId]: _, ...rest } = s.tabWorktreeIndex; return rest; })()
       : s.tabWorktreeIndex;
+    const terminalProgress = tabId in s.terminalProgressByTab
+      ? (() => { const { [tabId]: _, ...rest } = s.terminalProgressByTab; return rest; })()
+      : s.terminalProgressByTab;
     set({
       tabsByWorktree: { ...s.tabsByWorktree, [worktreeId]: next },
       activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: newActive },
       tabWorktreeIndex: tabIndex,
       claudeStatusByTab: claudeStatus,
+      terminalProgressByTab: terminalProgress,
       agentSessionByTab: agentSession,
     });
+    persistCliTabsSnapshot(get());
     // Tear down backend resources for closed tabs. Terminal panels are kept
     // alive while switching tabs, so their React unmount cleanup intentionally
     // does not kill the PTY; tab closure must do it explicitly here.
@@ -992,6 +1116,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return update;
     });
+    persistCliTabsSnapshot(get());
   },
 
   cycleTab: (worktreeId, direction) => {
@@ -1014,6 +1139,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         activeTabByWorktree: { ...s.activeTabByWorktree, [worktreeId]: nextId },
       });
     }
+    persistCliTabsSnapshot(get());
   },
 
   closeActiveTab: (worktreeId) => {
@@ -1041,7 +1167,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     s.addTab(worktreeId, "claude", path, claudeCmd);
   },
 
-  addAgentTab: (worktreeId, cwd, prompt, model) => {
+  setClaudeCliSessionId: (tabId, claudeSessionId) => {
+    const s = get();
+    const worktreeId = s.tabWorktreeIndex[tabId];
+    if (!worktreeId || !claudeSessionId) return;
+    const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab || tab.type !== "claude" || tab.claudeSessionId === claudeSessionId) return;
+    set((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [worktreeId]: (state.tabsByWorktree[worktreeId] ?? []).map((t) =>
+          t.id === tabId ? { ...t, claudeSessionId } : t
+        ),
+      },
+    }));
+    persistCliTabsSnapshot(get());
+  },
+
+  addAgentTab: (worktreeId, cwd, prompt, model, requestedBackend) => {
     const s = get();
     const tabs = s.tabsByWorktree[worktreeId] ?? [];
     let maxNum = 0;
@@ -1058,7 +1202,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       command: prompt,
       cwd,
     };
-    const backend = s.appSettings?.agent_backend || "claude";
+    const backend = requestedBackend || s.appSettings?.agent_backend || "claude";
+    let effort = s.appSettings?.agent_default_effort || "high";
+    if (backend === "pi" && effort === "max") effort = "xhigh";
+    if (backend === "claude" && (effort === "off" || effort === "minimal")) effort = "low";
     const sessionState: AgentSessionState = {
       messages: [],
       status: "idle",
@@ -1068,7 +1215,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? s.appSettings?.pi_default_model || ""
           : s.appSettings?.agent_default_model || ""
       ),
-      effort: s.appSettings?.agent_default_effort || "high",
+      effort,
       extendedContext: s.appSettings?.agent_default_extended_context ?? false,
       permissionMode: "bypassPermissions",
       conciseMode: true,
@@ -1103,10 +1250,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
-  newAgentTab: (worktreeId) => {
+  newAgentTab: (worktreeId, backend) => {
     const path = get().getWorktreePath(worktreeId);
     if (!path) return;
-    get().addAgentTab(worktreeId, path);
+    get().addAgentTab(worktreeId, path, undefined, undefined, backend);
+  },
+
+  newDefaultSessionTab: (worktreeId, cwd) => {
+    const s = get();
+    const path = cwd || s.getWorktreePath(worktreeId);
+    if (!path) return;
+
+    const defaultMode = resolveDefaultSessionMode(s.appSettings);
+    if (defaultMode !== "terminal") {
+      s.addAgentTab(worktreeId, path, undefined, undefined, defaultMode);
+      return;
+    }
+
+    // Resolve the project-specific Claude command when this is a real project
+    // worktree; scratchpad/default paths fall back to the global command.
+    let projectId: string | null = null;
+    for (const [pid, wts] of Object.entries(s.worktreesByProject)) {
+      if (wts.some((w) => w.id === worktreeId)) { projectId = pid; break; }
+    }
+    const project = projectId ? s.projects.find((p) => p.id === projectId) : undefined;
+    const claudeCmd = project?.claude_command || s.appSettings?.claude_command || "claude";
+    s.addTab(worktreeId, "claude", path, claudeCmd);
   },
 
   renameTab: (worktreeId, tabId, newLabel) => {
@@ -1122,9 +1291,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
-    // Persist label change for agent tabs
+    // Persist label change for agent tabs and restored CLI/terminal tabs.
     const tab = get().tabsByWorktree[worktreeId]?.find((t) => t.id === tabId);
     if (tab?.type === "agent") persistAgentTabDebounced(tabId);
+    persistCliTabsSnapshot(get());
   },
 
   // ── Agent session state ──
@@ -1686,7 +1856,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     // Create slot without spawning — idle status, no terminal ID yet
     const runner: RunnerInfo = {
-      id: `runner-${key}-${worktreeId}-idle`,
+      id: `runner-${key}-${worktreeId}`,
       open: true,
       status: "idle",
       command,
@@ -1730,7 +1900,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }, 100);
     } else {
       // First run — create new entry
-      const id = old?.id ?? `runner-${key}-${worktreeId}-${Date.now()}`;
+      const id = old?.id ?? `runner-${key}-${worktreeId}`;
 
       // Kill idle placeholder if it exists
       if (old) {
@@ -1739,7 +1909,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       const runner: RunnerInfo = {
         id,
-        open: old?.open ?? false,
+        open: true,
         status: "running",
         command,
         cwd,

@@ -28,6 +28,7 @@ dirs = "5"
 toml = "0.8"
 portable-pty = "0.8"
 tauri-plugin-notification = "2"
+tauri-plugin-clipboard-manager = "2"
 base64 = "0.22"
 
 # MCP OAuth: blocking HTTP client for discovery/token endpoints, PKCE

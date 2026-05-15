@@ -54,6 +54,8 @@ export type ProjectFormData = Omit<Project, "id" | "created_at">;
 
 export type ThemeMode = "dark" | "dim" | "atom" | "light" | "system";
 export type AgentBackend = "claude" | "pi";
+export type DefaultSessionMode = "terminal" | AgentBackend;
+export type PersistedDefaultClaudeMode = DefaultSessionMode | "agent";
 
 export interface AppSettings {
   editor_command: string;
@@ -63,11 +65,19 @@ export interface AppSettings {
   app_font_size: number;
   terminal_emulator: string;
   shell: string;
+  terminal_compact_prompt: boolean;
   theme: ThemeMode;
   window_decorations: boolean;
   notification_sound: boolean;
   notification_popup: boolean;
-  default_claude_mode: "agent" | "terminal";
+  /** Legacy settings may still contain "agent"; new saves use "terminal", "claude", or "pi". */
+  default_claude_mode: PersistedDefaultClaudeMode;
+  claude_cli_statusline_enabled: boolean;
+  claude_cli_statusline_git: boolean;
+  claude_cli_statusline_colors: boolean;
+  claude_cli_notifications: boolean;
+  claude_cli_fullscreen: boolean;
+  claude_cli_terminal_progress: boolean;
   agent_default_model: string;
   agent_default_effort: EffortLevel;
   agent_default_extended_context: boolean;

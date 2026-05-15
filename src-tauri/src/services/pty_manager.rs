@@ -1,10 +1,12 @@
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
+use std::fs;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub struct PtySession {
     writer: Box<dyn Write + Send>,
@@ -32,6 +34,7 @@ impl PtyManager {
         cols: u16,
         app_handle: &AppHandle,
         shell_override: Option<&str>,
+        compact_prompt: bool,
     ) -> Result<(), String> {
         let pty_system = native_pty_system();
 
@@ -54,6 +57,7 @@ impl PtyManager {
         // handle quotes correctly. See `windows_deferred_type_command` below.
         let defer_type_command = cfg!(target_os = "windows")
             && command.map(|c| c.contains('"')).unwrap_or(false);
+        let use_compact_prompt = compact_prompt && command.is_none();
 
         // Tracks whether the shell hosting the deferred-type command uses
         // cmd.exe syntax (`&` as statement separator) vs PowerShell syntax
@@ -106,6 +110,8 @@ impl PtyManager {
                             cmd.args(["-c", command]);
                         }
                     }
+                } else if use_compact_prompt {
+                    configure_windows_interactive_prompt(&mut cmd, custom, is_cmd);
                 }
                 cmd
             } else if let Some(command) = command.filter(|_| !defer_type_command) {
@@ -128,17 +134,27 @@ impl PtyManager {
                 if let Some(ps) = pwsh_exe {
                     let mut cmd = CommandBuilder::new(ps);
                     cmd.arg("-NoLogo");
+                    if use_compact_prompt {
+                        cmd.args(["-NoExit", "-Command", COPPICE_POWERSHELL_PROMPT]);
+                    }
                     cmd
                 } else if let Some(ps) = powershell_exe {
                     let mut cmd = CommandBuilder::new(ps);
                     cmd.arg("-NoLogo");
+                    if use_compact_prompt {
+                        cmd.args(["-NoExit", "-Command", COPPICE_POWERSHELL_PROMPT]);
+                    }
                     cmd
                 } else {
                     #[cfg(target_os = "windows")]
                     {
                         defer_shell_is_cmd = true;
                     }
-                    CommandBuilder::new(&cmd_exe)
+                    let mut cmd = CommandBuilder::new(&cmd_exe);
+                    if use_compact_prompt {
+                        cmd.env("PROMPT", "$P$_$G ");
+                    }
+                    cmd
                 }
             }
         } else {
@@ -156,7 +172,12 @@ impl PtyManager {
                 cmd
             } else {
                 let mut cmd = CommandBuilder::new(&shell);
-                cmd.arg("-l");
+                if !use_compact_prompt || !configure_unix_interactive_prompt(&mut cmd, &shell, app_handle) {
+                    cmd.arg("-l");
+                    if use_compact_prompt {
+                        cmd.env("PROMPT_DIRTRIM", "2");
+                    }
+                }
                 cmd
             }
         };
@@ -462,6 +483,138 @@ impl PtyManager {
         }
     }
 }
+
+const COPPICE_POWERSHELL_PROMPT: &str = r#"function global:prompt {
+  $path = $executionContext.SessionState.Path.CurrentLocation.Path
+  $leaf = Split-Path -Leaf $path
+  if ([string]::IsNullOrWhiteSpace($leaf)) { $leaf = $path }
+  "PS $leaf`n> "
+}"#;
+
+fn configure_windows_interactive_prompt(cmd: &mut CommandBuilder, shell: &str, is_cmd: bool) {
+    let name = shell_basename(shell);
+    if name == "pwsh" || name == "powershell" {
+        cmd.arg("-NoLogo");
+        cmd.args(["-NoExit", "-Command", COPPICE_POWERSHELL_PROMPT]);
+    } else if is_cmd || name == "cmd" {
+        // Keep the full path available, but put it on its own line so the
+        // editable command line starts at a short `>` prompt.
+        cmd.env("PROMPT", "$P$_$G ");
+    }
+}
+
+fn configure_unix_interactive_prompt(cmd: &mut CommandBuilder, shell: &str, app_handle: &AppHandle) -> bool {
+    match shell_basename(shell).as_str() {
+        "bash" => match write_bash_prompt_file(app_handle) {
+            Ok(path) => {
+                let path = path.to_string_lossy().to_string();
+                cmd.args(["--rcfile", path.as_str(), "-i"]);
+                true
+            }
+            Err(_) => false,
+        },
+        "zsh" => match write_zsh_prompt_files(app_handle) {
+            Ok(dir) => {
+                let home = std::env::var("HOME").unwrap_or_else(|_| String::from(""));
+                let orig_zdotdir = std::env::var("ZDOTDIR").unwrap_or(home);
+                let dir = dir.to_string_lossy().to_string();
+                cmd.arg("-l");
+                cmd.env("COPPICE_ZDOTDIR", &dir);
+                cmd.env("COPPICE_ORIG_ZDOTDIR", orig_zdotdir);
+                cmd.env("ZDOTDIR", dir);
+                true
+            }
+            Err(_) => false,
+        },
+        _ => false,
+    }
+}
+
+fn prompt_cache_dir(app_handle: &AppHandle, shell: &str) -> Result<PathBuf, String> {
+    let dir = app_handle
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("Failed to resolve app cache dir: {e}"))?
+        .join("shell-prompt")
+        .join(shell);
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create shell prompt dir: {e}"))?;
+    Ok(dir)
+}
+
+fn write_bash_prompt_file(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    let dir = prompt_cache_dir(app_handle, "bash")?;
+    let path = dir.join("coppice-bashrc");
+    fs::write(&path, BASH_PROMPT_RC)
+        .map_err(|e| format!("Failed to write bash prompt file: {e}"))?;
+    Ok(path)
+}
+
+fn write_zsh_prompt_files(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    let dir = prompt_cache_dir(app_handle, "zsh")?;
+    fs::write(dir.join(".zshenv"), ZSHENV_PROMPT_RC)
+        .map_err(|e| format!("Failed to write zshenv prompt file: {e}"))?;
+    fs::write(dir.join(".zprofile"), "__coppice_source_orig .zprofile\n")
+        .map_err(|e| format!("Failed to write zprofile prompt file: {e}"))?;
+    fs::write(dir.join(".zshrc"), "__coppice_source_orig .zshrc\n__coppice_compact_prompt\n")
+        .map_err(|e| format!("Failed to write zshrc prompt file: {e}"))?;
+    fs::write(dir.join(".zlogin"), "__coppice_source_orig .zlogin\n__coppice_compact_prompt\n")
+        .map_err(|e| format!("Failed to write zlogin prompt file: {e}"))?;
+    Ok(dir)
+}
+
+fn shell_basename(shell: &str) -> String {
+    Path::new(shell)
+        .file_stem()
+        .or_else(|| Path::new(shell).file_name())
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_else(|| shell.to_ascii_lowercase())
+}
+
+const BASH_PROMPT_RC: &str = r#"# Generated by Coppice for compact in-app terminal prompts.
+if [ -r /etc/profile ]; then . /etc/profile; fi
+__coppice_profile_sourced=0
+for __coppice_profile in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+  if [ -r "$__coppice_profile" ]; then
+    . "$__coppice_profile"
+    __coppice_profile_sourced=1
+    break
+  fi
+done
+if [ "$__coppice_profile_sourced" = 0 ] && [ -r "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi
+unset __coppice_profile __coppice_profile_sourced
+export PROMPT_DIRTRIM=2
+PS1='\[\033[34m\]\w\[\033[0m\]\n\$ '
+"#;
+
+const ZSHENV_PROMPT_RC: &str = r#"# Generated by Coppice for compact in-app terminal prompts.
+function __coppice_source_orig() {
+  local __coppice_file="$COPPICE_ORIG_ZDOTDIR/$1"
+  [[ -r "$__coppice_file" ]] || return 0
+  local __coppice_old_zdotdir="$ZDOTDIR"
+  export ZDOTDIR="$COPPICE_ORIG_ZDOTDIR"
+  source "$__coppice_file"
+  export ZDOTDIR="$__coppice_old_zdotdir"
+}
+
+function __coppice_vcs_info() { vcs_info }
+
+function __coppice_compact_prompt() {
+  autoload -Uz vcs_info
+  zstyle ':vcs_info:*' enable git
+  zstyle ':vcs_info:git:*' formats ' %F{magenta}(%b)%f'
+  typeset -ga precmd_functions
+  if [[ ${precmd_functions[(Ie)__coppice_vcs_info]} -eq 0 ]]; then
+    precmd_functions+=(__coppice_vcs_info)
+  fi
+  setopt prompt_subst
+  PROMPT=$'%F{blue}%2~%f${vcs_info_msg_0_}\n%# '
+}
+
+if [[ -n "$COPPICE_ORIG_ZDOTDIR" && -r "$COPPICE_ORIG_ZDOTDIR/.zshenv" ]]; then
+  __coppice_source_orig .zshenv
+fi
+export ZDOTDIR="$COPPICE_ZDOTDIR"
+"#;
 
 /// Resolve cmd.exe to an absolute path, preferring %COMSPEC%, falling back to
 /// %SystemRoot%\System32\cmd.exe, and finally the bare "cmd.exe" name.

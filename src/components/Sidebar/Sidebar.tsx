@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { useAppStore } from "../../stores/appStore";
 import type { AgentBackend } from "../../lib/types";
+import { getDefaultSessionModeLabel, getDefaultSessionModeShortLabel, getNextDefaultSessionMode, isAgentDefaultSessionMode, resolveDefaultSessionMode } from "../../lib/defaultSessionMode";
 import { CLAUDE_MODELS } from "../../lib/supportedModels";
 import { ProjectTree } from "./ProjectTree";
 import { ScratchpadNode } from "./ScratchpadNode";
@@ -21,7 +22,7 @@ export function Sidebar() {
   const loadProjects = useAppStore((s) => s.loadProjects);
   const appSettings = useAppStore((s) => s.appSettings);
   const saveSettings = useAppStore((s) => s.saveSettings);
-  const setDefaultAgentBackend = useAppStore((s) => s.setDefaultAgentBackend);
+  const setDefaultSessionMode = useAppStore((s) => s.setDefaultSessionMode);
   const setAgentBackend = useAppStore((s) => s.setAgentBackend);
   const setAgentModel = useAppStore((s) => s.setAgentModel);
   const piAvailableModels = useAppStore((s) => s.piAvailableModels);
@@ -35,7 +36,8 @@ export function Sidebar() {
   const sidebarRef = useRef<HTMLElement>(null);
   const [switchingBackend, setSwitchingBackend] = useState(false);
 
-  const currentBackend = appSettings?.agent_backend ?? "claude";
+  const currentDefaultMode = resolveDefaultSessionMode(appSettings);
+  const currentBackend: AgentBackend = currentDefaultMode === "pi" ? "pi" : "claude";
   const currentClaudeModel = appSettings?.agent_default_model || "";
   const currentClaudePreset = CLAUDE_MODELS.find((model) => model.value === currentClaudeModel);
   const claudeModelLabel = currentClaudePreset?.label || currentClaudeModel || "SDK default";
@@ -109,33 +111,35 @@ export function Sidebar() {
   const handleBackendToggle = useCallback(async () => {
     const settings = useAppStore.getState().appSettings;
     if (!settings) return;
-    const nextBackend: AgentBackend = settings.agent_backend === "pi" ? "claude" : "pi";
+    const nextMode = getNextDefaultSessionMode(resolveDefaultSessionMode(settings));
     setSwitchingBackend(true);
     try {
-      await setDefaultAgentBackend(nextBackend);
-      const s = useAppStore.getState();
-      const wtId = s.selectedWorktreeId;
-      const activeTabId = wtId ? s.activeTabByWorktree[wtId] : null;
-      const activeTab = wtId && activeTabId ? s.tabsByWorktree[wtId]?.find((tab) => tab.id === activeTabId) : null;
-      const activeSession = activeTabId ? s.agentSessionByTab[activeTabId] : null;
-      if (
-        activeTabId
-        && activeTab?.type === "agent"
-        && activeSession
-        && activeSession.status === "idle"
-        && activeSession.messages.length === 0
-        && !activeSession.sdkSessionId
-      ) {
-        setAgentBackend(
-          activeTabId,
-          nextBackend,
-          nextBackend === "pi" ? settings.pi_default_model || "" : settings.agent_default_model || "",
-        );
+      await setDefaultSessionMode(nextMode);
+      if (isAgentDefaultSessionMode(nextMode)) {
+        const s = useAppStore.getState();
+        const wtId = s.selectedWorktreeId;
+        const activeTabId = wtId ? s.activeTabByWorktree[wtId] : null;
+        const activeTab = wtId && activeTabId ? s.tabsByWorktree[wtId]?.find((tab) => tab.id === activeTabId) : null;
+        const activeSession = activeTabId ? s.agentSessionByTab[activeTabId] : null;
+        if (
+          activeTabId
+          && activeTab?.type === "agent"
+          && activeSession
+          && activeSession.status === "idle"
+          && activeSession.messages.length === 0
+          && !activeSession.sdkSessionId
+        ) {
+          setAgentBackend(
+            activeTabId,
+            nextMode,
+            nextMode === "pi" ? settings.pi_default_model || "" : settings.agent_default_model || "",
+          );
+        }
       }
     } finally {
       setSwitchingBackend(false);
     }
-  }, [setDefaultAgentBackend, setAgentBackend]);
+  }, [setDefaultSessionMode, setAgentBackend]);
 
   const handleClaudeModelSelect = useCallback(async (model: string) => {
     const settings = useAppStore.getState().appSettings;
@@ -220,7 +224,12 @@ export function Sidebar() {
     document.addEventListener("mouseup", onMouseUp);
   }, [setSidebarWidth]);
 
-  const backendTooltip = currentBackend === "pi" ? "Switch to CL" : "Switch to PI";
+  const backendTooltip = `Switch to ${getDefaultSessionModeLabel(getNextDefaultSessionMode(currentDefaultMode))}`;
+  const modeButtonClass = currentDefaultMode === "terminal"
+    ? "bg-sky-500/10 text-sky-400 border-sky-500/20"
+    : currentDefaultMode === "pi"
+      ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
+      : "bg-orange-500/10 text-orange-400 border-orange-500/20";
   const modelTooltip = currentBackend === "pi"
     ? `${formatPiProvider(currentPiProvider)} · ${piModelLabel}`
     : claudeModelLabel;
@@ -257,27 +266,29 @@ export function Sidebar() {
                 type="button"
                 onClick={() => void handleBackendToggle()}
                 disabled={!appSettings || switchingBackend}
-                className={`h-7 min-w-8 px-2.5 flex items-center justify-center rounded-md text-[length:var(--app-font-11)] font-semibold uppercase border transition-colors ${currentBackend === "pi" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"} ${appSettings && !switchingBackend ? "hover:brightness-125" : ""} disabled:opacity-50`}
+                className={`h-7 min-w-8 px-2.5 flex items-center justify-center rounded-md text-[length:var(--app-font-11)] font-semibold uppercase border transition-colors ${modeButtonClass} ${appSettings && !switchingBackend ? "hover:brightness-125" : ""} disabled:opacity-50`}
               >
-                {currentBackend === "pi" ? "Pi" : "Cl"}
+                {getDefaultSessionModeShortLabel(currentDefaultMode)}
               </button>
             </Tooltip>
 
-            <ModelConfigPopover
-              tone={currentBackend}
-              backend={currentBackend}
-              disabled={!appSettings || switchingBackend}
-              tooltip={modelTooltip}
-              dropdownAlign="left"
-              providerLabel={formatPiProvider(currentPiProvider)}
-              providerValue={currentPiProvider}
-              providerOptions={piProviderOptions}
-              onProviderSelect={handlePiProviderSelect}
-              modelLabel={currentBackend === "pi" ? piModelLabel : claudeModelLabel}
-              modelValue={currentBackend === "pi" ? currentPiModelId : currentClaudeModel}
-              modelOptions={currentBackend === "pi" ? piModelOptions : claudeModelOptions}
-              onModelSelect={currentBackend === "pi" ? handlePiModelSelect : handleClaudeModelSelect}
-            />
+            {currentDefaultMode !== "terminal" && (
+              <ModelConfigPopover
+                tone={currentBackend}
+                backend={currentBackend}
+                disabled={!appSettings || switchingBackend}
+                tooltip={modelTooltip}
+                dropdownAlign="left"
+                providerLabel={formatPiProvider(currentPiProvider)}
+                providerValue={currentPiProvider}
+                providerOptions={piProviderOptions}
+                onProviderSelect={handlePiProviderSelect}
+                modelLabel={currentBackend === "pi" ? piModelLabel : claudeModelLabel}
+                modelValue={currentBackend === "pi" ? currentPiModelId : currentClaudeModel}
+                modelOptions={currentBackend === "pi" ? piModelOptions : claudeModelOptions}
+                onModelSelect={currentBackend === "pi" ? handlePiModelSelect : handleClaudeModelSelect}
+              />
+            )}
 
             <McpStatusPopover
               configuredServers={appSettings?.mcp_servers ?? {}}

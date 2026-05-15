@@ -266,7 +266,6 @@ export function McpStatusPopover({
   // OAuth-enabled servers when deciding "all good", since a stdio-only
   // setup has no fail state to surface.
   let toneClass: string;
-  let badgeText: string;
   let summary: string;
   if (hasLiveStatus) {
     if (errorCount === 0 && connectedCount === totalCount) {
@@ -276,7 +275,6 @@ export function McpStatusPopover({
     } else {
       toneClass = "border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/15";
     }
-    badgeText = `${connectedCount}/${totalCount}`;
     summary = `${connectedCount}/${totalCount} MCP server${totalCount === 1 ? "" : "s"} connected`;
   } else if (oauthRows.length > 0) {
     const oauthConnected = oauthRows.filter((r) => r.status === "connected").length;
@@ -292,14 +290,12 @@ export function McpStatusPopover({
     } else {
       toneClass = "border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/15";
     }
-    badgeText = `${oauthConnected}/${oauthRows.length}`;
     summary = `${oauthConnected}/${oauthRows.length} OAuth MCP server${oauthRows.length === 1 ? "" : "s"} connected${
       oauthRows.length < totalCount ? ` (${totalCount - oauthRows.length} other)` : ""
     }`;
   } else {
     toneClass =
       "border-border-primary/25 bg-bg-tertiary/40 text-text-secondary hover:bg-bg-hover hover:text-text-primary";
-    badgeText = `${rows.length}`;
     summary = `${rows.length} MCP server${rows.length === 1 ? "" : "s"} configured`;
   }
 
@@ -308,7 +304,7 @@ export function McpStatusPopover({
       type="button"
       onClick={() => setOpen((value) => !value)}
       disabled={disabled}
-      className={`h-7 min-w-8 px-2 flex items-center justify-center gap-1.5 rounded-md border transition-colors ${toneClass} ${disabled ? "opacity-50" : ""}`}
+      className={`h-7 w-7 flex items-center justify-center rounded-md border transition-colors ${toneClass} ${disabled ? "opacity-50" : ""}`}
       aria-label={summary}
     >
       <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -316,7 +312,6 @@ export function McpStatusPopover({
         <rect x="2.5" y="9.5" width="11" height="4" rx="1.2" />
         <path d="M5.5 4.5h.01M8 4.5h.01M5.5 11.5h.01M8 11.5h.01" />
       </svg>
-      <span className="text-[length:var(--app-font-10)] font-medium tabular-nums leading-none">{badgeText}</span>
     </button>
   );
 
