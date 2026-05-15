@@ -66,6 +66,14 @@ pub fn terminal_spawn_claude(
         Some(app_settings.shell.clone())
     };
 
+    // Coppice-created CLI sessions are launched intentionally from an IDE
+    // worktree/scratchpad, so pre-mark the cwd as trusted for Claude Code.
+    // This avoids the interactive "trust this folder" prompt without entering
+    // bypass-permissions mode. Best-effort: if Claude changes its private
+    // config schema or the file can't be written, the CLI will simply show its
+    // normal prompt.
+    pretrust_claude_cli_cwd(&cwd);
+
     let session_files = write_claude_cli_session_files(&app, &session_id, &cwd, &app_settings)?;
     let base_command = command
         .as_deref()
@@ -121,6 +129,8 @@ struct ClaudeCliNotificationPayload {
     notification_type: String,
     /// Claude Code's conversation session id, when present in hook payloads.
     claude_session_id: Option<String>,
+    /// User prompt text from Claude Code's UserPromptSubmit hook, when present.
+    prompt: Option<String>,
     /// False for bookkeeping-only hooks used to capture session ids when
     /// the user disabled Claude CLI notifications.
     notify_user: bool,
@@ -155,7 +165,11 @@ fn write_claude_cli_session_files(app: &AppHandle, session_id: &str, cwd: &str, 
         shell_quote_arg(&path_to_string(&statusline_path)?),
     );
     let mut session_settings = json!({
-        "preferredNotifChannel": if settings.claude_cli_notifications { "terminal_bell" } else { "notifications_disabled" },
+        // Coppice handles Claude CLI attention signals through explicit HTTP
+        // hooks below. Do not ask Claude Code to also ring the terminal bell:
+        // generic BEL output is too ambiguous and can produce delayed
+        // idle-prompt notifications after the user has walked away.
+        "preferredNotifChannel": "notifications_disabled",
         "terminalProgressBarEnabled": settings.claude_cli_terminal_progress,
     });
 
@@ -209,7 +223,15 @@ fn write_claude_cli_session_files(app: &AppHandle, session_id: &str, cwd: &str, 
     if let Some((port, token)) = start_claude_cli_hook_server(app) {
         let notify = if settings.claude_cli_notifications { "1" } else { "0" };
         let hook_url = format!("http://127.0.0.1:{port}/claude-cli-notify/{session_id}?token={token}&notify={notify}");
+        // UserPromptSubmit fires on every real submitted prompt (not startup
+        // prompts like "trust this folder"). The frontend uses it to mark the
+        // tab active and derive the initial title; it never triggers user
+        // notifications directly.
+        let prompt_hook_url = format!("http://127.0.0.1:{port}/claude-cli-notify/{session_id}?token={token}&notify=0");
         let mut hooks = json!({
+            "UserPromptSubmit": [{
+                "hooks": [{ "type": "http", "url": prompt_hook_url }]
+            }],
             // More reliable "turn finished" signal: this fires whenever a
             // response stops. We always install it so Coppice can capture the
             // Claude Code session id for future app-restart resume; the
@@ -224,7 +246,10 @@ fn write_claude_cli_session_files(app: &AppHandle, session_id: &str, cwd: &str, 
         });
         if settings.claude_cli_notifications {
             hooks["Notification"] = json!([{
-                "matcher": "",
+                // Stop/StopFailure already cover normal turn completion.
+                // Avoid Claude Code's delayed idle_prompt notifications, but
+                // keep immediate attention prompts that are not turn stops.
+                "matcher": "permission_prompt|elicitation_dialog",
                 "hooks": [{ "type": "http", "url": hook_url }]
             }]);
         }
@@ -322,6 +347,7 @@ fn handle_claude_cli_hook_request(req: &str, token: &str, app: &AppHandle) -> (&
         })
         .unwrap_or_else(|| "notification".to_string());
     let claude_session_id = hook_payload.as_ref().and_then(extract_claude_session_id);
+    let prompt = hook_payload.as_ref().and_then(extract_claude_prompt);
 
     let _ = app.emit(
         "claude-cli-notification",
@@ -329,6 +355,7 @@ fn handle_claude_cli_hook_request(req: &str, token: &str, app: &AppHandle) -> (&
             session_id: session_id.to_string(),
             notification_type,
             claude_session_id,
+            prompt,
             notify_user,
         },
     );
@@ -355,6 +382,21 @@ fn extract_claude_session_id(payload: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
+fn extract_claude_prompt(payload: &serde_json::Value) -> Option<String> {
+    // Claude Code's UserPromptSubmit payload has used `prompt` in current
+    // releases; accept a few obvious variants so this remains tolerant of
+    // small upstream schema changes.
+    for key in ["prompt", "user_prompt", "userPrompt", "message", "text"] {
+        if let Some(prompt) = payload.get(key).and_then(|v| v.as_str()) {
+            let trimmed = prompt.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn looks_like_session_id(id: &str) -> bool {
     let len = id.len();
     len >= 8
@@ -362,6 +404,73 @@ fn looks_like_session_id(id: &str) -> bool {
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn pretrust_claude_cli_cwd(cwd: &str) {
+    let Some(home) = dirs::home_dir() else { return };
+    let config_path = home.join(".claude.json");
+
+    let mut root = match fs::read_to_string(&config_path) {
+        Ok(s) if !s.trim().is_empty() => match serde_json::from_str::<serde_json::Value>(&s) {
+            Ok(v) if v.is_object() => v,
+            _ => return,
+        },
+        Ok(_) => json!({}),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(_) => return,
+    };
+
+    let path = fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd));
+    let Some(project_key) = claude_config_project_key(&path) else { return };
+
+    let Some(root_obj) = root.as_object_mut() else { return };
+    let projects = root_obj
+        .entry("projects")
+        .or_insert_with(|| json!({}));
+    if !projects.is_object() {
+        *projects = json!({});
+    }
+
+    let Some(projects_obj) = projects.as_object_mut() else { return };
+    let project = projects_obj
+        .entry(project_key)
+        .or_insert_with(|| json!({}));
+    if !project.is_object() {
+        *project = json!({});
+    }
+
+    let Some(project_obj) = project.as_object_mut() else { return };
+    project_obj.insert("hasTrustDialogAccepted".to_string(), serde_json::Value::Bool(true));
+    // Newer Claude Code versions gate hooks behind a separate trust bit. Set it
+    // alongside the folder trust bit so our lifecycle hooks are not silently
+    // skipped for generated per-session settings.
+    project_obj.insert("hasTrustDialogHooksAccepted".to_string(), serde_json::Value::Bool(true));
+
+    let Ok(json) = serde_json::to_string_pretty(&root) else { return };
+    if let Some(parent) = config_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if fs::write(&config_path, json).is_ok() {
+        restrict_file_permissions(&config_path);
+    }
+}
+
+fn claude_config_project_key(path: &Path) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut s = path.to_str()?.to_string();
+        if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+            s = format!(r"\\{}", stripped);
+        } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            s = stripped.to_string();
+        }
+        Some(s)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_str().map(str::to_string)
+    }
 }
 
 fn restrict_file_permissions(path: &Path) {

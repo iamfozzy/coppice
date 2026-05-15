@@ -1778,17 +1778,18 @@ let titleGenerated = false;
  */
 async function generateTitle(prompt, provider, modelId) {
   log("Generating title for prompt:", prompt.slice(0, 80));
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 30_000);
   try {
     // Ensure the provider's API key env var is set — completeSimple runs
-    // outside AgentSession and doesn't have access to authStorage directly.
+    // outside AgentSession and may not share AgentSession's authStorage path.
+    let apiKey;
     if (authStorage) {
       const envVar = PROVIDER_ENV_VARS[provider];
-      if (envVar && !process.env[envVar]) {
-        const key = await authStorage.getApiKey(provider);
-        if (key) {
-          process.env[envVar] = key;
-          log("Title: set", envVar, "from authStorage");
-        }
+      apiKey = await authStorage.getApiKey(provider).catch(() => undefined);
+      if (envVar && apiKey && !process.env[envVar]) {
+        process.env[envVar] = apiKey;
+        log("Title: set", envVar, "from authStorage");
       }
     }
 
@@ -1805,8 +1806,15 @@ async function generateTitle(prompt, provider, modelId) {
       ],
     }, {
       maxTokens: 100,
+      signal: abort.signal,
+      timeoutMs: 30_000,
+      ...(apiKey ? { apiKey } : {}),
     });
-    let title = (result.content || [])
+    if (result.stopReason === "error") {
+      throw new Error(result.errorMessage || "title model returned an error");
+    }
+    const blocks = Array.isArray(result.content) ? result.content : [];
+    let title = blocks
       .filter((b) => b.type === "text" && b.text)
       .map((b) => b.text)
       .join("");
@@ -1815,6 +1823,8 @@ async function generateTitle(prompt, provider, modelId) {
     if (title) emit({ type: "title", title });
   } catch (err) {
     log("Title generation failed:", err.message);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -2792,7 +2802,7 @@ async function startSession(msg) {
   try {
     const images = parseImages(msg.images);
     const promptOpts = images.length > 0 ? { images } : {};
-    await session.prompt(promptText, promptOpts);
+    await session.prompt(appendImagePathNote(promptText, msg.images), promptOpts);
     log("session.prompt() resolved");
   } catch (err) {
     log("Session error:", err.message, err.stack);
@@ -2852,13 +2862,13 @@ async function handleCommand(msg) {
         // if it's an extension command) and prompt template expansion.
         try {
           const images = parseImages(msg.images);
-          await session.steer(msg.text, images.length > 0 ? images : undefined);
+          await session.steer(appendImagePathNote(msg.text, msg.images), images.length > 0 ? images : undefined);
         } catch (err) {
           // Extension commands can't be steered — try as follow-up
           log("steer failed, trying followUp:", err.message);
           try {
             const images = parseImages(msg.images);
-            await session.followUp(msg.text, images.length > 0 ? images : undefined);
+            await session.followUp(appendImagePathNote(msg.text, msg.images), images.length > 0 ? images : undefined);
           } catch (err2) {
             log("followUp also failed:", err2.message);
           }
@@ -2885,7 +2895,7 @@ async function handleCommand(msg) {
           if (images.length > 0) {
             promptOpts.images = images;
           }
-          await session.prompt(inputText, promptOpts);
+          await session.prompt(appendImagePathNote(inputText, msg.images), promptOpts);
         } catch (err) {
           log("Session prompt error:", err.message);
           emit({ type: "error", message: err.message });
@@ -3012,6 +3022,22 @@ function parseImages(images) {
       data: img.data,
       mimeType: img.mediaType,
     }));
+}
+
+/**
+ * Rust persists each attached image to a temp file and adds `tempPath` before
+ * forwarding messages to the bridge. Keep Pi's native image blocks intact, but
+ * also mention the paths in the text so providers without vision support — or
+ * agents that need to inspect image bytes through the read tool — can still
+ * access the attachments. This mirrors the Claude SDK bridge behavior.
+ */
+function appendImagePathNote(text, images) {
+  if (!images || !Array.isArray(images)) return text || "";
+  const paths = images
+    .filter((img) => img && img.tempPath)
+    .map((img) => `  - ${img.fileName || "image"}: ${img.tempPath}`);
+  if (paths.length === 0) return text || "";
+  return `${text || ""}\n\n[Attached images saved to disk — use the read tool on these paths if needed:]\n${paths.join("\n")}`;
 }
 
 // ── Cleanup ──

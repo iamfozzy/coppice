@@ -210,14 +210,14 @@ function RunnerSlot({ runnerId, expanded }: { runnerId: string | null; expanded:
 
 function getAvailable(project: { setup_scripts: string[]; build_command: string; run_command: string }) {
   return [
-    ...(project.setup_scripts.length > 0
-      ? [{ key: "setup", label: "Setup", command: project.setup_scripts.join(" && ") }]
+    ...(project.run_command
+      ? [{ key: "run", label: "Run", command: project.run_command }]
       : []),
     ...(project.build_command
       ? [{ key: "build", label: "Build", command: project.build_command }]
       : []),
-    ...(project.run_command
-      ? [{ key: "run", label: "Run", command: project.run_command }]
+    ...(project.setup_scripts.length > 0
+      ? [{ key: "setup", label: "Setup", command: project.setup_scripts.join(" && ") }]
       : []),
   ];
 }

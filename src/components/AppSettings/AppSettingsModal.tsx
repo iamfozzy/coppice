@@ -6,6 +6,7 @@ import { SUPPORTED_MODELS } from "../../lib/supportedModels";
 import { GitHubAuthSection } from "./GitHubAuthSection";
 import { normalizeAppFontSize } from "../../lib/fontScale";
 import { resolveDefaultSessionMode } from "../../lib/defaultSessionMode";
+import { THEME_OPTIONS } from "../../lib/theme";
 import {
   piGetModels,
   piOAuthLogin,
@@ -122,14 +123,14 @@ export function AppSettingsModal() {
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200]"
+      className="fixed inset-0 z-[200] bg-bg-secondary"
       onClick={(e) => {
         if (e.target === e.currentTarget) closeAppSettings();
       }}
     >
-      <div className="bg-bg-secondary border border-border-primary rounded-lg w-[640px] max-w-[calc(100vw-2rem)] max-h-[85vh] overflow-y-auto shadow-2xl">
+      <div className="flex h-full w-full flex-col bg-bg-secondary">
         {/* Header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-border-primary bg-bg-secondary">
+        <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-border-primary bg-bg-secondary">
           <h2 className="text-sm font-semibold text-text-primary">App Settings</h2>
           <button
             onClick={closeAppSettings}
@@ -142,7 +143,7 @@ export function AppSettingsModal() {
         </div>
 
         {/* Form */}
-        <div className="px-6 py-5 space-y-5">
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           <p className="text-[length:var(--app-font-11)] text-text-tertiary">
             Global defaults. Leave blank to use platform defaults. Per-project settings override these.
           </p>
@@ -197,33 +198,11 @@ export function AppSettingsModal() {
             onChange={(terminal_compact_prompt) => setForm({ ...form, terminal_compact_prompt })}
             hint="Shortens new plain terminal prompts so long worktree paths don't fill the command line."
           />
-          <div>
-            <label className="block text-xs text-text-secondary mb-1">Theme</label>
-            <div className="flex gap-1">
-              {(["dark", "dim", "atom", "light", "system"] as const).map((mode) => {
-                const label = { dark: "Dark", dim: "Dim", atom: "Atom", light: "Light", system: "System" }[mode];
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setForm({ ...form, theme: mode as ThemeMode })}
-                    className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                      form.theme === mode
-                        ? "bg-accent text-white"
-                        : "bg-bg-tertiary text-text-secondary hover:text-text-primary border border-border-primary"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-0.5 text-[length:var(--app-font-10)] text-text-tertiary">
-              {form.theme === "system"
-                ? "Follows your OS appearance setting"
-                : `Always use ${form.theme} mode`}
-            </p>
-          </div>
+          <ThemeDropdown
+            label="Theme"
+            value={form.theme}
+            onChange={(theme) => setForm({ ...form, theme })}
+          />
           <Toggle
             label="Window decorations"
             checked={form.window_decorations}
@@ -432,7 +411,7 @@ export function AppSettingsModal() {
         </div>
 
         {/* Footer */}
-        <div className="sticky bottom-0 flex items-center justify-end px-6 py-4 border-t border-border-primary gap-2 bg-bg-secondary">
+        <div className="shrink-0 flex items-center justify-end px-6 py-4 border-t border-border-primary gap-2 bg-bg-secondary">
           <button
             onClick={closeAppSettings}
             className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
@@ -1316,6 +1295,92 @@ function Toggle({
         <span className="text-xs text-text-secondary">{label}</span>
       </label>
       {hint && <p className="mt-0.5 ml-10 text-[length:var(--app-font-10)] text-text-tertiary">{hint}</p>}
+    </div>
+  );
+}
+
+function ThemeDropdown({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: ThemeMode;
+  onChange: (v: ThemeMode) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const selected = THEME_OPTIONS.find((opt) => opt.value === value) ?? THEME_OPTIONS[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div>
+      <label className="block text-xs text-text-secondary mb-1">{label}</label>
+      <div className="relative" ref={wrapperRef}>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className={`w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm bg-bg-tertiary border rounded text-text-primary focus:outline-none transition-colors ${
+            open ? "border-accent" : "border-border-primary hover:border-border-secondary"
+          }`}
+        >
+          <span>{selected.label}</span>
+          <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={`transition-transform ${open ? "rotate-180" : ""}`}>
+            <path d="M1.5 3L4 5.5 6.5 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {open && (
+          <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-bg-secondary border border-border-primary rounded shadow-lg max-h-64 overflow-y-auto py-1">
+            {THEME_OPTIONS.map((opt) => {
+              const isSelected = opt.value === value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    onChange(opt.value);
+                    setOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between gap-3 px-3 py-2 text-left transition-colors ${
+                    isSelected
+                      ? "bg-accent/15 text-text-primary"
+                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm">{opt.label}</span>
+                    <span className="block text-[length:var(--app-font-10)] text-text-tertiary truncate">{opt.hint}</span>
+                  </span>
+                  {isSelected && (
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-accent shrink-0">
+                      <path d="M2 5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <p className="mt-0.5 text-[length:var(--app-font-10)] text-text-tertiary">{selected.hint}</p>
     </div>
   );
 }

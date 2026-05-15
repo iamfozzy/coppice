@@ -105,6 +105,198 @@
   --color-error: #e55561;
 }
 
+/* ── GitHub Dark theme ── */
+[data-theme="github"] {
+  --color-bg-primary: #0d1117;
+  --color-bg-secondary: #010409;
+  --color-bg-tertiary: #161b22;
+  --color-bg-hover: #21262d;
+  --color-bg-active: #30363d;
+
+  --color-border-primary: #30363d;
+  --color-border-secondary: #484f58;
+
+  --color-text-primary: #e6edf3;
+  --color-text-secondary: #7d8590;
+  --color-text-tertiary: #656d76;
+
+  --color-accent: #2f81f7;
+  --color-accent-hover: #58a6ff;
+  --color-accent-muted: #2f81f733;
+
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-error: #f85149;
+}
+
+/* ── Tokyo Night theme ── */
+[data-theme="tokyo"] {
+  --color-bg-primary: #1a1b26;
+  --color-bg-secondary: #16161e;
+  --color-bg-tertiary: #24283b;
+  --color-bg-hover: #2f3549;
+  --color-bg-active: #3b4261;
+
+  --color-border-primary: #2f3549;
+  --color-border-secondary: #414868;
+
+  --color-text-primary: #c0caf5;
+  --color-text-secondary: #9aa5ce;
+  --color-text-tertiary: #565f89;
+
+  --color-accent: #7aa2f7;
+  --color-accent-hover: #8db0ff;
+  --color-accent-muted: #7aa2f733;
+
+  --color-success: #9ece6a;
+  --color-warning: #e0af68;
+  --color-error: #f7768e;
+}
+
+/* ── Catppuccin Mocha theme ── */
+[data-theme="catppuccin"] {
+  --color-bg-primary: #1e1e2e;
+  --color-bg-secondary: #181825;
+  --color-bg-tertiary: #313244;
+  --color-bg-hover: #45475a;
+  --color-bg-active: #585b70;
+
+  --color-border-primary: #313244;
+  --color-border-secondary: #45475a;
+
+  --color-text-primary: #cdd6f4;
+  --color-text-secondary: #bac2de;
+  --color-text-tertiary: #7f849c;
+
+  --color-accent: #89b4fa;
+  --color-accent-hover: #b4befe;
+  --color-accent-muted: #89b4fa33;
+
+  --color-success: #a6e3a1;
+  --color-warning: #f9e2af;
+  --color-error: #f38ba8;
+}
+
+/* ── Dracula theme ── */
+[data-theme="dracula"] {
+  --color-bg-primary: #282a36;
+  --color-bg-secondary: #21222c;
+  --color-bg-tertiary: #343746;
+  --color-bg-hover: #44475a;
+  --color-bg-active: #525568;
+
+  --color-border-primary: #44475a;
+  --color-border-secondary: #6272a4;
+
+  --color-text-primary: #f8f8f2;
+  --color-text-secondary: #c7c7bd;
+  --color-text-tertiary: #8f9bcf;
+
+  --color-accent: #bd93f9;
+  --color-accent-hover: #d6acff;
+  --color-accent-muted: #bd93f933;
+
+  --color-success: #50fa7b;
+  --color-warning: #f1fa8c;
+  --color-error: #ff5555;
+}
+
+/* ── Nord theme ── */
+[data-theme="nord"] {
+  --color-bg-primary: #2e3440;
+  --color-bg-secondary: #252a33;
+  --color-bg-tertiary: #3b4252;
+  --color-bg-hover: #434c5e;
+  --color-bg-active: #4c566a;
+
+  --color-border-primary: #434c5e;
+  --color-border-secondary: #4c566a;
+
+  --color-text-primary: #eceff4;
+  --color-text-secondary: #d8dee9;
+  --color-text-tertiary: #81a1c1;
+
+  --color-accent: #88c0d0;
+  --color-accent-hover: #8fbcbb;
+  --color-accent-muted: #88c0d033;
+
+  --color-success: #a3be8c;
+  --color-warning: #ebcb8b;
+  --color-error: #bf616a;
+}
+
+/* ── Gruvbox theme ── */
+[data-theme="gruvbox"] {
+  --color-bg-primary: #282828;
+  --color-bg-secondary: #1d2021;
+  --color-bg-tertiary: #32302f;
+  --color-bg-hover: #3c3836;
+  --color-bg-active: #504945;
+
+  --color-border-primary: #3c3836;
+  --color-border-secondary: #665c54;
+
+  --color-text-primary: #ebdbb2;
+  --color-text-secondary: #d5c4a1;
+  --color-text-tertiary: #928374;
+
+  --color-accent: #83a598;
+  --color-accent-hover: #8ec07c;
+  --color-accent-muted: #83a59833;
+
+  --color-success: #b8bb26;
+  --color-warning: #fabd2f;
+  --color-error: #fb4934;
+}
+
+/* ── Solarized Dark theme ── */
+[data-theme="solarized"] {
+  --color-bg-primary: #002b36;
+  --color-bg-secondary: #00212a;
+  --color-bg-tertiary: #073642;
+  --color-bg-hover: #0b4150;
+  --color-bg-active: #124b5b;
+
+  --color-border-primary: #073642;
+  --color-border-secondary: #586e75;
+
+  --color-text-primary: #93a1a1;
+  --color-text-secondary: #839496;
+  --color-text-tertiary: #657b83;
+
+  --color-accent: #268bd2;
+  --color-accent-hover: #2aa198;
+  --color-accent-muted: #268bd233;
+
+  --color-success: #859900;
+  --color-warning: #b58900;
+  --color-error: #dc322f;
+}
+
+/* ── Solarized Light theme ── */
+[data-theme="solarized-light"] {
+  --color-bg-primary: #fdf6e3;
+  --color-bg-secondary: #eee8d5;
+  --color-bg-tertiary: #e7dfc5;
+  --color-bg-hover: #d9d2bc;
+  --color-bg-active: #ccc4ad;
+
+  --color-border-primary: #d6cfb8;
+  --color-border-secondary: #c8c0a8;
+
+  --color-text-primary: #073642;
+  --color-text-secondary: #586e75;
+  --color-text-tertiary: #93a1a1;
+
+  --color-accent: #268bd2;
+  --color-accent-hover: #0067a0;
+  --color-accent-muted: #268bd233;
+
+  --color-success: #859900;
+  --color-warning: #b58900;
+  --color-error: #dc322f;
+}
+
 /* ── Light theme overrides ── */
 [data-theme="light"] {
   --color-bg-primary: #ffffff;

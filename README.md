@@ -1,4 +1,6 @@
-<img alt="Coppice screenshot" src="docs/screenshot.png" />
+<img alt="Coppice Pi agent workspace" src="docs/screenshot-pi-agent.png" />
+
+<img alt="Coppice agent tab menu" src="docs/screenshot-agent-menu.png" />
 
 
 # Coppice

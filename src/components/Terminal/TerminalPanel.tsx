@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { readText as readClipboardText, writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import * as commands from "../../lib/commands";
-import { XTERM_DARK, XTERM_DIM, XTERM_ATOM, XTERM_LIGHT, resolveTheme } from "../../lib/theme";
+import { XTERM_THEMES, resolveTheme } from "../../lib/theme";
 import { useAppStore } from "../../stores/appStore";
 import "@xterm/xterm/css/xterm.css";
 
@@ -79,7 +79,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     const container = containerRef.current;
     if (!container) return;
 
-    const xtermTheme = { light: XTERM_LIGHT, dim: XTERM_DIM, atom: XTERM_ATOM, dark: XTERM_DARK }[resolveTheme(themeMode)];
+    const xtermTheme = XTERM_THEMES[resolveTheme(themeMode)];
     const term = new Terminal({
       theme: xtermTheme,
       fontFamily: fontFamily
@@ -161,12 +161,6 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       return true;
     });
 
-    const bellDisposable = term.onBell(() => {
-      if (isClaude) {
-        useAppStore.getState().setClaudeStatus(sessionId, "idle");
-      }
-    });
-
     const osc9Disposable = term.parser.registerOscHandler(9, (data) => {
       // iTerm2/ConEmu progress convention: OSC 9;4;state;percent BEL.
       // state 0 clears; state 1/3 are normal/indeterminate; 2/4 are error/warn.
@@ -232,11 +226,10 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     };
     window.addEventListener("terminal-clear", onClear);
 
-    // Send input to backend
+    // Send input to backend. Claude CLI activity is tracked via its lifecycle
+    // hooks (UserPromptSubmit/Stop) rather than raw Enter keypresses, because
+    // startup prompts such as "trust this folder" also use Enter.
     const dataDisposable = term.onData((data) => {
-      if (isClaude && data.includes("\r")) {
-        useAppStore.getState().setClaudeStatus(sessionId, "active");
-      }
       commands.terminalWrite(sessionId, data).catch(() => {});
     });
 
@@ -311,7 +304,6 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       resizeObserver.disconnect();
       window.removeEventListener("sidebar-resize-end", onSidebarResizeEnd);
       dataDisposable.dispose();
-      bellDisposable.dispose();
       osc9Disposable.dispose();
       container.removeEventListener("paste", onPaste, true);
       container.removeEventListener("contextmenu", onContextMenu, true);
@@ -351,7 +343,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
   useEffect(() => {
     const term = termInstanceRef.current;
     if (!term) return;
-    term.options.theme = { light: XTERM_LIGHT, dim: XTERM_DIM, atom: XTERM_ATOM, dark: XTERM_DARK }[resolveTheme(themeMode)];
+    term.options.theme = XTERM_THEMES[resolveTheme(themeMode)];
   }, [themeMode]);
 
   const menuLeft = contextMenu ? Math.min(contextMenu.x, window.innerWidth - 170) : 0;

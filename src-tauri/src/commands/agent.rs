@@ -518,6 +518,102 @@ pub fn agent_exists(
     agent_manager.exists(&session_id)
 }
 
+/// Generate a short tab title using the same Claude Agent SDK auth path as
+/// Claude SDK agent tabs. Used to refine Claude CLI tab titles after an
+/// immediate local fallback title is shown.
+#[tauri::command]
+pub async fn agent_generate_title(
+    app: AppHandle,
+    prompt: String,
+    cwd: Option<String>,
+) -> Result<String, String> {
+    // The SDK title request can take seconds. Run the whole subprocess wait on
+    // Tauri's blocking pool so invoking it cannot stall the webview/main IPC
+    // thread while the user is trying to interact with the Claude CLI tab.
+    tauri::async_runtime::spawn_blocking(move || agent_generate_title_blocking(app, prompt, cwd))
+        .await
+        .map_err(|e| format!("Title generator task failed: {e}"))?
+}
+
+fn agent_generate_title_blocking(
+    app: AppHandle,
+    prompt: String,
+    cwd: Option<String>,
+) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err("prompt is required".to_string());
+    }
+
+    let node = crate::services::shell_env::resolve_node_binary()
+        .ok_or_else(|| "Node.js not found. The bundled node sidecar is missing.".to_string())?;
+    let script = resolve_bridge_path_for(&app, "title-generator.mjs")?;
+
+    let mut cmd = crate::services::shell_env::user_command(node);
+    cmd.arg(script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to start title generator: {e}"))?;
+
+    let payload = serde_json::json!({
+        "prompt": prompt,
+        "cwd": cwd.unwrap_or_default(),
+    });
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(payload.to_string().as_bytes())
+            .map_err(|e| format!("Failed to write title prompt: {e}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Title generator failed: {e}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(if stderr.is_empty() {
+            format!(
+                "Title generator exited with code {}",
+                output.status.code().unwrap_or(-1)
+            )
+        } else {
+            stderr
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed = stdout
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .ok_or_else(|| {
+            if stderr.is_empty() {
+                "Title generator returned no JSON".to_string()
+            } else {
+                stderr.clone()
+            }
+        })?;
+    let title = parsed
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .trim_matches(&['\"', '\''][..])
+        .trim_end_matches(&['.', '!', '?'][..])
+        .trim()
+        .to_string();
+    if title.is_empty() {
+        return Err("Title generator returned an empty title".to_string());
+    }
+    Ok(title)
+}
+
 /// Check if the agent infrastructure is available (node + bridge script).
 #[tauri::command]
 pub fn agent_check_available(app: AppHandle) -> Result<AgentAvailability, String> {

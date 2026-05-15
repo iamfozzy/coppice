@@ -1,3 +1,4 @@
+use base64::Engine;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use crate::db::Database;
@@ -8,6 +9,63 @@ use crate::services::shell_env::user_command;
 pub struct GitFileStatus {
     pub status: String,
     pub file: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FilePreviewContent {
+    pub kind: String,
+    pub mime_type: String,
+    pub text: Option<String>,
+    pub data: Option<String>,
+    pub size: u64,
+}
+
+const MAX_INLINE_PREVIEW_BYTES: usize = 50 * 1024 * 1024;
+
+fn preview_type_for_file(file: &str) -> (&'static str, &'static str) {
+    let name = std::path::Path::new(file)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(file)
+        .to_ascii_lowercase();
+    let ext = std::path::Path::new(&name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+
+    match ext {
+        "jpg" | "jpeg" => ("image", "image/jpeg"),
+        "png" => ("image", "image/png"),
+        "gif" => ("image", "image/gif"),
+        "webp" => ("image", "image/webp"),
+        "svg" => ("image", "image/svg+xml"),
+        "bmp" => ("image", "image/bmp"),
+        "ico" => ("image", "image/x-icon"),
+        "avif" => ("image", "image/avif"),
+        "pdf" => ("pdf", "application/pdf"),
+        "mp4" => ("video", "video/mp4"),
+        "webm" => ("video", "video/webm"),
+        "mov" => ("video", "video/quicktime"),
+        "mp3" => ("audio", "audio/mpeg"),
+        "wav" => ("audio", "audio/wav"),
+        "ogg" => ("audio", "audio/ogg"),
+        "flac" => ("audio", "audio/flac"),
+        _ => ("unknown", "application/octet-stream"),
+    }
+}
+
+fn validate_relative_file(file: &str) -> Result<(), String> {
+    let path = std::path::Path::new(file);
+    if path.is_absolute() {
+        return Err("File path must be relative".to_string());
+    }
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(_) | std::path::Component::CurDir => {}
+            _ => return Err("Invalid file path".to_string()),
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -310,6 +368,68 @@ pub async fn get_file_content(path: String, file: String, git_ref: Option<String
         let file_path = std::path::Path::new(&path).join(&file);
         std::fs::read_to_string(&file_path)
             .map_err(|e| format!("Failed to read file: {}", e))
+    }
+}
+
+/// Read file content and metadata for in-app previews.
+#[tauri::command]
+pub async fn get_file_preview(path: String, file: String, git_ref: Option<String>) -> Result<FilePreviewContent, String> {
+    validate_relative_file(&file)?;
+
+    let bytes = if let Some(r) = git_ref {
+        let output = user_command("git")
+            .args(["show", &format!("{}:{}", r, file)])
+            .current_dir(&path)
+            .output()
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+
+        if !output.status.success() {
+            Vec::new()
+        } else {
+            output.stdout
+        }
+    } else {
+        let file_path = std::path::Path::new(&path).join(&file);
+        std::fs::read(&file_path).map_err(|e| format!("Failed to read file: {}", e))?
+    };
+
+    let size = bytes.len() as u64;
+    let (kind, mime_type) = preview_type_for_file(&file);
+
+    if matches!(kind, "image" | "pdf" | "audio" | "video") {
+        if bytes.len() > MAX_INLINE_PREVIEW_BYTES {
+            return Ok(FilePreviewContent {
+                kind: "binary".to_string(),
+                mime_type: mime_type.to_string(),
+                text: None,
+                data: None,
+                size,
+            });
+        }
+        return Ok(FilePreviewContent {
+            kind: kind.to_string(),
+            mime_type: mime_type.to_string(),
+            text: None,
+            data: Some(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+            size,
+        });
+    }
+
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(FilePreviewContent {
+            kind: "text".to_string(),
+            mime_type: "text/plain".to_string(),
+            text: Some(text),
+            data: None,
+            size,
+        }),
+        Err(err) => Ok(FilePreviewContent {
+            kind: "binary".to_string(),
+            mime_type: mime_type.to_string(),
+            text: None,
+            data: None,
+            size: err.as_bytes().len() as u64,
+        }),
     }
 }
 

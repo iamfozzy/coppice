@@ -33,7 +33,7 @@ function App() {
     for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
       const activeTab = activeTabByWorktree[wtId];
       for (const tab of tabs) {
-        if (tab.type === "diff" || tab.type === "agent") continue;
+        if (tab.type === "diff" || tab.type === "file" || tab.type === "agent") continue;
         // When tile view is open, Claude CLI tabs are rendered inside tiles.
         // Keep them out of the always-mounted terminal layer to avoid two
         // xterm panels racing to spawn/attach to the same PTY session.
@@ -189,13 +189,46 @@ function App() {
   // the Rust backend. Map them into the same tab/sidebar/dock notification
   // path used by SDK agent tabs.
   useEffect(() => {
-    const unlisten = listen<{ sessionId: string; notificationType?: string; claudeSessionId?: string; notifyUser?: boolean }>("claude-cli-notification", (event) => {
+    const unlisten = listen<{ sessionId: string; notificationType?: string; claudeSessionId?: string; prompt?: string; notifyUser?: boolean }>("claude-cli-notification", (event) => {
       const sessionId = event.payload?.sessionId;
       if (!sessionId) return;
       const store = useAppStore.getState();
       if (event.payload?.claudeSessionId) {
         store.setClaudeCliSessionId(sessionId, event.payload.claudeSessionId);
       }
+      if (event.payload?.prompt) {
+        const prompt = event.payload.prompt;
+        const fallbackLabel = store.autoRenameClaudeTabFromPrompt(sessionId, prompt);
+        if (fallbackLabel) {
+          const cwd = Object.values(store.tabsByWorktree)
+            .flat()
+            .find((tab) => tab.id === sessionId)?.cwd;
+          commands.agentGenerateTitle(prompt, cwd)
+            .then((title) => {
+              useAppStore.getState().applyClaudeTabGeneratedTitle(sessionId, title, fallbackLabel);
+            })
+            .catch(() => {
+              // Keep the immediate prompt-derived fallback title if SDK title
+              // generation fails (offline, auth issue, timeout, etc.).
+            });
+        }
+      }
+      if (event.payload?.notificationType === "UserPromptSubmit") {
+        store.setClaudeStatus(sessionId, "active");
+        return;
+      }
+
+      if (event.payload?.notificationType === "Stop" || event.payload?.notificationType === "StopFailure") {
+        if (event.payload?.notifyUser !== false) {
+          store.setClaudeStatus(sessionId, "idle");
+        } else {
+          // CLI notifications disabled: clear any active spinner without
+          // lighting the idle badge or firing app-level notifications.
+          store.removeClaudeStatus(sessionId);
+        }
+        return;
+      }
+
       if (event.payload?.notifyUser !== false) {
         store.setClaudeStatus(sessionId, "idle");
       }
@@ -229,10 +262,13 @@ function App() {
 
   // Single window-level file drop handler — routes to active session only.
   // For agent tabs, image files are converted to base64 and queued as image
-  // attachments for the agent input bar; for terminal tabs, file paths are
-  // written as text.
+  // attachments for the agent input bar. Claude CLI tabs receive dropped paths
+  // as bracketed paste so Claude Code can detect image paths and turn them into
+  // its native [Image #N] attachments. Plain terminal tabs receive path text.
   useEffect(() => {
     const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp"]);
+    const formatDroppedPaths = (paths: string[]) => paths.map((p) => `"${p.replace(/"/g, '\\"')}"`).join(" ");
+    const bracketedPaste = (text: string) => `\x1b[200~${text}\x1b[201~`;
 
     const unlisten = getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type !== "drop") return;
@@ -267,10 +303,13 @@ function App() {
             useAppStore.getState().pushDroppedImages(activeSessionId, attachments);
           })
           .catch(() => {});
-      } else {
-        // Terminal tab — write file paths as text
-        const text = paths.map((p: string) => `"${p}"`).join(" ");
-        commands.terminalWrite(activeSessionId, text).catch(() => {});
+      } else if (activeTab?.type === "claude") {
+        // Claude CLI parses pasted image paths into attachments; send the drop
+        // using the same bracketed-paste envelope as normal paste handling.
+        commands.terminalWrite(activeSessionId, bracketedPaste(formatDroppedPaths(paths))).catch(() => {});
+      } else if (activeTab?.type === "terminal") {
+        // Terminal tab — write file paths as text.
+        commands.terminalWrite(activeSessionId, formatDroppedPaths(paths)).catch(() => {});
       }
     });
     return () => { unlisten.then((fn) => fn()); };
@@ -332,7 +371,7 @@ function App() {
             const relFile = filePath.startsWith(worktreePath)
               ? filePath.slice(worktreePath.length).replace(/^[/\\]/, "")
               : filePath;
-            store.openDiffTab(wtId, relFile, worktreePath, "uncommitted");
+            store.openFileTab(wtId, relFile, worktreePath);
           }
           break;
         }
