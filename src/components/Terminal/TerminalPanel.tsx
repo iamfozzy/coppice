@@ -60,18 +60,19 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     keepAliveRef.current = keepAlive;
   }, [keepAlive]);
 
-  // Focus terminal when the parent visibility changes (tab switching)
+  // Focus terminal when the parent visibility changes (tab switching).
+  // The tab wrapper that toggles `visibility` is two levels up: containerRef
+  // → padding wrapper → tab visibility wrapper.
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    const visibilityTarget = container?.parentElement?.parentElement;
+    if (!visibilityTarget) return;
     const observer = new MutationObserver(() => {
-      if (container.parentElement?.style.visibility !== "hidden" && termInstanceRef.current) {
+      if (visibilityTarget.style.visibility !== "hidden" && termInstanceRef.current) {
         termInstanceRef.current.focus();
       }
     });
-    if (container.parentElement) {
-      observer.observe(container.parentElement, { attributes: true, attributeFilter: ["style"] });
-    }
+    observer.observe(visibilityTarget, { attributes: true, attributeFilter: ["style"] });
     return () => observer.disconnect();
   }, []);
 
@@ -358,7 +359,6 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
   return (
     <>
       <div
-        ref={containerRef}
         className="bg-bg-primary"
         onPointerDown={clearClaudeNotification}
         onFocus={clearClaudeNotification}
@@ -367,7 +367,12 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
           inset: 0,
           padding: "4px 0 0 8px",
         }}
-      />
+      >
+        {/* Visual padding stays on the outer wrapper. FitAddon only reads
+            padding from the .xterm element, so padding on the measured
+            parent would clip the last row. */}
+        <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+      </div>
       {contextMenu && (
         <div
           className="fixed z-[9999] min-w-40 rounded-md border border-border-primary bg-bg-secondary py-1 shadow-xl text-[length:var(--app-font-11)]"
