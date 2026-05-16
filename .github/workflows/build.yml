@@ -153,7 +153,35 @@ jobs:
 
       - name: Build with Tauri
         shell: bash
-        run: npx tauri build --verbose ${{ matrix.args }}
+        run: |
+          set -e
+          attempt=1
+          max_attempts=3
+          while true; do
+            if npx tauri build --verbose ${{ matrix.args }}; then
+              break
+            fi
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::tauri build failed after $attempt attempts"
+              exit 1
+            fi
+            echo "::warning::tauri build attempt $attempt failed; cleaning up and retrying"
+            if [ "$RUNNER_OS" = "macOS" ]; then
+              # bundle_dmg.sh's `hdiutil detach` intermittently times out on the
+              # macos-15-intel runner (DiskArbitration), leaving the DMG mounted
+              # at /Volumes/dmg.* and failing the bundle step. Force-detach any
+              # leftover mounts so the retry can proceed.
+              hdiutil info | awk '
+                /^\/dev\/disk/ { disk=$1 }
+                /\/Volumes\/dmg\./ { print disk }
+              ' | while read -r d; do
+                echo "Force-detaching stuck DMG mount: $d"
+                hdiutil detach -force "$d" || true
+              done
+            fi
+            attempt=$((attempt+1))
+            sleep 5
+          done
         env:
           NO_STRIP: ${{ matrix.platform == 'ubuntu-22.04' && 'true' || '' }}
           APPIMAGE_EXTRACT_AND_RUN: ${{ matrix.platform == 'ubuntu-22.04' && '1' || '' }}
