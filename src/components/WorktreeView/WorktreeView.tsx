@@ -123,7 +123,7 @@ export function WorktreeView() {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Worktree header — h-12 = 3rem */}
-      <header className="flex items-center gap-3 px-4 h-12 border-b border-border-primary shrink-0">
+      <header className="app-chrome flex items-center gap-3 px-4 h-12 border-b border-border-primary shrink-0">
         {isScratchpad ? (
           <h2 className="text-sm font-medium text-text-primary truncate">Scratchpad</h2>
         ) : (

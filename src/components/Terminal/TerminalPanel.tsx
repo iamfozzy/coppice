@@ -300,6 +300,10 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       cursorBlink: true,
       scrollback: 10000,
       allowProposedApi: true,
+      // WCAG AA — xterm auto-adjusts foreground luminance when an app
+      // requests a fg/bg combo with worse contrast (e.g. Claude CLI tool-call
+      // panels painting ANSI white bg over its default light foreground).
+      minimumContrastRatio: 4.5,
     });
 
     // Unicode support — critical for Claude Code's UI which uses

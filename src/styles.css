@@ -321,6 +321,13 @@
   --color-error: #b91c1c;
 }
 
+/* Header/chrome surfaces — only override in light theme so the top bars
+   (sidebar, tile view, worktree header) sit visibly above the page bg.
+   Dark themes intentionally have no rule here so existing tokens win. */
+[data-theme="light"] .app-chrome {
+  background-color: #e0e0e6;
+}
+
 html,
 body,
 #root {

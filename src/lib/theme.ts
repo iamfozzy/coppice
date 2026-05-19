@@ -52,7 +52,11 @@ export const XTERM_DARK = {
   blue: "#6366f1",
   magenta: "#a855f7",
   cyan: "#06b6d4",
-  white: "#e4e4e7",
+  // Mid-tone instead of near-white: apps that fill panels with ANSI white bg
+  // (e.g. Claude CLI tool-call expansions) render as a subtle elevated panel
+  // rather than a bright slab. minimumContrastRatio rescales any fg that
+  // becomes unreadable against this darker shade.
+  white: "#3f3f46",
   brightBlack: "#71717a",
   brightRed: "#f87171",
   brightGreen: "#4ade80",
@@ -75,7 +79,7 @@ export const XTERM_DIM = {
   blue: "#6366f1",
   magenta: "#a855f7",
   cyan: "#06b6d4",
-  white: "#dfe1e8",
+  white: "#3a3d4d",
   brightBlack: "#646882",
   brightRed: "#f87171",
   brightGreen: "#4ade80",

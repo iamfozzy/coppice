@@ -371,7 +371,7 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
     : null;
 
   return (
-    <div className="flex items-center justify-between h-12 px-3 py-2 shrink-0 bg-bg-secondary border-b border-border-primary gap-3">
+    <div className="app-chrome flex items-center justify-between h-12 px-3 py-2 shrink-0 bg-bg-secondary border-b border-border-primary gap-3">
       <div className="flex items-center gap-2 min-w-0">
         <div className="flex items-center shrink-0">
           <TileViewToggleButton

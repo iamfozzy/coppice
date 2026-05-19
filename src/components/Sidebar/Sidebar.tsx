@@ -247,7 +247,7 @@ export function Sidebar() {
       className="flex flex-col bg-bg-secondary border-r border-border-primary h-full relative no-select"
       style={{ width: sidebarWidth }}
     >
-      <div className="flex items-center justify-between gap-3 px-3 py-2 h-12 border-b border-border-primary shrink-0">
+      <div className="app-chrome flex items-center justify-between gap-3 px-3 py-2 h-12 border-b border-border-primary shrink-0">
         <div className="flex items-center gap-2 min-w-0 shrink-0">
           <div className="flex items-center gap-1.5 shrink-0">
             <TileViewToggleButton
