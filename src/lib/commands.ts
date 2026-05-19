@@ -215,6 +215,12 @@ export async function terminalKill(sessionId: string): Promise<void> {
   return invoke("terminal_kill", { sessionId });
 }
 
+/** Toggle PTY-output flush cadence. Visible: 50 ms (snappy paints).
+ *  Hidden: 250 ms (saves WindowServer cost on parked terminals). */
+export async function terminalSetVisible(sessionId: string, visible: boolean): Promise<void> {
+  return invoke("terminal_set_visible", { sessionId, visible });
+}
+
 // GitHub commands
 export interface PrInfo {
   number: number;

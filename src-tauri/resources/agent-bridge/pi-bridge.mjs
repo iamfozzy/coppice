@@ -169,6 +169,62 @@ Do NOT use subagent for:
 - Tasks where you already have the context you need.
 - Anything that requires back-and-forth with the user — subagents run to completion without user interaction.`;
 
+const TODO_INSTRUCTION = `Plan tracking with TodoWrite:
+
+The user sees the TodoWrite list as a structured, interactive plan card in the UI. Use it instead of writing a markdown plan in prose — prose plans are unstructured and disconnected from execution.
+
+There are two scenarios:
+
+1) The user asks you to PLAN something (without yet asking you to do it).
+Trigger phrases include: "plan how to...", "what's the plan for...", "how would you approach...", "draft a plan", "outline the steps", "walk me through what you'd do", "before we start, plan...".
+
+The MENTAL MODEL for this scenario:
+- TodoWrite IS your plan response. The rich card it renders is what the user sees as "the plan".
+- Your prose response is NOT a plan, NOT an explanation, NOT a summary. It is ONE THING ONLY: a 1-2 sentence yes/no prompt asking the user to proceed.
+- Therefore: every substantive piece of content — what each step does, which files it touches, the approach, edge cases — goes INSIDE the TodoWrite items' 'details' field. Not in prose. The prose has no room for substance.
+
+How to call TodoWrite:
+- Every item has status 'pending'. Do not set any to 'in_progress' yet.
+- Each item has THREE parts:
+  - 'content': a short imperative title (one line, e.g. "Wire TodoWrite details into the system prompt").
+  - 'details': markdown rendered in a rich card under each step. This is the substance of the step. Use whichever markdown features fit:
+    - Bullets ('- ') or numbered lists for sub-points
+    - Inline \`code\` for symbol names, flag names, function refs
+    - Fenced code blocks (\`\`\`lang ... \`\`\`) for sample snippets, function signatures, before/after diffs
+    - File references like 'src/foo.ts:42' — auto-linkified to open in the editor
+    - **bold** for emphasis on key terms, *italics* sparingly
+    Aim for a short paragraph or 3-6 bullets per item. Include: concrete file paths, the approach (in steps if non-trivial), edge cases, expected outcome. If you're tempted to explain something about this step in prose, that text belongs HERE instead.
+  - 'activeForm': present-tense wording for when the step runs (only required on the first step).
+- Do NOT start executing tools (read/edit/bash/etc.) until the user gives the go-ahead.
+
+Self-check before sending your turn: would your prose make sense if it were just "Reply 'go' to start, or tell me what to change."? If you have anything more than 1-2 sentences in prose, you are leaking content out of the TodoWrite card. Move that content into the relevant item's 'details' field and re-call TodoWrite.
+
+Good closing message examples:
+- "Reply 'go' to start, or tell me what to change."
+- "Want me to proceed, or adjust the approach first?"
+- "Ready when you are."
+
+Bad closing message (do NOT do this — these all leak content the user can already see in the card):
+- "Here's the plan:\\n1. Update the system prompt...\\n2. Modify the schema..."
+- "I'll start by reading X, then modify Y, and finally..."
+- "The approach: first we'll need to..."
+- Any prose that restates the steps, files, or approach details.
+
+If you find yourself wanting to write a prose plan, that is a bug in your output. Re-route that content into the 'details' field of the relevant TodoWrite item instead.
+
+2) The user asks you to DO multi-step work (the normal case).
+- Call TodoWrite at the start with the plan; flip the first item to 'in_progress' in that same call and begin work immediately.
+- 'details' is optional but recommended on the first publish (gives the user the same reviewability as a Draft Plan). Once items are flipped to 'in_progress' / 'completed', re-send their details verbatim — do not drop them.
+- Keep the list current: flip the just-finished item to 'completed' AND the next item to 'in_progress' in the same TodoWrite call, before running the next tool.
+- Emit a final TodoWrite with everything 'completed' before your closing message.
+
+Common rules (both scenarios):
+- TodoWrite is a FULL REPLACEMENT — every call must include every item with its current status. Do not send partial lists.
+- Exactly one item may be 'in_progress' at any time. All others are 'pending' or 'completed'.
+- Always include 'activeForm' (present-tense wording, e.g. "Reading auth module") on whichever item is 'in_progress'. The UI uses it as the progress label.
+- If you discover new sub-tasks mid-flight, add them to the list with TodoWrite rather than doing them silently.
+- Skip TodoWrite entirely for trivial single-step requests (one read, one edit, one shell command).`;
+
 // ── Coppice IDE tools (ToolDefinition format for AgentSession) ──
 
 /** Monotonically increasing call ID for coppice tool round-trips. */
@@ -477,6 +533,9 @@ function normalizeTodoItems(value, { enforceSingleInProgress = true } = {}) {
     if (typeof item.activeForm === "string" && item.activeForm.trim()) {
       todo.activeForm = item.activeForm.trim();
     }
+    if (typeof item.details === "string" && item.details.trim()) {
+      todo.details = item.details.trim();
+    }
     return todo;
   });
 
@@ -556,7 +615,13 @@ function formatTodosForTool(todos) {
       const active = todo.status === "in_progress" && todo.activeForm
         ? ` — ${todo.activeForm}`
         : "";
-      return `[${marker}] ${todo.content}${active}`;
+      const header = `[${marker}] ${todo.content}${active}`;
+      if (!todo.details) return header;
+      const indented = todo.details
+        .split("\n")
+        .map((line) => `    ${line}`)
+        .join("\n");
+      return `${header}\n${indented}`;
     })
     .join("\n");
 }
@@ -564,7 +629,7 @@ function formatTodosForTool(todos) {
 function buildTodoToolDefinitions() {
   const TodoItem = Type.Object({
     content: Type.String({
-      description: "Task description",
+      description: "Short task title (one line, imperative form)",
     }),
     status: Type.String({
       description: "Task status: pending, in_progress, or completed",
@@ -573,6 +638,12 @@ function buildTodoToolDefinitions() {
       Type.String({
         description:
           "Optional present-tense wording for the current in-progress task",
+      }),
+    ),
+    details: Type.Optional(
+      Type.String({
+        description:
+          "Markdown details rendered under the step in a rich card. Supports full GitHub-flavored markdown: bullets ('- '), numbered lists, fenced code blocks ```lang…```, inline `code`, **bold**, *italics*, tables, and blockquotes. File references like 'src/foo.ts:42' are auto-linkified into editor links. Recommended length: short paragraph or 3-6 bullets. Use this for: concrete file paths, the approach in steps, edge cases, expected outcome, sample function signatures, before/after snippets. Required for Draft Plan items — this is where the substance of the step lives.",
       }),
     ),
   });
@@ -597,18 +668,15 @@ function buildTodoToolDefinitions() {
       name: "TodoWrite",
       label: "Todo Write",
       description:
-        "Create or update the current session todo list. Use this for multi-step tasks and keep statuses current as work progresses.",
-      promptSnippet: "Create or update a visible task plan/todo list",
+        "Create or update the visible task plan shown to the user. Call this on a multi-step task to publish the plan, then call it AGAIN as you progress: flip the current item to 'completed' and the next item to 'in_progress' in the same call. End the task with a final call where every item is 'completed'. Each call is a full replacement — always send every item.",
+      promptSnippet: "Create or update the visible task plan (keep it current as you work)",
       promptGuidelines: [
-        "Use TodoWrite for multi-step tasks so the user can see the plan and progress.",
-        "Keep TodoWrite current: mark a task in_progress before working on it and completed as soon as it is done.",
-        "Use exactly one in_progress todo while actively working; leave all others pending or completed.",
-        "Do not use TodoWrite for trivial single-step requests.",
+        "TodoWrite is the user's progress indicator — keep it current by re-calling it as items finish, not just once at the start.",
       ],
       parameters: Type.Object({
         todos: Type.Array(TodoItem, {
           description:
-            "Full replacement todo list. Each item must include content and status.",
+            "Full replacement list — re-send EVERY item with its current status, even ones already completed. To advance progress: flip the just-finished item to 'completed' and the next item to 'in_progress' in the same call. Exactly one item may be 'in_progress'.",
         }),
       }),
       executionMode: "sequential",
@@ -617,13 +685,15 @@ function buildTodoToolDefinitions() {
         const completed = currentTodos.filter(
           (todo) => todo.status === "completed",
         ).length;
+        const steering = buildTodoSteeringMessage(currentTodos);
         return {
           content: [
             {
               type: "text",
               text:
                 `Todo list updated (${completed}/${currentTodos.length} completed)` +
-                (currentTodos.length ? `\n\n${formatTodosForTool(currentTodos)}` : ""),
+                (currentTodos.length ? `\n\n${formatTodosForTool(currentTodos)}` : "") +
+                (steering ? `\n\n${steering}` : ""),
             },
           ],
           details: {
@@ -635,6 +705,52 @@ function buildTodoToolDefinitions() {
       },
     }),
   ];
+}
+
+/**
+ * Build a steering message appended to the TodoWrite tool result.
+ *
+ * The system prompt is far away in context by the time the model emits its
+ * post-TodoWrite text — and that's where the duplicated-prose habit kicks in.
+ * Injecting the rule into the tool result puts it directly before the next
+ * assistant turn, which is the strongest place to shape that turn's behavior.
+ *
+ * Returns "" when nothing useful to say (empty list, mid-execution updates).
+ */
+function buildTodoSteeringMessage(todos) {
+  if (!Array.isArray(todos) || todos.length < 2) return "";
+
+  const allPending = todos.every((t) => t.status === "pending");
+  if (!allPending) return "";
+
+  // Draft Plan detected. Steer the next assistant turn.
+  const missingDetails = todos.filter((t) => !t.details || t.details.length < 40);
+  const thinDetailsNote = missingDetails.length > 0
+    ? `\n\nDETAILS WARNING: ${missingDetails.length}/${todos.length} item(s) have missing or very short 'details'. ` +
+      `Re-call TodoWrite NOW with richer 'details' on those items (1-3 sentences each: concrete file paths, the approach, ` +
+      `edge cases, expected outcome). Do NOT put that content into your prose reply — put it into the 'details' field.`
+    : "";
+
+  return (
+    `[PLAN PUBLISHED TO UI]\n` +
+    `The user can see this entire plan — every step's title AND its 'details' — as a rich, structured card. ` +
+    `They have not yet given the go-ahead.\n` +
+    `\n` +
+    `Your next assistant message MUST be 1-2 short sentences asking the user to proceed or revise. ` +
+    `Treat the TodoWrite card as your full response; the prose is JUST a confirmation prompt.\n` +
+    `\n` +
+    `Good closing message examples:\n` +
+    `- "Reply 'go' to start, or tell me what to change."\n` +
+    `- "Want me to proceed, or adjust the approach first?"\n` +
+    `- "Ready when you are."\n` +
+    `\n` +
+    `DO NOT in your next message:\n` +
+    `- Restate the steps, file paths, or approach. The card already shows them.\n` +
+    `- Write a "Plan" / "Approach" / "Steps" / "Summary" heading or bullet list.\n` +
+    `- Add prose paragraphs about what each step does — that content belongs in each item's 'details' field, not in prose.\n` +
+    `- Start executing tools. Wait for the user to reply.` +
+    thinDetailsNote
+  );
 }
 
 // ── Subagent system ──
@@ -2714,6 +2830,7 @@ async function startSession(msg) {
     if (opts.enableSubagent !== false) {
       coppiceAppend.push("", "---", "", SUBAGENT_INSTRUCTION);
     }
+    coppiceAppend.push("", "---", "", TODO_INSTRUCTION);
     if (opts.conciseMode) {
       coppiceAppend.push("", "---", "", CONCISE_MODE_INSTRUCTION);
     }

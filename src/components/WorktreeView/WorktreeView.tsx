@@ -50,15 +50,12 @@ export function WorktreeView() {
   const claudeStatusByTab = useAppStore((s) => s.claudeStatusByTab);
   const terminalProgressByTab = useAppStore((s) => s.terminalProgressByTab);
 
-  const [liveBranch, setLiveBranch] = useState<string | null>(null);
-  const [lastBranchWtId, setLastBranchWtId] = useState<string | null>(null);
+  // Live branch is keyed per-worktree so switching worktrees doesn't blank
+  // the label (which would force an extra render via setState-during-render).
+  const [liveBranchByWtId, setLiveBranchByWtId] = useState<Record<string, string>>({});
+  const liveBranch = wtId ? liveBranchByWtId[wtId] ?? null : null;
   const { requestCloseTab, closeConfirmation } = useAgentTabCloseConfirmation();
   const windowFocused = useWindowFocused();
-
-  if (wtId && wtId !== lastBranchWtId) {
-    setLiveBranch(null);
-    setLastBranchWtId(wtId);
-  }
 
   const updateWorktreeBranch = useAppStore((s) => s.updateWorktreeBranch);
 
@@ -73,7 +70,7 @@ export function WorktreeView() {
     const check = () => {
       commands.getCurrentBranch(worktree.path).then((branch) => {
         if (!cancelled) {
-          setLiveBranch(branch);
+          setLiveBranchByWtId((prev) => prev[worktree.id] === branch ? prev : { ...prev, [worktree.id]: branch });
           updateWorktreeBranch(worktree.id, branch);
         }
       }).catch(() => {});

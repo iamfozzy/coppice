@@ -18,6 +18,7 @@ interface TodoItem {
   content: string;
   status: "pending" | "in_progress" | "completed";
   activeForm?: string;
+  details?: string;
 }
 
 export function normalizeToolName(name: string): string {
@@ -180,18 +181,67 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
           )}
 
           {toolOutput && (
-            <div>
-              <span className={`text-[length:var(--app-font-10)] uppercase tracking-wider font-medium ${isError ? "text-error" : "text-text-tertiary"}`}>
-                {isError ? "Error" : "Output"}
-              </span>
-              <pre className={`mt-0.5 font-mono text-[length:var(--app-font-11)] whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-bg-tertiary/60 rounded px-2 py-1.5 leading-relaxed ${
-                isError ? "text-error/80" : "text-text-secondary"
-              }`}>
-                {toolOutput}
-              </pre>
-            </div>
+            <ToolOutputSection
+              output={toolOutput}
+              isError={isError}
+              defaultExpanded={!richContent || !!isError}
+              renderAsMarkdown={normalized === "Subagent" || normalized === "Agent"}
+              worktreePath={worktreePath}
+            />
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function ToolOutputSection({
+  output,
+  isError,
+  defaultExpanded = false,
+  renderAsMarkdown = false,
+  worktreePath,
+}: {
+  output: string;
+  isError?: boolean;
+  defaultExpanded?: boolean;
+  /** Render output as markdown via MarkdownContent (subagent reports etc.). Ignored when isError. */
+  renderAsMarkdown?: boolean;
+  worktreePath?: string;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const label = isError ? "Error" : "Output";
+  const useMarkdown = renderAsMarkdown && !isError;
+
+  return (
+    <div>
+      <button
+        type="button"
+        className={`flex items-center gap-1.5 w-full text-left rounded px-1 py-0.5 hover:bg-bg-hover/40 transition-colors ${
+          isError ? "text-error" : "text-text-tertiary"
+        }`}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <span className="text-[length:var(--app-font-10)] uppercase tracking-wider font-medium">{label}</span>
+        <svg
+          width="9" height="9" viewBox="0 0 10 10" fill="none"
+          className={`shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+        >
+          <path d="M3 1l4 4-4 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {expanded && (
+        useMarkdown ? (
+          <div className="mt-0.5 max-h-96 overflow-y-auto bg-bg-tertiary/40 rounded px-2.5 py-2">
+            <MarkdownContent text={output} worktreePath={worktreePath} compact />
+          </div>
+        ) : (
+          <pre className={`mt-0.5 font-mono text-[length:var(--app-font-11)] whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-bg-tertiary/60 rounded px-2 py-1.5 leading-relaxed ${
+            isError ? "text-error/80" : "text-text-secondary"
+          }`}>
+            {output}
+          </pre>
+        )
       )}
     </div>
   );
@@ -368,7 +418,7 @@ function SubagentTaskSummary({ input }: { input: unknown }) {
 // ── Rich content detection ──
 
 type RichContent =
-  | { kind: "todos"; label: string; todos: TodoItem[] }
+  | { kind: "todos"; label: string; todos: TodoItem[]; isDraft: boolean }
   | { kind: "plan_md"; label: string; filePath: string; markdown: string };
 
 function getRichContent(toolName: string, toolInput: unknown): RichContent | null {
@@ -376,7 +426,17 @@ function getRichContent(toolName: string, toolInput: unknown): RichContent | nul
   const obj = toolInput as Record<string, unknown>;
 
   if (toolName === "TodoWrite" && Array.isArray(obj.todos)) {
-    return { kind: "todos", label: "Plan", todos: obj.todos as TodoItem[] };
+    const todos = obj.todos as TodoItem[];
+    // A draft plan is one the model has published for the user to confirm:
+    // 2+ items, none started yet. Distinct from in-flight or finished lists.
+    const isDraft =
+      todos.length >= 2 && todos.every((t) => t?.status === "pending");
+    return {
+      kind: "todos",
+      label: isDraft ? "Draft Plan" : "Plan",
+      todos,
+      isDraft,
+    };
   }
 
   if (toolName === "Write" && typeof obj.content === "string") {
@@ -401,63 +461,117 @@ function isPlanFile(filePath: string): boolean {
 
 function RichToolContent({ content, worktreePath }: { content: RichContent; worktreePath?: string }) {
   if (content.kind === "todos") {
+    const containerClass = content.isDraft
+      ? "rounded-md border border-accent/30 bg-accent/4 overflow-hidden"
+      : "rounded-md border border-border-primary bg-bg-secondary/60 overflow-hidden";
+    const headerClass = content.isDraft
+      ? "px-2.5 py-1.5 border-b border-accent/20 flex items-center justify-between bg-accent/8"
+      : "px-2.5 py-1.5 border-b border-border-primary flex items-center justify-between";
+    const headerLabel = content.isDraft ? "Draft Plan" : "Tasks";
+    const headerLabelClass = content.isDraft
+      ? "text-[length:var(--app-font-10)] uppercase tracking-wider text-accent font-semibold"
+      : "text-[length:var(--app-font-10)] uppercase tracking-wider text-text-tertiary font-medium";
     return (
-      <div className="rounded-md border border-border-primary bg-bg-secondary/60 overflow-hidden">
-        <div className="px-2.5 py-1.5 border-b border-border-primary flex items-center justify-between">
-          <span className="text-[length:var(--app-font-10)] uppercase tracking-wider text-text-tertiary font-medium">Tasks</span>
+      <div className={containerClass}>
+        <div className={headerClass}>
+          <span className={headerLabelClass}>{headerLabel}</span>
           <span className="text-[length:var(--app-font-10)] text-text-tertiary font-mono">
-            {content.todos.filter((t) => t.status === "completed").length}/{content.todos.length} done
+            {content.isDraft
+              ? `${content.todos.length} step${content.todos.length === 1 ? "" : "s"}`
+              : `${content.todos.filter((t) => t.status === "completed").length}/${content.todos.length} done`}
           </span>
         </div>
-        <div className="px-1 py-1 space-y-px max-h-72 overflow-y-auto">
+        <div className="px-1 py-1 space-y-px max-h-96 overflow-y-auto">
           {content.todos.map((todo, i) => (
-            <div key={i} className="flex items-start gap-2 px-1.5 py-1 rounded hover:bg-bg-hover/30">
-              <span className="mt-0.5 shrink-0">
-                {todo.status === "completed" ? (
-                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-success">
-                    <rect x="1" y="1" width="12" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.2" />
-                    <path d="M4 7l2 2 4-4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                ) : todo.status === "in_progress" ? (
-                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-accent">
-                    <rect x="1" y="1" width="12" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.2" />
-                    <circle cx="7" cy="7" r="2" fill="currentColor" className="animate-pulse" />
-                  </svg>
-                ) : (
-                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-text-tertiary">
-                    <rect x="1" y="1" width="12" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.2" />
-                  </svg>
-                )}
-              </span>
-              <span className={`text-[length:var(--app-font-11)] leading-relaxed ${
-                todo.status === "completed" ? "text-text-tertiary line-through" :
-                todo.status === "in_progress" ? "text-text-primary" :
-                "text-text-secondary"
-              }`}>
-                {todo.content}
-              </span>
-            </div>
+            <TodoRow key={i} todo={todo} worktreePath={worktreePath} />
           ))}
         </div>
+        {content.isDraft && (
+          <div className="px-2.5 py-1.5 border-t border-accent/15 text-[length:var(--app-font-10)] text-text-tertiary">
+            Reply to start the plan, or describe changes you want first.
+          </div>
+        )}
       </div>
     );
   }
 
-  if (content.kind === "plan_md") {
-    return (
-      <div className="rounded-md border border-border-primary bg-bg-secondary/60 overflow-hidden">
-        <div className="px-2.5 py-1.5 border-b border-border-primary flex items-center justify-between">
-          <span className="text-[length:var(--app-font-10)] uppercase tracking-wider text-text-tertiary font-medium">Plan</span>
-          <span className="text-[length:var(--app-font-10)] text-text-tertiary font-mono">{shortPath(content.filePath)}</span>
-        </div>
-        <div className="px-2.5 py-2 max-h-80 overflow-y-auto text-[length:var(--app-font-12)]">
-          <MarkdownContent text={content.markdown} worktreePath={worktreePath} />
-        </div>
-      </div>
-    );
-  }
+  return renderPlanMd(content, worktreePath);
+}
 
-  return null;
+function TodoRow({
+  todo,
+  worktreePath,
+}: {
+  todo: TodoItem;
+  worktreePath?: string;
+}) {
+  const hasDetails = !!todo.details?.trim();
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="rounded">
+      <button
+        type="button"
+        className={`w-full flex items-start gap-2 px-1.5 py-1 text-left ${
+          hasDetails ? "cursor-pointer hover:bg-bg-hover/30" : "cursor-default"
+        }`}
+        onClick={hasDetails ? () => setExpanded((v) => !v) : undefined}
+      >
+        <span className="mt-0.5 shrink-0">
+          {todo.status === "completed" ? (
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-success">
+              <rect x="1" y="1" width="12" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M4 7l2 2 4-4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          ) : todo.status === "in_progress" ? (
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-accent">
+              <rect x="1" y="1" width="12" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.2" />
+              <circle cx="7" cy="7" r="2" fill="currentColor" className="animate-pulse" />
+            </svg>
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-text-tertiary">
+              <rect x="1" y="1" width="12" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          )}
+        </span>
+        <span className={`flex-1 min-w-0 text-[length:var(--app-font-11)] leading-relaxed ${
+          todo.status === "completed" ? "text-text-tertiary line-through" :
+          todo.status === "in_progress" ? "text-text-primary" :
+          "text-text-secondary"
+        }`}>
+          {todo.content}
+        </span>
+        {hasDetails && (
+          <svg
+            width="9" height="9" viewBox="0 0 10 10" fill="none"
+            className={`mt-1 shrink-0 text-text-tertiary/70 transition-transform ${expanded ? "rotate-90" : ""}`}
+          >
+            <path d="M3 1l4 4-4 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
+      {hasDetails && expanded && (
+        <div className="pl-6 pr-2 pb-1.5">
+          <MarkdownContent text={todo.details!} worktreePath={worktreePath} compact />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function renderPlanMd(content: RichContent, worktreePath?: string) {
+  if (content.kind !== "plan_md") return null;
+  return (
+    <div className="rounded-md border border-border-primary bg-bg-secondary/60 overflow-hidden">
+      <div className="px-2.5 py-1.5 border-b border-border-primary flex items-center justify-between">
+        <span className="text-[length:var(--app-font-10)] uppercase tracking-wider text-text-tertiary font-medium">Plan</span>
+        <span className="text-[length:var(--app-font-10)] text-text-tertiary font-mono">{shortPath(content.filePath)}</span>
+      </div>
+      <div className="px-2.5 py-2 max-h-80 overflow-y-auto text-[length:var(--app-font-12)]">
+        <MarkdownContent text={content.markdown} worktreePath={worktreePath} />
+      </div>
+    </div>
+  );
 }
 
 function summarizeInput(toolName: string, input: unknown): string {
@@ -494,6 +608,8 @@ function summarizeInput(toolName: string, input: unknown): string {
       const done = todos.filter((t) => t.status === "completed").length;
       const active = todos.find((t) => t.status === "in_progress");
       if (active) return truncate(active.activeForm || active.content, 50);
+      const allPending = todos.length > 0 && todos.every((t) => t.status === "pending");
+      if (allPending) return `draft — ${todos.length} step${todos.length === 1 ? "" : "s"}`;
       return `${done}/${todos.length} tasks`;
     }
     default:

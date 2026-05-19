@@ -17,6 +17,10 @@ interface PendingClose {
   y: number;
 }
 
+interface UseAgentTabCloseConfirmationOptions {
+  beforeClose?: (worktreeId: string, tabId: string) => void;
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(value, max));
 }
@@ -76,8 +80,9 @@ const CloseConfirmationPopover = memo(function CloseConfirmationPopover({
  * Returns a close-tab requester that asks for confirmation near the pointer
  * when the target is an actively-working agent/Claude tab.
  */
-export function useAgentTabCloseConfirmation() {
+export function useAgentTabCloseConfirmation(options: UseAgentTabCloseConfirmationOptions = {}) {
   const closeTab = useAppStore((s) => s.closeTab);
+  const beforeClose = options.beforeClose;
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
 
   const requestCloseTab = useCallback((worktreeId: string, tabId: string, event?: ClosePointerEvent) => {
@@ -90,6 +95,7 @@ export function useAgentTabCloseConfirmation() {
     const isActivelyWorking = isAgentTab && state.claudeStatusByTab[tabId] === "active";
 
     if (!isActivelyWorking) {
+      beforeClose?.(worktreeId, tabId);
       closeTab(worktreeId, tabId);
       return;
     }
@@ -104,15 +110,16 @@ export function useAgentTabCloseConfirmation() {
       x,
       y,
     });
-  }, [closeTab]);
+  }, [beforeClose, closeTab]);
 
   const cancelClose = useCallback(() => setPendingClose(null), []);
 
   const confirmClose = useCallback(() => {
     if (!pendingClose) return;
+    beforeClose?.(pendingClose.worktreeId, pendingClose.tabId);
     closeTab(pendingClose.worktreeId, pendingClose.tabId);
     setPendingClose(null);
-  }, [closeTab, pendingClose]);
+  }, [beforeClose, closeTab, pendingClose]);
 
   useEffect(() => {
     if (!pendingClose) return;

@@ -3,10 +3,19 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
+
+// Flush cadence for the PTY-output background thread.
+// Hidden terminals pay almost no compositor cost when their xterm is
+// suspended, but the buffer still needs to drain often enough that
+// switching back to the tab feels instant — 250 ms is well under the
+// perceptual threshold for "terminal looks live again".
+const FLUSH_INTERVAL_VISIBLE_MS: u64 = 50;
+const FLUSH_INTERVAL_HIDDEN_MS: u64 = 250;
 
 pub struct PtySession {
     writer: Box<dyn Write + Send>,
@@ -16,12 +25,16 @@ pub struct PtySession {
 
 pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<String, PtySession>>>,
+    // Flush interval (ms) shared with each session's flush thread. Frontend
+    // toggles via `set_visible` based on IntersectionObserver state.
+    flush_intervals: Arc<Mutex<HashMap<String, Arc<AtomicU64>>>>,
 }
 
 impl PtyManager {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            flush_intervals: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -255,6 +268,7 @@ impl PtyManager {
         let app = app_handle.clone();
         let sid = session_id.to_string();
         let sessions_ref = self.sessions.clone();
+        let flush_intervals_ref = self.flush_intervals.clone();
 
         // Shared buffer between reader thread and flush thread
         let shared_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
@@ -273,10 +287,24 @@ impl PtyManager {
         let event_name_flush = event_name.clone();
         let app_flush = app.clone();
 
-        // Flush thread — emits buffered data every 50ms
+        // Per-session flush interval — driven by frontend visibility events.
+        // Default to the "visible" cadence so the first paint after spawn is
+        // snappy; the IntersectionObserver in TerminalPanel will throttle us
+        // down within the first frame if the terminal is parked off-screen.
+        let flush_interval = Arc::new(AtomicU64::new(FLUSH_INTERVAL_VISIBLE_MS));
+        self.flush_intervals
+            .lock()
+            .unwrap()
+            .insert(session_id.to_string(), flush_interval.clone());
+        let flush_interval_thread = flush_interval.clone();
+
+        // Flush thread — emits buffered data on a cadence that depends on
+        // whether the frontend reports the terminal as visible (50 ms) or
+        // suspended (250 ms).
         thread::spawn(move || {
             while !done_flusher.load(std::sync::atomic::Ordering::Relaxed) {
-                thread::sleep(std::time::Duration::from_millis(50));
+                let interval_ms = flush_interval_thread.load(Ordering::Relaxed);
+                thread::sleep(std::time::Duration::from_millis(interval_ms));
 
                 let mut buf = shared_buf_flusher.lock().unwrap();
                 if buf.is_empty() { continue; }
@@ -324,6 +352,7 @@ impl PtyManager {
                         thread::sleep(std::time::Duration::from_millis(100));
                         let _ = app.emit(&format!("pty-exit-{}", sid), ());
                         sessions_ref.lock().unwrap().remove(&sid);
+                        flush_intervals_ref.lock().unwrap().remove(&sid);
                         break;
                     }
                     Ok(n) => {
@@ -352,6 +381,7 @@ impl PtyManager {
                         thread::sleep(std::time::Duration::from_millis(100));
                         let _ = app.emit(&format!("pty-exit-{}", sid), ());
                         sessions_ref.lock().unwrap().remove(&sid);
+                        flush_intervals_ref.lock().unwrap().remove(&sid);
                         break;
                     }
                 }
@@ -471,7 +501,24 @@ impl PtyManager {
             let _ = session.child.kill();
             let _ = session.child.wait();
         }
+        self.flush_intervals.lock().unwrap().remove(session_id);
         Ok(())
+    }
+
+    /// Toggle the PTY-flush cadence for a session. Visible terminals flush at
+    /// 50 ms (snappy paints); hidden terminals flush at 250 ms so the reader
+    /// thread isn't waking the event loop and WindowServer 20×/sec for an
+    /// invisible xterm. No-op if the session doesn't exist (e.g. flush thread
+    /// already exited).
+    pub fn set_visible(&self, session_id: &str, visible: bool) {
+        if let Some(interval) = self.flush_intervals.lock().unwrap().get(session_id) {
+            let ms = if visible {
+                FLUSH_INTERVAL_VISIBLE_MS
+            } else {
+                FLUSH_INTERVAL_HIDDEN_MS
+            };
+            interval.store(ms, Ordering::Relaxed);
+        }
     }
 
     /// Kill all PTY sessions — called on app exit.
@@ -481,6 +528,7 @@ impl PtyManager {
             let _ = session.child.kill();
             let _ = session.child.wait();
         }
+        self.flush_intervals.lock().unwrap().clear();
     }
 }
 

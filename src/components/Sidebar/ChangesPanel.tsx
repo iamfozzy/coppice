@@ -5,7 +5,13 @@ import { PRPanel } from "../PRStatus/PRPanel";
 import { Tooltip } from "../ui/Tooltip";
 import * as commands from "../../lib/commands";
 import type { GitFileStatus } from "../../lib/commands";
+import { cacheGetStale, cacheSet } from "../../lib/cache";
 import { useWindowFocused } from "../../lib/windowFocus";
+
+// Keep in sync with appStore.ts warming keys.
+const gitStatusKey = (path: string) => `git-status-${path}`;
+const unpushedCountKey = (path: string) => `unpushed-count-${path}`;
+const prFilesKey = (path: string, baseBranch: string) => `pr-files-${path}-${baseBranch}`;
 import { resolveDefaultSessionMode } from "../../lib/defaultSessionMode";
 
 type Tab = "uncommitted" | "pr-changes" | "pr-status";
@@ -79,7 +85,15 @@ export const ChangesPanel = memo(function ChangesPanel() {
   const worktree = worktrees.find((w) => w.id === selectedWorktreeId);
 
   const [tab, setTab] = useState<Tab>("uncommitted");
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem("coppice:changesPanelCollapsed") === "1"; } catch { return false; }
+  });
   const windowFocused = useWindowFocused();
+
+  const setCollapsedPersist = (next: boolean) => {
+    setCollapsed(next);
+    try { localStorage.setItem("coppice:changesPanelCollapsed", next ? "1" : "0"); } catch {}
+  };
 
   // Delay content rendering after worktree switch to prevent UI blocking
   const [contentReady, setContentReady] = useState(false);
@@ -113,6 +127,20 @@ export const ChangesPanel = memo(function ChangesPanel() {
   wtIdRef.current = worktree?.id;
   baseBranchRef.current = worktree?.target_branch || project?.target_branch || project?.base_branch || "main";
 
+  // Hydrate from the warm cache so a worktree switch shows the new worktree's
+  // git state immediately instead of the previous worktree's stale data
+  // bleeding through the 500ms before the first poll resolves.
+  useEffect(() => {
+    const wtPath = worktree?.path;
+    if (!wtPath) return;
+    const cachedStatus = cacheGetStale<GitFileStatus[]>(gitStatusKey(wtPath));
+    const cachedCount = cacheGetStale<number>(unpushedCountKey(wtPath));
+    const cachedPr = cacheGetStale<GitFileStatus[]>(prFilesKey(wtPath, baseBranchRef.current));
+    setUncommittedFiles(cachedStatus ?? []);
+    setUnpushedCount(cachedCount ?? 0);
+    setPrFiles(cachedPr ?? []);
+  }, [worktree?.id]);
+
   // Deferred uncommitted refresh + unpushed count.
   // Polls only while the window is focused — avoids burning ~2 git subprocesses
   // every 5s for every open worktree when the user is in another app.
@@ -134,6 +162,10 @@ export const ChangesPanel = memo(function ChangesPanel() {
         if (!cancelled) {
           setUncommittedFiles(status);
           setUnpushedCount(count);
+          if (wtPathRef.current) {
+            cacheSet(gitStatusKey(wtPathRef.current), status);
+            cacheSet(unpushedCountKey(wtPathRef.current), count);
+          }
         }
       } catch {
         if (!cancelled) {
@@ -186,7 +218,10 @@ export const ChangesPanel = memo(function ChangesPanel() {
       if (first) { setLoadingPr(true); first = false; }
       try {
         const files = await commands.getPrDiffFiles(wtPathRef.current, baseBranchRef.current);
-        if (!cancelled) setPrFiles(files);
+        if (!cancelled) {
+          setPrFiles(files);
+          cacheSet(prFilesKey(wtPathRef.current, baseBranchRef.current), files);
+        }
       } catch {
         if (!cancelled) setPrFiles([]);
       } finally {
@@ -274,22 +309,50 @@ export const ChangesPanel = memo(function ChangesPanel() {
   };
 
   return (
-    <div className="border-t border-border-primary flex flex-col min-h-0 shrink-0" style={{ maxHeight: "40%" }}>
-      <div className="flex items-center gap-0 px-2 h-7 bg-bg-tertiary shrink-0 overflow-hidden">
+    <div className="border-t border-border-primary flex flex-col min-h-0 shrink-0" style={collapsed ? undefined : { maxHeight: "40%" }}>
+      <div
+        role="button"
+        tabIndex={0}
+        className="flex items-center gap-0 pl-3 pr-2 h-7 bg-bg-tertiary shrink-0 overflow-hidden hover:bg-bg-hover transition-colors cursor-pointer select-none"
+        onClick={() => setCollapsedPersist(!collapsed)}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setCollapsedPersist(!collapsed);
+          }
+        }}
+      >
+        <svg
+          width="8"
+          height="8"
+          viewBox="0 0 8 8"
+          className={`shrink-0 mr-2 text-text-secondary transition-transform ${collapsed ? "" : "rotate-90"}`}
+        >
+          <path d="M2 1l4 3-4 3" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+        </svg>
         <div className="flex items-center min-w-0 shrink">
-          <TabButton label={`Uncommitted${uncommittedFiles.length > 0 ? ` (${uncommittedFiles.length})` : ""}`} active={tab === "uncommitted"} onClick={() => setTab("uncommitted")} />
-          <TabButton label={`Files${prFiles.length > 0 ? ` (${prFiles.length})` : ""}`} active={tab === "pr-changes"} onClick={() => setTab("pr-changes")} />
+          <TabButton
+            label={`Uncommitted${uncommittedFiles.length > 0 ? ` (${uncommittedFiles.length})` : ""}`}
+            active={tab === "uncommitted"}
+            onClick={(e) => { e.stopPropagation(); setTab("uncommitted"); if (collapsed) setCollapsedPersist(false); }}
+          />
+          <TabButton
+            label={`Files${prFiles.length > 0 ? ` (${prFiles.length})` : ""}`}
+            active={tab === "pr-changes"}
+            onClick={(e) => { e.stopPropagation(); setTab("pr-changes"); if (collapsed) setCollapsedPersist(false); }}
+          />
           <TabButton
             label="PR"
             active={tab === "pr-status"}
-            onClick={() => setTab("pr-status")}
+            onClick={(e) => { e.stopPropagation(); setTab("pr-status"); if (collapsed) setCollapsedPersist(false); }}
           />
         </div>
         {hasLocalChanges && (
           <Tooltip text={uncommittedFiles.length > 0 ? "Commit all changes and push to origin" : `Push ${unpushedCount} unpushed commit${unpushedCount !== 1 ? "s" : ""} to origin`} side="top" align="right">
             <button
               className="ml-auto px-1.5 py-0.5 text-[length:var(--app-font-10)] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors whitespace-nowrap shrink-0"
-              onClick={handlePush}
+              onClick={(e) => { e.stopPropagation(); handlePush(); }}
             >
               {uncommittedFiles.length > 0 ? "Commit & Push" : `Push (${unpushedCount})`}
             </button>
@@ -297,7 +360,7 @@ export const ChangesPanel = memo(function ChangesPanel() {
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className={`flex-1 overflow-y-auto min-h-0 ${collapsed ? "hidden" : ""}`}>
         {tab === "uncommitted" && (
           <FileList
             files={uncommittedFiles}
@@ -419,10 +482,10 @@ export const ChangesPanel = memo(function ChangesPanel() {
   );
 });
 
-function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: (e: React.MouseEvent<HTMLButtonElement>) => void }) {
   return (
     <button
-      className={`px-2 py-0.5 text-[length:var(--app-font-11)] rounded-t transition-colors whitespace-nowrap truncate ${
+      className={`px-2 py-0.5 text-[length:var(--app-font-11)] rounded transition-colors whitespace-nowrap truncate ${
         active ? "text-text-primary bg-bg-secondary" : "text-text-tertiary hover:text-text-secondary"
       }`}
       onClick={onClick}

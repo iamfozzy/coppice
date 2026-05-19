@@ -43,6 +43,10 @@ export const ToolGroup = memo(function ToolGroup({ tools, worktreePath }: Props)
     .map(([n, c]) => (c > 1 ? `${n}×${c}` : n))
     .join(", ");
 
+  // If a TodoWrite call sits inside this group, surface its latest progress so
+  // the user sees plan updates without having to expand the whole group.
+  const planProgress = latestTodoProgress(tools);
+
   const headerLabel = anyActive
     ? `Running ${tools.length} tools`
     : `Used ${tools.length} tools`;
@@ -65,6 +69,14 @@ export const ToolGroup = memo(function ToolGroup({ tools, worktreePath }: Props)
 
         <span className="text-text-secondary font-medium">{headerLabel}</span>
         <span className="text-text-tertiary truncate font-mono min-w-0">{summary}</span>
+
+        {planProgress && (
+          <span className="shrink-0 px-1.5 py-px rounded-sm bg-accent/10 text-accent font-mono text-[length:var(--app-font-10)]">
+            {planProgress.isDraft
+              ? `Draft · ${planProgress.total} step${planProgress.total === 1 ? "" : "s"}`
+              : `Plan ${planProgress.done}/${planProgress.total}`}
+          </span>
+        )}
 
         <svg
           width="9" height="9" viewBox="0 0 10 10" fill="none"
@@ -92,3 +104,26 @@ export const ToolGroup = memo(function ToolGroup({ tools, worktreePath }: Props)
     </div>
   );
 });
+
+function latestTodoProgress(
+  tools: GroupedTool[],
+): { done: number; total: number; isDraft: boolean } | null {
+  for (let i = tools.length - 1; i >= 0; i--) {
+    const t = tools[i];
+    if (normalizeToolName(t.callMsg.toolName || "") !== "TodoWrite") continue;
+    const input = t.callMsg.toolInput;
+    if (!input || typeof input !== "object") continue;
+    const todos = (input as { todos?: unknown }).todos;
+    if (!Array.isArray(todos)) continue;
+    const done = todos.filter(
+      (todo) => todo && typeof todo === "object" && (todo as { status?: string }).status === "completed",
+    ).length;
+    const isDraft =
+      todos.length >= 2 &&
+      todos.every(
+        (todo) => todo && typeof todo === "object" && (todo as { status?: string }).status === "pending",
+      );
+    return { done, total: todos.length, isDraft };
+  }
+  return null;
+}

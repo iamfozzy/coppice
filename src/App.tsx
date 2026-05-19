@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { onAction } from "@tauri-apps/plugin-notification";
@@ -26,26 +26,55 @@ function App() {
   const activeTabByWorktree = useAppStore((s) => s.activeTabByWorktree);
   const runnersByWorktree = useAppStore((s) => s.runnersByWorktree);
   const showTileView = useAppStore((s) => s.showTileView);
+  const [tileViewMounted, setTileViewMounted] = useState(false);
 
   // Memoize terminal tab list — only recompute when tabs/active/selection change
   const terminalTabs = useMemo(() => {
-    const result: Array<{ id: string; cwd: string; command?: string; visible: boolean; kind: "terminal" | "claude"; resumeSessionId?: string; resumeLatest?: boolean }> = [];
+    const result: Array<{
+      id: string;
+      cwd: string;
+      command?: string;
+      visible: boolean;
+      kind: "terminal" | "claude";
+      resumeSessionId?: string;
+      resumeLatest?: boolean;
+      deferSpawn?: boolean;
+      throttleSpawn?: boolean;
+    }> = [];
     for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
       const activeTab = activeTabByWorktree[wtId];
       for (const tab of tabs) {
         if (tab.type === "diff" || tab.type === "file" || tab.type === "agent") continue;
-        // When tile view is open, Claude CLI tabs are rendered inside tiles.
-        // Keep them out of the always-mounted terminal layer to avoid two
-        // xterm panels racing to spawn/attach to the same PTY session.
-        if (showTileView && tab.type === "claude") continue;
+        // Claude CLI tabs stay mounted in this layer even in tile view.
+        // TileView physically moves the wrapper DOM node into its tile slot
+        // (no remount, no buffer replay), so we always render the wrapper.
+        const isClaude = tab.type === "claude";
+        const visibleInLayer = wtId === selectedWorktreeId && tab.id === activeTab;
+        // Restored Claude CLI tabs are mounted so their tile/tab chrome exists,
+        // but the expensive Claude process is only started when the user can
+        // actually see that tab. This prevents a startup storm of `claude
+        // --resume` processes (and Claude's own background `rg` scans) when a
+        // workspace has many persisted CLI tabs.
+        const restoredClaude = isClaude && !!tab.resumeOnLaunch;
+        const visible = showTileView && isClaude ? true : visibleInLayer;
         result.push({
           id: tab.id,
           cwd: tab.cwd,
           command: tab.command,
-          visible: wtId === selectedWorktreeId && tab.id === activeTab,
+          // In tile mode, claude wrappers are reparented into tiles — render
+          // them as visible so the moved subtree shows in the tile (style is
+          // carried with the moved node). TileView's z-100 backdrop covers
+          // any wrapper that hasn't been moved yet.
+          visible,
           kind: tab.type,
           resumeSessionId: tab.claudeSessionId,
-          resumeLatest: tab.type === "claude" ? tab.resumeOnLaunch : false,
+          // Never auto-`--continue` multiple restored tabs without an exact
+          // session id; it can resume the same latest Claude conversation in
+          // several PTYs and amplify startup scans. Exact ids still resume via
+          // resumeSessionId above.
+          resumeLatest: false,
+          deferSpawn: restoredClaude && !visible,
+          throttleSpawn: restoredClaude,
         });
       }
     }
@@ -439,6 +468,81 @@ function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  // Keep TileView mounted briefly while closing so it can hide immediately
+  // (normal view becomes interactive) and batch terminal restores off the
+  // close-click frame. Final unmount is event-driven with a fallback.
+  useEffect(() => {
+    if (showTileView) {
+      setTileViewMounted(true);
+      return;
+    }
+    if (!tileViewMounted) return;
+
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      setTileViewMounted(false);
+    };
+    window.addEventListener("coppice:tile-view-reparent-idle", finish, { once: true });
+    const fallback = window.setTimeout(finish, 1200);
+    return () => {
+      done = true;
+      window.removeEventListener("coppice:tile-view-reparent-idle", finish);
+      window.clearTimeout(fallback);
+    };
+  }, [showTileView, tileViewMounted]);
+
+  // Tile-toggle broadcaster. Entering / leaving tile view physically
+  // reparents N Claude xterm wrappers into / out of tile slots, each of
+  // which triggers a ResizeObserver fire and would otherwise SIGWINCH all N
+  // PTYs simultaneously. We set `resizingTile` while the toggle settles so
+  // panels mark themselves dirty instead, then dispatch `tile-toggle-end`
+  // and let TerminalPanel re-fit through its priority path (focused first,
+  // others on idle).
+  const didMountTileToggleRef = useRef(false);
+  useEffect(() => {
+    if (!didMountTileToggleRef.current) {
+      didMountTileToggleRef.current = true;
+      return;
+    }
+
+    document.body.dataset.resizingTile = "1";
+    const timer = window.setTimeout(() => {
+      delete document.body.dataset.resizingTile;
+      window.dispatchEvent(new CustomEvent("tile-toggle-end"));
+    }, 80);
+    return () => {
+      window.clearTimeout(timer);
+      delete document.body.dataset.resizingTile;
+    };
+  }, [showTileView]);
+
+  // Global window-resize broadcaster. While the window is actively resizing,
+  // TerminalPanels defer their fit + IPC + PTY redraw (which is heavy when
+  // many Claude CLIs are open) and instead mark themselves dirty. ~100ms
+  // after the last resize event we fire `window-resize-end`; panels that are
+  // visible re-fit then (focused first, others on idle), and hidden panels
+  // re-fit when next shown.
+  useEffect(() => {
+    let endTimer: number | null = null;
+    const onResize = () => {
+      document.body.dataset.resizingWindow = "1";
+      if (endTimer !== null) window.clearTimeout(endTimer);
+      endTimer = window.setTimeout(() => {
+        endTimer = null;
+        delete document.body.dataset.resizingWindow;
+        window.dispatchEvent(new CustomEvent("window-resize-end"));
+      }, 100);
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (endTimer !== null) window.clearTimeout(endTimer);
+      delete document.body.dataset.resizingWindow;
+    };
+  }, []);
+
   // Tab keyboard shortcuts — capture phase so xterm and the webview's native
   // Ctrl+W / Ctrl+T don't get a chance to consume them first.
   useEffect(() => {
@@ -524,13 +628,26 @@ function App() {
           {terminalTabs.map((t) => (
             <div
               key={t.id}
+              id={t.kind === "claude" ? `claude-term-${t.id}` : undefined}
               className="absolute inset-0"
               style={{
                 visibility: t.visible ? "visible" : "hidden",
                 pointerEvents: t.visible ? "auto" : "none",
               }}
             >
-              <TerminalPanel sessionId={t.id} cwd={t.cwd} command={t.command} fontSize={termFontSize} fontFamily={termFontFamily} kind={t.kind} resumeSessionId={t.resumeSessionId} resumeLatest={t.resumeLatest} keepAlive />
+              <TerminalPanel
+                sessionId={t.id}
+                cwd={t.cwd}
+                command={t.command}
+                fontSize={termFontSize}
+                fontFamily={termFontFamily}
+                kind={t.kind}
+                resumeSessionId={t.resumeSessionId}
+                resumeLatest={t.resumeLatest}
+                deferSpawn={t.deferSpawn}
+                throttleSpawn={t.throttleSpawn}
+                keepAlive
+              />
             </div>
           ))}
           {agentTabs.map((t) => (
@@ -546,7 +663,7 @@ function App() {
             </div>
           ))}
         </div>
-        {showTileView && <TileView />}
+        {(showTileView || tileViewMounted) && <TileView active={showTileView} />}
       </main>
 
       {/* Runner terminal pool */}

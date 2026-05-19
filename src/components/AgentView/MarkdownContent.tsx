@@ -11,6 +11,8 @@ interface MarkdownContentProps {
   text: string;
   /** Worktree root used for opening relative file references emitted by agents. */
   worktreePath?: string;
+  /** Tighter typography + spacing for nested contexts (e.g. inside a tool-card row). */
+  compact?: boolean;
 }
 
 const allowedClassNames = [
@@ -37,13 +39,17 @@ const sanitizeSchema: RehypeSanitizeOptions = {
 
 const rehypePlugins: PluggableList = [[rehypeSanitize, sanitizeSchema]];
 
-export function MarkdownContent({ text, worktreePath }: MarkdownContentProps) {
+export function MarkdownContent({ text, worktreePath, compact }: MarkdownContentProps) {
   const components = useMemo(() => createMarkdownComponents(worktreePath), [worktreePath]);
 
   if (!text.trim()) return null;
 
+  const rootClass = compact
+    ? "text-[length:var(--app-font-12)] text-text-secondary break-words leading-relaxed space-y-1.5"
+    : "text-[length:var(--app-font-13)] text-text-primary break-words leading-relaxed space-y-2.5";
+
   return (
-    <div className="text-[length:var(--app-font-13)] text-text-primary break-words leading-relaxed space-y-2.5">
+    <div className={rootClass}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={rehypePlugins}

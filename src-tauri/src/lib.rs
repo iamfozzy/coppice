@@ -65,6 +65,7 @@ pub fn run() {
             commands::terminal::terminal_resize,
             commands::terminal::terminal_exists,
             commands::terminal::terminal_kill,
+            commands::terminal::terminal_set_visible,
             // GitHub commands
             commands::github::get_pr_for_branch,
             commands::github::create_pr,

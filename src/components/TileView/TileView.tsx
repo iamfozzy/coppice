@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from "react";
 import { useAppStore, type TabInfo } from "../../stores/appStore";
 import { MessageList } from "../AgentView/MessageList";
 import { AgentInputBar } from "../AgentView/AgentInputBar";
-import { TerminalPanel } from "../Terminal/TerminalPanel";
+import { TERMINAL_BEFORE_REPARENT, TERMINAL_AFTER_REPARENT } from "../Terminal/TerminalPanel";
 import { CreateWorktreeModal } from "../Sidebar/CreateWorktreeModal";
 import { Tooltip } from "../ui/Tooltip";
 import { TileViewToggleButton } from "../ui/TileViewToggleButton";
@@ -14,7 +14,6 @@ import * as commands from "../../lib/commands";
 import type { AgentBackend, ImageAttachment, EffortLevel, AgentPermissionMode, Project } from "../../lib/types";
 import { SCRATCHPAD_WORKTREE_ID } from "../../lib/types";
 import { getDefaultSessionModeLabel, getDefaultSessionModeShortLabel, getNextDefaultSessionMode, isAgentDefaultSessionMode, resolveDefaultSessionMode } from "../../lib/defaultSessionMode";
-import { DEFAULT_APP_FONT_SIZE, getScaledFontSize } from "../../lib/fontScale";
 import { PermissionDialog } from "../AgentView/PermissionDialog";
 import { AskUserDialog } from "../AgentView/AskUserDialog";
 import { isPlanPermission } from "../AgentView/PlanApprovalDialog";
@@ -24,6 +23,8 @@ interface TileTab {
   worktreeId: string;
   worktreeName: string;
   projectName: string;
+  worktreePath: string;
+  project?: Project;
 }
 
 /** Compute grid columns based on tile count. */
@@ -44,13 +45,35 @@ function nextTileMsgId() {
 
 // ── Main TileView ──
 
-export function TileView() {
+export function TileView({ active = true }: { active?: boolean }) {
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree);
   const worktreesByProject = useAppStore((s) => s.worktreesByProject);
   const projects = useAppStore((s) => s.projects);
   const newDefaultSessionTab = useAppStore((s) => s.newDefaultSessionTab);
 
   const [creatingForProject, setCreatingForProject] = useState<string | null>(null);
+  const [contentReady, setContentReady] = useState(false);
+
+  // Paint the tile overlay/header/lightweight cells first, then mount the
+  // expensive per-tile content (message lists + terminal DOM moves) in the
+  // next task. This makes the toggle feel instant even when there are many
+  // Claude CLI/agent tabs to hydrate.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setContentReady(true), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (active) return;
+    // If there are no Claude tiles (or all restore jobs already drained), tell
+    // App it can unmount after the hidden close shell has had one task to run.
+    const timer = window.setTimeout(() => {
+      if (tileReparentQueue.length === 0 && tileReparentQueueFrame === null) {
+        window.dispatchEvent(new CustomEvent("coppice:tile-view-reparent-idle"));
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [active]);
 
   // Add a tab to an existing worktree using the app's default new-session setting.
   const handleAddExisting = useCallback((worktreeId: string, worktreePath: string) => {
@@ -87,6 +110,7 @@ export function TileView() {
           worktreeId: SCRATCHPAD_WORKTREE_ID,
           worktreeName: "Home",
           projectName: "Scratchpad",
+          worktreePath: tab.cwd,
         });
       }
     }
@@ -101,6 +125,8 @@ export function TileView() {
               worktreeId: wt.id,
               worktreeName: wt.name,
               projectName: project.name,
+              worktreePath: wt.path,
+              project,
             });
           }
         }
@@ -115,7 +141,11 @@ export function TileView() {
   const hasEmptySlot = totalSlots > tileTabs.length;
 
   return (
-    <div className="fixed inset-0 z-[100] bg-bg-primary overflow-hidden flex flex-col">
+    <div
+      className="fixed inset-0 z-[100] bg-bg-primary overflow-hidden flex flex-col"
+      style={{ opacity: active ? 1 : 0, pointerEvents: active ? "auto" : "none" }}
+      aria-hidden={!active}
+    >
       {/* Header */}
       <TileHeader onAddExisting={handleAddExisting} onCreateNew={handleCreateNew} />
 
@@ -130,7 +160,9 @@ export function TileView() {
         }}
       >
         {tileTabs.map((tile) => (
-          <Tile key={tile.tab.id} tile={tile} />
+          contentReady
+            ? <Tile key={tile.tab.id} tile={tile} active={active} />
+            : <TilePlaceholder key={tile.tab.id} tile={tile} />
         ))}
         {hasEmptySlot && <AddTileCell onAddExisting={handleAddExisting} onCreateNew={handleCreateNew} />}
       </div>
@@ -448,15 +480,39 @@ function TileHeader({ onAddExisting, onCreateNew }: TilePickerProps) {
 
 // ── Individual tile ──
 
-function Tile({ tile }: { tile: TileTab }) {
+function TilePlaceholder({ tile }: { tile: TileTab }) {
+  const isClaude = tile.tab.type === "claude";
+  return (
+    <div className="bg-bg-primary flex flex-col min-h-0 min-w-0 overflow-hidden relative">
+      <div className="flex items-center gap-2 px-3 h-8 shrink-0 border-b border-border-primary bg-bg-secondary">
+        <span className={`w-2 h-2 rounded-full shrink-0 ${isClaude ? "bg-text-tertiary" : "bg-accent"}`} />
+        <span className="text-[length:var(--app-font-11)] text-text-secondary truncate min-w-0">
+          {tile.projectName}
+          <span className="text-text-tertiary mx-1">/</span>
+          {tile.worktreeName}
+          <span className="text-text-tertiary mx-1">&mdash;</span>
+          <span className="font-semibold">{tile.tab.label}</span>
+        </span>
+        {isClaude && (
+          <span className="ml-auto shrink-0 rounded border border-border-primary px-1.5 py-0.5 text-[length:var(--app-font-10)] uppercase tracking-wide text-text-tertiary">
+            CLI
+          </span>
+        )}
+      </div>
+      <div className="flex-1 min-h-0 bg-bg-primary" />
+    </div>
+  );
+}
+
+function Tile({ tile, active }: { tile: TileTab; active: boolean }) {
   if (tile.tab.type === "claude") {
-    return <ClaudeCliTile tile={tile} />;
+    return <ClaudeCliTile tile={tile} active={active} />;
   }
   return <AgentTile tile={tile} />;
 }
 
 function AgentTile({ tile }: { tile: TileTab }) {
-  const { tab, worktreeId, worktreeName, projectName } = tile;
+  const { tab, worktreeId, worktreeName, projectName, worktreePath, project } = tile;
   const session = useAppStore((s) => s.agentSessionByTab[tab.id]);
   const claudeStatus = useAppStore((s) => s.claudeStatusByTab[tab.id] ?? null);
   const appSettings = useAppStore((s) => s.appSettings);
@@ -673,7 +729,7 @@ function AgentTile({ tile }: { tile: TileTab }) {
           <span className="font-semibold">{tab.label}</span>
         </span>
         <div className="ml-auto flex items-center gap-2.5">
-          <TileRunnerButtons worktreeId={worktreeId} />
+          <TileRunnerButtons worktreeId={worktreeId} worktreePath={worktreePath} project={project} />
           <Tooltip text="Go to tab" align="right">
             <button
               className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
@@ -772,20 +828,129 @@ function AgentTile({ tile }: { tile: TileTab }) {
   );
 }
 
-function ClaudeCliTile({ tile }: { tile: TileTab }) {
-  const { tab, worktreeId, worktreeName, projectName } = tile;
+let tileReparentEndTimer: number | null = null;
+const TILE_REPARENT_MAX_PER_FRAME = 2;
+const TILE_REPARENT_BUDGET_MS = 6;
+
+interface TileReparentJob {
+  cancelled: boolean;
+  run: () => void;
+}
+
+let tileReparentQueue: TileReparentJob[] = [];
+let tileReparentQueueFrame: number | null = null;
+
+function scheduleTileReparentQueue() {
+  if (tileReparentQueueFrame !== null) return;
+  tileReparentQueueFrame = window.requestAnimationFrame(() => {
+    tileReparentQueueFrame = null;
+    const start = performance.now();
+    let moved = 0;
+
+    while (tileReparentQueue.length > 0) {
+      const job = tileReparentQueue.shift();
+      if (!job || job.cancelled) continue;
+      job.run();
+      moved++;
+      if (moved >= TILE_REPARENT_MAX_PER_FRAME) break;
+      if (performance.now() - start >= TILE_REPARENT_BUDGET_MS) break;
+    }
+
+    if (tileReparentQueue.length > 0) {
+      scheduleTileReparentQueue();
+    } else {
+      window.dispatchEvent(new CustomEvent("coppice:tile-view-reparent-idle"));
+    }
+  });
+}
+
+function enqueueTileReparent(run: () => void, priority = false) {
+  const job: TileReparentJob = { cancelled: false, run };
+  if (priority) tileReparentQueue.unshift(job);
+  else tileReparentQueue.push(job);
+  scheduleTileReparentQueue();
+  return () => { job.cancelled = true; };
+}
+
+function markTileReparenting() {
+  // Reparenting fires ResizeObserver synchronously/near-synchronously in some
+  // WebViews. Set the tile-resize guard before appendChild so TerminalPanel
+  // defers fit/SIGWINCH work even on the first layout pass. Also clear it here
+  // for intra-tile closes where App's showTileView effect does not re-run.
+  document.body.dataset.resizingTile = "1";
+  if (tileReparentEndTimer !== null) window.clearTimeout(tileReparentEndTimer);
+  tileReparentEndTimer = window.setTimeout(() => {
+    tileReparentEndTimer = null;
+    delete document.body.dataset.resizingTile;
+    window.dispatchEvent(new CustomEvent("tile-toggle-end"));
+  }, 80);
+}
+
+function reparentTerminalNode(node: HTMLElement, parent: HTMLElement) {
+  if (node.parentElement === parent) return;
+  markTileReparenting();
+  node.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
+  parent.appendChild(node);
+  node.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));
+}
+
+function restoreClaudeCliTerminal(tabId: string) {
+  const node = document.getElementById(`claude-term-${tabId}`);
+  const homeParent = document.getElementById("terminal-layer");
+  if (!node || !homeParent) return;
+  try {
+    reparentTerminalNode(node, homeParent);
+  } catch { /* node may already be gone during a close */ }
+}
+
+function ClaudeCliTile({ tile, active }: { tile: TileTab; active: boolean }) {
+  const { tab, worktreeId, worktreeName, projectName, worktreePath, project } = tile;
   const claudeStatus = useAppStore((s) => s.claudeStatusByTab[tab.id] ?? null);
-  const appSettings = useAppStore((s) => s.appSettings);
   const selectProject = useAppStore((s) => s.selectProject);
   const selectWorktree = useAppStore((s) => s.selectWorktree);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const clearClaudeIdleStatus = useAppStore((s) => s.clearClaudeIdleStatus);
   const toggleTileView = useAppStore((s) => s.toggleTileView);
-  const { requestCloseTab, closeConfirmation } = useAgentTabCloseConfirmation();
+  const { requestCloseTab, closeConfirmation } = useAgentTabCloseConfirmation({
+    beforeClose: (_worktreeId, tabId) => restoreClaudeCliTerminal(tabId),
+  });
 
-  const appFontSize = appSettings?.app_font_size ?? DEFAULT_APP_FONT_SIZE;
-  const termFontSize = appSettings?.terminal_font_size || getScaledFontSize(13, appFontSize);
-  const termFontFamily = appSettings?.terminal_font_family || undefined;
+  // Reparent the always-mounted xterm wrapper into this tile's slot.
+  // Avoids destroying and rebuilding the xterm instance (and the 1MB
+  // VT-buffer replay) on every tile-view toggle. The wrapper is rendered
+  // in #terminal-layer with id="claude-term-${tab.id}".
+  //
+  // Opening uses a passive, frame-budgeted queue so the tile overlay can
+  // paint before the expensive DOM moves. Closing still restores
+  // synchronously in a layout cleanup, before React removes the tile DOM.
+  const slotRef = useRef<HTMLDivElement>(null);
+  const cancelQueuedReparentRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const cancel = enqueueTileReparent(() => {
+      const node = document.getElementById(`claude-term-${tab.id}`);
+      if (!node) return;
+      const target = active ? slotRef.current : document.getElementById("terminal-layer");
+      if (!target || !target.isConnected) return;
+      try {
+        reparentTerminalNode(node, target);
+      } catch { /* ignore */ }
+    }, !active);
+    cancelQueuedReparentRef.current = cancel;
+    return () => {
+      cancel();
+      if (cancelQueuedReparentRef.current === cancel) {
+        cancelQueuedReparentRef.current = null;
+      }
+    };
+  }, [tab.id, active]);
+
+  useLayoutEffect(() => {
+    return () => {
+      cancelQueuedReparentRef.current?.();
+      restoreClaudeCliTerminal(tab.id);
+    };
+  }, [tab.id]);
 
   const clearTileNotification = useCallback(() => {
     clearClaudeIdleStatus(tab.id);
@@ -835,7 +1000,7 @@ function ClaudeCliTile({ tile }: { tile: TileTab }) {
           CLI
         </span>
         <div className="ml-auto flex items-center gap-2.5">
-          <TileRunnerButtons worktreeId={worktreeId} />
+          <TileRunnerButtons worktreeId={worktreeId} worktreePath={worktreePath} project={project} />
           <Tooltip text="Go to tab" align="right">
             <button
               className="flex items-center justify-center w-4 h-4 text-text-tertiary hover:text-text-primary transition-colors"
@@ -859,19 +1024,7 @@ function ClaudeCliTile({ tile }: { tile: TileTab }) {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 relative" onPointerDown={clearTileNotification}>
-        <TerminalPanel
-          sessionId={tab.id}
-          cwd={tab.cwd}
-          command={tab.command}
-          fontSize={termFontSize}
-          fontFamily={termFontFamily}
-          kind="claude"
-          resumeSessionId={tab.claudeSessionId}
-          resumeLatest={tab.resumeOnLaunch}
-          keepAlive
-        />
-      </div>
+      <div ref={slotRef} className="flex-1 min-h-0 relative" onPointerDown={clearTileNotification} />
 
       {closeConfirmation}
     </div>
@@ -1273,21 +1426,18 @@ function getAvailableRunners(project: Project) {
   ];
 }
 
-function TileRunnerButtons({ worktreeId }: { worktreeId: string }) {
-  const projects = useAppStore((s) => s.projects);
-  const worktreesByProject = useAppStore((s) => s.worktreesByProject);
+function TileRunnerButtons({
+  worktreeId,
+  worktreePath,
+  project,
+}: {
+  worktreeId: string;
+  worktreePath: string;
+  project?: Project;
+}) {
   const runnersByWorktree = useAppStore((s) => s.runnersByWorktree);
   const openOrRestartRunner = useAppStore((s) => s.openOrRestartRunner);
   const setRunnerStatus = useAppStore((s) => s.setRunnerStatus);
-
-  const { project, worktreePath } = useMemo(() => {
-    for (const p of projects) {
-      const wts = worktreesByProject[p.id] ?? [];
-      const wt = wts.find((w) => w.id === worktreeId);
-      if (wt) return { project: p, worktreePath: wt.path };
-    }
-    return { project: null, worktreePath: "" };
-  }, [projects, worktreesByProject, worktreeId]);
 
   const runners = runnersByWorktree[worktreeId] ?? {};
   const available = project ? getAvailableRunners(project) : [];
