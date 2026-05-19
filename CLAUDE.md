@@ -103,4 +103,4 @@ Includes: terminal config, theme, agent defaults (model, effort, permission mode
 
 ## CI
 
-GitHub Actions: macOS ARM64 + x86_64, Ubuntu 22.04, Windows. Auto-release on tag push. Outputs: .dmg/.app (macOS), .deb/.AppImage (Linux), .msi/.exe (Windows).
+GitHub Actions: macOS ARM64, Ubuntu 22.04, Windows. Auto-release on tag push. Outputs: .dmg/.app (macOS), .deb/.AppImage (Linux), .msi/.exe (Windows).

@@ -178,7 +178,6 @@ GitHub Actions builds on every push to `main` and on tags:
 | Platform | Target |
 |----------|--------|
 | macOS | `aarch64-apple-darwin` (Apple Silicon) |
-| macOS | `x86_64-apple-darwin` (Intel) |
 | Ubuntu 22.04 | native |
 | Windows | native |
 
