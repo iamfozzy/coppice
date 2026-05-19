@@ -27,16 +27,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Pin macOS runners by architecture. `macos-latest` is arm64 and can
-          # change underneath us; running the x86_64 build on an arm64 runner
-          # also exposed GitHub runner rustup/cargo shim regressions before the
-          # Tauri build even reached our code.
+          # Pin the macOS runner to arm64. `macos-latest` is currently arm64
+          # but can change underneath us, so the target is set explicitly.
           - platform: macos-15
             args: "--target aarch64-apple-darwin"
             rust_target: aarch64-apple-darwin
-          - platform: macos-15-intel
-            args: "--target x86_64-apple-darwin"
-            rust_target: x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: "--bundles deb"
             rust_target: ""
@@ -136,7 +131,7 @@ jobs:
           elif [ "$RUNNER_OS" = "Windows" ]; then
             echo "triple=x86_64-pc-windows-msvc" >> "$GITHUB_OUTPUT"
           else
-            echo "triple=x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
+            echo "triple=aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Patch agent-bridge SDK
@@ -167,10 +162,10 @@ jobs:
             fi
             echo "::warning::tauri build attempt $attempt failed; cleaning up and retrying"
             if [ "$RUNNER_OS" = "macOS" ]; then
-              # bundle_dmg.sh's `hdiutil detach` intermittently times out on the
-              # macos-15-intel runner (DiskArbitration), leaving the DMG mounted
-              # at /Volumes/dmg.* and failing the bundle step. Force-detach any
-              # leftover mounts so the retry can proceed.
+              # bundle_dmg.sh's `hdiutil detach` can intermittently time out
+              # (DiskArbitration), leaving the DMG mounted at /Volumes/dmg.*
+              # and failing the bundle step. Force-detach any leftover mounts
+              # so the retry can proceed.
               hdiutil info | awk '
                 /^\/dev\/disk/ { disk=$1 }
                 /\/Volumes\/dmg\./ { print disk }

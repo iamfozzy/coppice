@@ -4,6 +4,7 @@ import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID } from "../lib/types";
 import { getDefaultSlashCommands } from "../lib/slashCommandDefaults";
 import { resolveDefaultSessionMode } from "../lib/defaultSessionMode";
 import * as commands from "../lib/commands";
+import { cacheSet } from "../lib/cache";
 import { playNotificationSound } from "../lib/sounds";
 import { isWindowFocused } from "../lib/windowFocus";
 import {
@@ -13,6 +14,22 @@ import {
 } from "@tauri-apps/plugin-notification";
 
 export type ClaudeStatus = "active" | "idle";
+
+// Cache keys shared with ChangesPanel — keep in sync with that component.
+function gitStatusKey(path: string) { return `git-status-${path}`; }
+function unpushedCountKey(path: string) { return `unpushed-count-${path}`; }
+function prFilesKey(path: string, baseBranch: string) { return `pr-files-${path}-${baseBranch}`; }
+function currentBranchKey(path: string) { return `current-branch-${path}`; }
+
+// Fire git IPC calls in the background and stash the results in the cache so
+// the first render after a worktree switch can hydrate immediately. Failures
+// are intentionally swallowed — the live polling effect will retry.
+function warmWorktreeGitData(path: string, baseBranch: string) {
+  commands.getCurrentBranch(path).then((b) => cacheSet(currentBranchKey(path), b)).catch(() => {});
+  commands.getGitStatus(path).then((s) => cacheSet(gitStatusKey(path), s)).catch(() => {});
+  commands.getUnpushedCount(path).then((c) => cacheSet(unpushedCountKey(path), c)).catch(() => {});
+  commands.getPrDiffFiles(path, baseBranch).then((f) => cacheSet(prFilesKey(path, baseBranch), f)).catch(() => {});
+}
 
 let _notifIdCounter = 0;
 
@@ -101,6 +118,18 @@ function readPersistedCliTabs(): PersistedCliTabs | null {
     return parsed;
   } catch {
     return null;
+  }
+}
+
+function restoreClaudeTerminalDomForClose(tabId: string) {
+  if (typeof document === "undefined") return;
+  const node = document.getElementById(`claude-term-${tabId}`);
+  const homeParent = document.getElementById("terminal-layer");
+  if (!node || !homeParent || node.parentElement === homeParent) return;
+  try {
+    homeParent.appendChild(node);
+  } catch {
+    // Best effort only — closeTab will still tear down backend resources.
   }
 }
 
@@ -425,6 +454,7 @@ interface AppState {
   newTerminalTab: (worktreeId: string) => void;
   newClaudeTab: (worktreeId: string) => void;
   setClaudeCliSessionId: (tabId: string, claudeSessionId: string) => void;
+  clearCliTabResumeOnLaunch: (tabId: string) => void;
   autoRenameClaudeTabFromPrompt: (tabId: string, prompt: string) => string | null;
   applyClaudeTabGeneratedTitle: (tabId: string, title: string, expectedCurrentLabel: string) => void;
   addAgentTab: (worktreeId: string, cwd: string, prompt?: string, model?: string, backend?: AgentBackend) => void;
@@ -611,9 +641,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     const scratchpadProject = allProjects.find((p) => p.id === SCRATCHPAD_PROJECT_ID) ?? null;
     const projects = allProjects.filter((p) => p.id !== SCRATCHPAD_PROJECT_ID);
     set({ projects, scratchpadProject });
-    for (const project of projects) {
-      get().loadWorktrees(project.id);
-    }
+    const wtLoads = projects.map((p) => get().loadWorktrees(p.id));
+    // After all worktrees load, pre-warm per-worktree git data so cross-project
+    // switches don't have to wait for cold `git` subprocesses on a worktree
+    // the user has never visited in this session.
+    Promise.allSettled(wtLoads).then(() => {
+      const s = get();
+      for (const project of projects) {
+        const projectBase = project.target_branch || project.base_branch || "main";
+        for (const wt of s.worktreesByProject[project.id] ?? []) {
+          warmWorktreeGitData(wt.path, wt.target_branch || projectBase);
+        }
+      }
+    }).catch(() => {});
     if (scratchpadProject) {
       const worktrees = await commands.listWorktrees(scratchpadProject.id);
       const scratchpadWorktree = worktrees.find((w) => w.id === SCRATCHPAD_WORKTREE_ID) ?? null;
@@ -1126,6 +1166,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const s = get();
     const tabs = s.tabsByWorktree[worktreeId] ?? [];
     const closedTab = tabs.find((t) => t.id === tabId);
+    if (closedTab?.type === "claude") {
+      restoreClaudeTerminalDomForClose(tabId);
+    }
     const next = tabs.filter((t) => t.id !== tabId);
     const activeTab = s.activeTabByWorktree[worktreeId];
     let newActive = activeTab;
@@ -1243,6 +1286,25 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
     }));
     persistCliTabsSnapshot(get());
+  },
+
+  clearCliTabResumeOnLaunch: (tabId) => {
+    const s = get();
+    const worktreeId = s.tabWorktreeIndex[tabId];
+    if (!worktreeId) return;
+    const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab?.resumeOnLaunch) return;
+    set((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [worktreeId]: (state.tabsByWorktree[worktreeId] ?? []).map((t) => {
+          if (t.id !== tabId) return t;
+          const { resumeOnLaunch: _resumeOnLaunch, ...rest } = t;
+          return rest;
+        }),
+      },
+    }));
   },
 
   autoRenameClaudeTabFromPrompt: (tabId, prompt) => {

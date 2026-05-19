@@ -209,6 +209,10 @@ fn write_claude_cli_session_files(app: &AppHandle, session_id: &str, cwd: &str, 
 
     if settings.claude_cli_fullscreen {
         session_settings["tui"] = json!("fullscreen");
+        // Claude Code's fullscreen renderer translates one wheel notch into a
+        // single arrow-key press by default, which feels slow. Match vim's
+        // multiplier so scrolling moves a few lines at a time.
+        session_settings["env"] = json!({ "CLAUDE_CODE_SCROLL_SPEED": "3" });
     }
 
     if settings.claude_cli_statusline_enabled {
@@ -946,4 +950,13 @@ pub fn terminal_kill(
     session_id: String,
 ) -> Result<(), String> {
     pty.kill(&session_id)
+}
+
+#[tauri::command]
+pub fn terminal_set_visible(
+    pty: State<'_, PtyManager>,
+    session_id: String,
+    visible: bool,
+) {
+    pty.set_visible(&session_id, visible);
 }

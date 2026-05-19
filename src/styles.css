@@ -321,6 +321,13 @@
   --color-error: #b91c1c;
 }
 
+/* Header/chrome surfaces — only override in light theme so the top bars
+   (sidebar, tile view, worktree header) sit visibly above the page bg.
+   Dark themes intentionally have no rule here so existing tokens win. */
+[data-theme="light"] .app-chrome {
+  background-color: #e0e0e6;
+}
+
 html,
 body,
 #root {
@@ -388,4 +395,16 @@ body,
 
 .animate-tool-spin {
   animation: tool-spin 0.6s ease-in-out infinite;
+}
+
+/* Claude CLI runs entirely in xterm's alt-screen buffer, so the
+   .xterm-viewport scrollbar gutter is never legitimate. Hide it — without
+   this, the gutter briefly appears after a parent reparent (tile open/
+   close) until the next layout pass re-aligns the viewport. */
+[data-kind="claude"] .xterm-viewport {
+  overflow-y: hidden !important;
+  scrollbar-width: none;
+}
+[data-kind="claude"] .xterm-viewport::-webkit-scrollbar {
+  display: none;
 }

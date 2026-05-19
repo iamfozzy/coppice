@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useAppStore, type RunnerStatus } from "../../stores/appStore";
 import { Tooltip } from "../ui/Tooltip";
 import * as commands from "../../lib/commands";
+import { TERMINAL_BEFORE_REPARENT, TERMINAL_AFTER_REPARENT } from "../Terminal/TerminalPanel";
 
 export const SidebarRunners = memo(function SidebarRunners() {
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
@@ -66,20 +67,31 @@ export const SidebarRunners = memo(function SidebarRunners() {
         const isOpen = runner?.open ?? false;
         const status = runner?.status ?? "idle";
 
+        const toggleHeader = () => {
+          if (!runner) {
+            expandRunner(wtId, key, command, worktree!.path);
+          } else {
+            toggleRunner(wtId, key);
+          }
+        };
+
         return (
           <div key={key} className="border-b border-border-primary">
             {/* Header */}
-            <div className="flex items-center justify-between px-3 h-7 bg-bg-tertiary">
-              <button
-                className="flex items-center gap-1.5 text-[length:var(--app-font-11)] text-text-secondary hover:text-text-primary transition-colors"
-                onClick={() => {
-                  if (!runner) {
-                    expandRunner(wtId, key, command, worktree!.path);
-                  } else {
-                    toggleRunner(wtId, key);
-                  }
-                }}
-              >
+            <div
+              role="button"
+              tabIndex={0}
+              className="flex items-center justify-between px-3 h-7 bg-bg-tertiary hover:bg-bg-hover transition-colors cursor-pointer select-none"
+              onClick={toggleHeader}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggleHeader();
+                }
+              }}
+            >
+              <div className="flex items-center gap-1.5 text-[length:var(--app-font-11)] text-text-secondary">
                 <svg
                   width="8"
                   height="8"
@@ -90,12 +102,15 @@ export const SidebarRunners = memo(function SidebarRunners() {
                 </svg>
                 {label}
                 <StatusDot status={status} />
-              </button>
+              </div>
               <div className="flex items-center gap-1">
                 {status !== "running" && (
                   <Tooltip text={`Run ${label.toLowerCase()}`} side="top" align="right">
                     <button
-                      onClick={() => openOrRestartRunner(wtId, key, command, worktree!.path)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openOrRestartRunner(wtId, key, command, worktree!.path);
+                      }}
                       className="px-1.5 py-0.5 text-[length:var(--app-font-10)] rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-active transition-colors"
                     >
                       {label}
@@ -105,7 +120,8 @@ export const SidebarRunners = memo(function SidebarRunners() {
                 {runner && status === "running" && (
                   <Tooltip text={`Stop ${label.toLowerCase()}`} side="top" align="right">
                     <button
-                      onClick={async () => {
+                      onClick={async (e) => {
+                        e.stopPropagation();
                         await commands.terminalKill(runner.id).catch(() => {});
                         setRunnerStatus(wtId, key, "stopped");
                       }}
@@ -140,45 +156,64 @@ function RunnerSlot({ runnerId, expanded }: { runnerId: string | null; expanded:
   const currentChildId = useRef<string | null>(null);
 
   useEffect(() => {
-    try {
-      const slot = slotRef.current;
-      if (!slot) return;
-      const pool = document.getElementById("runner-terminal-pool");
-      if (!pool) return;
+    // Defer reparenting to the next frame so a worktree/project switch
+    // doesn't pay the DOM-move cost on the click frame. Across projects
+    // the runner set typically changes, so this fires every cross-project
+    // switch even when nothing visible has changed yet.
+    const rafId = requestAnimationFrame(() => {
+      try {
+        const slot = slotRef.current;
+        if (!slot) return;
+        const pool = document.getElementById("runner-terminal-pool");
+        if (!pool) return;
 
-      // Return previous child to pool (if it still exists in the DOM)
-      if (currentChildId.current && currentChildId.current !== runnerId) {
-        const prev = document.getElementById(`runner-term-${currentChildId.current}`);
-        if (prev && prev.parentElement === slot) {
-          try { pool.appendChild(prev); } catch { /* node may have been removed by React */ }
+        // Return previous child to pool (if it still exists in the DOM).
+        // Bracket every move with before/after-reparent events so
+        // TerminalPanel can recycle its WebGL addon — WebKit drops the
+        // canvas's GL context when the ancestor chain changes, leaving
+        // it stuck on a dead context (visually blank) without this.
+        if (currentChildId.current && currentChildId.current !== runnerId) {
+          const prev = document.getElementById(`runner-term-${currentChildId.current}`);
+          if (prev && prev.parentElement === slot) {
+            try {
+              prev.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
+              pool.appendChild(prev);
+              prev.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));
+            } catch { /* node may have been removed by React */ }
+          }
+          currentChildId.current = null;
         }
-        currentChildId.current = null;
-      }
 
-      // Move new child into slot — wait a frame for React to render the new terminal
-      if (runnerId && expanded) {
-        requestAnimationFrame(() => {
+        // Move new child into slot
+        if (runnerId && expanded) {
           const termNode = document.getElementById(`runner-term-${runnerId}`);
           if (termNode && slot.isConnected) {
             try {
+              termNode.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
               slot.appendChild(termNode);
+              termNode.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));
               currentChildId.current = runnerId;
             } catch { /* ignore */ }
           }
-        });
-      }
-
-      // If collapsed, return child to pool
-      if (!expanded && currentChildId.current) {
-        const child = document.getElementById(`runner-term-${currentChildId.current}`);
-        if (child && child.parentElement === slot) {
-          try { pool.appendChild(child); } catch { /* ignore */ }
         }
-        currentChildId.current = null;
+
+        // If collapsed, return child to pool
+        if (!expanded && currentChildId.current) {
+          const child = document.getElementById(`runner-term-${currentChildId.current}`);
+          if (child && child.parentElement === slot) {
+            try {
+              child.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
+              pool.appendChild(child);
+              child.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));
+            } catch { /* ignore */ }
+          }
+          currentChildId.current = null;
+        }
+      } catch {
+        // Defensive: never crash on DOM reparenting
       }
-    } catch {
-      // Defensive: never crash on DOM reparenting
-    }
+    });
+    return () => cancelAnimationFrame(rafId);
   }, [runnerId, expanded]);
 
   // Cleanup: return child to pool on unmount
@@ -189,7 +224,9 @@ function RunnerSlot({ runnerId, expanded }: { runnerId: string | null; expanded:
         if (pool && currentChildId.current) {
           const child = document.getElementById(`runner-term-${currentChildId.current}`);
           if (child && child.parentElement !== pool) {
+            child.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
             pool.appendChild(child);
+            child.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));
           }
         }
       } catch { /* ignore */ }
