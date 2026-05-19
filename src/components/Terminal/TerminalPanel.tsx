@@ -304,6 +304,11 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       // requests a fg/bg combo with worse contrast (e.g. Claude CLI tool-call
       // panels painting ANSI white bg over its default light foreground).
       minimumContrastRatio: 4.5,
+      // OSC 8 hyperlinks (Claude CLI emits these around clickable references).
+      // Without this xterm's default does nothing on click.
+      linkHandler: {
+        activate: (_event, uri) => { shellOpen(uri); },
+      },
     });
 
     // Unicode support — critical for Claude Code's UI which uses
@@ -314,9 +319,14 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.loadAddon(new WebLinksAddon((_event, uri) => {
-      shellOpen(uri);
-    }));
+    // Plain-text URL detection (regex). Skip on Claude tabs — Claude wraps
+    // its clickable references in OSC 8, which the linkHandler above already
+    // covers. Loading both providers makes every Claude link open twice.
+    if (!isClaude) {
+      term.loadAddon(new WebLinksAddon((_event, uri) => {
+        shellOpen(uri);
+      }));
+    }
 
     termInstanceRef.current = term;
 
