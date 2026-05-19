@@ -138,6 +138,7 @@ export const SidebarRunners = memo(function SidebarRunners() {
             <RunnerSlot
               runnerId={runner?.id ?? null}
               expanded={isOpen}
+              hasTerminal={status !== "idle"}
             />
           </div>
         );
@@ -151,21 +152,44 @@ export const SidebarRunners = memo(function SidebarRunners() {
  * and places it here when expanded. Returns it to the pool when collapsed
  * or when a different runner ID is shown.
  */
-function RunnerSlot({ runnerId, expanded }: { runnerId: string | null; expanded: boolean }) {
+function RunnerSlot({ runnerId, expanded, hasTerminal }: { runnerId: string | null; expanded: boolean; hasTerminal: boolean }) {
   const slotRef = useRef<HTMLDivElement>(null);
   const currentChildId = useRef<string | null>(null);
 
   useEffect(() => {
-    // Defer reparenting to the next frame so a worktree/project switch
-    // doesn't pay the DOM-move cost on the click frame. Across projects
-    // the runner set typically changes, so this fires every cross-project
-    // switch even when nothing visible has changed yet.
-    const rafId = requestAnimationFrame(() => {
+    let rafId: number | null = null;
+    let attempts = 0;
+    let cancelled = false;
+
+    const moveWithReparentEvents = (node: HTMLElement, parent: HTMLElement) => {
+      if (node.parentElement === parent) return;
+      node.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
+      parent.appendChild(node);
+      node.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));
+    };
+
+    const schedule = () => {
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        run();
+      });
+    };
+
+    const retryIfNeeded = () => {
+      if (cancelled || !runnerId || !expanded || !hasTerminal || attempts >= 10) return;
+      attempts += 1;
+      schedule();
+    };
+
+    const run = () => {
       try {
         const slot = slotRef.current;
         if (!slot) return;
         const pool = document.getElementById("runner-terminal-pool");
-        if (!pool) return;
+        if (!pool) {
+          retryIfNeeded();
+          return;
+        }
 
         // Return previous child to pool (if it still exists in the DOM).
         // Bracket every move with before/after-reparent events so
@@ -176,45 +200,58 @@ function RunnerSlot({ runnerId, expanded }: { runnerId: string | null; expanded:
           const prev = document.getElementById(`runner-term-${currentChildId.current}`);
           if (prev && prev.parentElement === slot) {
             try {
-              prev.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
-              pool.appendChild(prev);
-              prev.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));
+              moveWithReparentEvents(prev, pool);
             } catch { /* node may have been removed by React */ }
           }
           currentChildId.current = null;
         }
 
-        // Move new child into slot
-        if (runnerId && expanded) {
-          const termNode = document.getElementById(`runner-term-${runnerId}`);
-          if (termNode && slot.isConnected) {
-            try {
-              termNode.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
-              slot.appendChild(termNode);
-              termNode.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));
-              currentChildId.current = runnerId;
-            } catch { /* ignore */ }
+        // If collapsed, idle, or no runner is selected, return any child to the pool.
+        // Idle runners deliberately do not exist in the hidden terminal pool yet.
+        if (!expanded || !runnerId || !hasTerminal) {
+          if (currentChildId.current) {
+            const child = document.getElementById(`runner-term-${currentChildId.current}`);
+            if (child && child.parentElement === slot) {
+              try {
+                moveWithReparentEvents(child, pool);
+              } catch { /* ignore */ }
+            }
+            currentChildId.current = null;
           }
+          return;
         }
 
-        // If collapsed, return child to pool
-        if (!expanded && currentChildId.current) {
-          const child = document.getElementById(`runner-term-${currentChildId.current}`);
-          if (child && child.parentElement === slot) {
-            try {
-              child.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
-              pool.appendChild(child);
-              child.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));
-            } catch { /* ignore */ }
-          }
-          currentChildId.current = null;
+        // Move the active terminal into the visible slot. If the user expanded
+        // the idle panel first, the runner keeps the same ID when it starts;
+        // hasTerminal flips from false to true and this effect runs again.
+        const termNode = document.getElementById(`runner-term-${runnerId}`);
+        if (termNode && slot.isConnected) {
+          try {
+            moveWithReparentEvents(termNode, slot);
+            currentChildId.current = runnerId;
+          } catch { /* ignore */ }
+          return;
         }
+
+        // Be defensive around React committing the hidden-pool node a frame
+        // later than this sidebar effect. Without this, a one-frame miss leaves
+        // the panel blank until the user collapses/reopens it.
+        retryIfNeeded();
       } catch {
         // Defensive: never crash on DOM reparenting
       }
-    });
-    return () => cancelAnimationFrame(rafId);
-  }, [runnerId, expanded]);
+    };
+
+    // Defer reparenting to the next frame so a worktree/project switch
+    // doesn't pay the DOM-move cost on the click frame. Across projects
+    // the runner set typically changes, so this fires every cross-project
+    // switch even when nothing visible has changed yet.
+    schedule();
+    return () => {
+      cancelled = true;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [runnerId, expanded, hasTerminal]);
 
   // Cleanup: return child to pool on unmount
   useEffect(() => {
@@ -237,7 +274,7 @@ function RunnerSlot({ runnerId, expanded }: { runnerId: string | null; expanded:
     <div
       ref={slotRef}
       style={{
-        height: expanded && runnerId ? 150 : 0,
+        height: expanded && runnerId && hasTerminal ? 150 : 0,
         overflow: "hidden",
         position: "relative",
       }}
