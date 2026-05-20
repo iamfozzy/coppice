@@ -8,9 +8,13 @@
     "core:event:default",
     "core:window:allow-set-decorations",
     "core:window:allow-set-badge-count",
+    "core:window:allow-destroy",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
     "shell:allow-open",
     "dialog:default",
     "notification:default",
+    "notification:allow-register-listener",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text"
   ]

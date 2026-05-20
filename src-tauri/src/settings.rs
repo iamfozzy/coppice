@@ -64,6 +64,14 @@ pub struct McpServerEntry {
     pub catalog_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CustomTerminalTab {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub icon: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -80,6 +88,7 @@ pub struct AppSettings {
     pub window_decorations: bool,
     pub notification_sound: bool,
     pub notification_popup: bool,
+    pub custom_terminal_tabs: Vec<CustomTerminalTab>,
     pub default_claude_mode: String,
     pub claude_cli_statusline_enabled: bool,
     pub claude_cli_statusline_git: bool,
@@ -129,6 +138,7 @@ impl Default for AppSettings {
             window_decorations: true,
             notification_sound: true,
             notification_popup: true,
+            custom_terminal_tabs: Vec::new(),
             default_claude_mode: "claude".to_string(),
             claude_cli_statusline_enabled: true,
             claude_cli_statusline_git: true,

@@ -5,6 +5,18 @@ import { Tooltip } from "../ui/Tooltip";
 import * as commands from "../../lib/commands";
 import { TERMINAL_BEFORE_REPARENT, TERMINAL_AFTER_REPARENT } from "../Terminal/TerminalPanel";
 
+let runnerReparentEndTimer: number | null = null;
+
+function markRunnerReparenting() {
+  document.body.dataset.resizingRunner = "1";
+  if (runnerReparentEndTimer !== null) window.clearTimeout(runnerReparentEndTimer);
+  runnerReparentEndTimer = window.setTimeout(() => {
+    runnerReparentEndTimer = null;
+    delete document.body.dataset.resizingRunner;
+    window.dispatchEvent(new CustomEvent("runner-reparent-end"));
+  }, 80);
+}
+
 export const SidebarRunners = memo(function SidebarRunners() {
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
   const selectedWorktreeId = useAppStore((s) => s.selectedWorktreeId);
@@ -163,6 +175,7 @@ function RunnerSlot({ runnerId, expanded, hasTerminal }: { runnerId: string | nu
 
     const moveWithReparentEvents = (node: HTMLElement, parent: HTMLElement) => {
       if (node.parentElement === parent) return;
+      markRunnerReparenting();
       node.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
       parent.appendChild(node);
       node.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));
@@ -261,6 +274,7 @@ function RunnerSlot({ runnerId, expanded, hasTerminal }: { runnerId: string | nu
         if (pool && currentChildId.current) {
           const child = document.getElementById(`runner-term-${currentChildId.current}`);
           if (child && child.parentElement !== pool) {
+            markRunnerReparenting();
             child.dispatchEvent(new CustomEvent(TERMINAL_BEFORE_REPARENT));
             pool.appendChild(child);
             child.dispatchEvent(new CustomEvent(TERMINAL_AFTER_REPARENT));

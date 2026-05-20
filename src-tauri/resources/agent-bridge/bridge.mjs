@@ -492,13 +492,14 @@ function buildCoppiceTools() {
     ),
     tool(
       "coppice_runner_status",
-      "Check whether a configured Coppice sidepanel runner is available and currently running.",
+      "Check whether a configured Coppice sidepanel runner is available and currently running. Returns recent terminal output from the runner panel.",
       {
         runner: z.enum(["setup", "build", "run"]).describe("Runner to inspect"),
         project_id: z.string().optional().describe("Target project ID"),
         project_name: z.string().optional().describe("Target project name"),
         worktree_id: z.string().optional().describe("Target worktree ID"),
         worktree_name: z.string().optional().describe("Target worktree name or branch"),
+        max_output_chars: z.number().int().min(0).max(200000).optional().describe("Maximum recent output characters to return (default 60000)"),
       },
       async (args) => callCoppice("runner_status", args),
       { annotations: { readOnlyHint: true }, alwaysLoad: true },

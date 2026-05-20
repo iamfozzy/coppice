@@ -184,7 +184,7 @@ export function ToolCallCard({ toolName, toolInput, toolOutput, isError, isActiv
             <ToolOutputSection
               output={toolOutput}
               isError={isError}
-              defaultExpanded={!richContent || !!isError}
+              defaultExpanded={!!isError || (!richContent && !isSubagent)}
               renderAsMarkdown={normalized === "Subagent" || normalized === "Agent"}
               worktreePath={worktreePath}
             />

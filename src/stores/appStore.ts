@@ -122,7 +122,11 @@ function persistCliTabsSnapshot(state: Pick<AppState, "tabsByWorktree" | "active
       .map((tab) => {
         // resumeOnLaunch is intentionally transient: it means "this tab was
         // restored from a previous app run" and should be recomputed on load.
-        const { resumeOnLaunch: _resumeOnLaunch, ...persisted } = tab;
+        const {
+          resumeOnLaunch: _resumeOnLaunch,
+          initialCommand: _initialCommand,
+          ...persisted
+        } = tab;
         return persisted;
       });
     if (cliTabs.length > 0) tabsByWorktree[worktreeId] = cliTabs;
@@ -309,6 +313,8 @@ export interface TabInfo {
   claudeFirstPromptTitleSet?: boolean;
   /** Transient: true only for CLI tabs restored after app launch. */
   resumeOnLaunch?: boolean;
+  /** Transient initial command to write into an interactive terminal after spawn. */
+  initialCommand?: string;
   // For diff tabs
   diffFile?: string;
   diffMode?: "uncommitted" | "pr";
@@ -465,6 +471,8 @@ interface AppState {
   cycleTab: (worktreeId: string, direction: 1 | -1) => void;
   closeActiveTab: (worktreeId: string) => void;
   newTerminalTab: (worktreeId: string) => void;
+  newCustomTerminalTab: (worktreeId: string, presetId: string) => void;
+  clearTerminalInitialCommand: (tabId: string) => void;
   newClaudeTab: (worktreeId: string) => void;
   setClaudeCliSessionId: (tabId: string, claudeSessionId: string) => void;
   clearCliTabResumeOnLaunch: (tabId: string) => void;
@@ -1272,6 +1280,64 @@ export const useAppStore = create<AppState>((set, get) => ({
     const path = get().getWorktreePath(worktreeId);
     if (!path) return;
     get().addTab(worktreeId, "terminal", path);
+  },
+
+  newCustomTerminalTab: (worktreeId, presetId) => {
+    const s = get();
+    const path = s.getWorktreePath(worktreeId);
+    if (!path) return;
+    const preset = (s.appSettings?.custom_terminal_tabs ?? []).find((tab) => tab.id === presetId);
+    if (!preset || !preset.command.trim()) return;
+
+    const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    const labelBase = preset.name.trim() || "Terminal";
+    let label = labelBase;
+    let suffix = 2;
+    const existingLabels = new Set(tabs.map((tab) => tab.label));
+    while (existingLabels.has(label)) {
+      label = `${labelBase} #${suffix}`;
+      suffix += 1;
+    }
+
+    const tab: TabInfo = {
+      id: `terminal-${worktreeId}-${Date.now()}`,
+      type: "terminal",
+      label,
+      cwd: path,
+      initialCommand: preset.command.trim(),
+    };
+    set((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [worktreeId]: [...(state.tabsByWorktree[worktreeId] ?? []), tab],
+      },
+      activeTabByWorktree: {
+        ...state.activeTabByWorktree,
+        [worktreeId]: tab.id,
+      },
+      tabWorktreeIndex: { ...state.tabWorktreeIndex, [tab.id]: worktreeId },
+    }));
+    persistCliTabsSnapshot(get());
+  },
+
+  clearTerminalInitialCommand: (tabId) => {
+    const s = get();
+    const worktreeId = s.tabWorktreeIndex[tabId];
+    if (!worktreeId) return;
+    const tabs = s.tabsByWorktree[worktreeId] ?? [];
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab?.initialCommand) return;
+    set((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [worktreeId]: (state.tabsByWorktree[worktreeId] ?? []).map((t) => {
+          if (t.id !== tabId) return t;
+          const { initialCommand: _initialCommand, ...rest } = t;
+          return rest;
+        }),
+      },
+    }));
+    persistCliTabsSnapshot(get());
   },
 
   newClaudeTab: (worktreeId) => {

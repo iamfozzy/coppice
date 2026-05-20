@@ -5,7 +5,8 @@ import { FileViewer } from "../FileViewer/FileViewer";
 import { Tooltip } from "../ui/Tooltip";
 import { useAgentTabCloseConfirmation } from "../ui/useAgentTabCloseConfirmation";
 import * as commands from "../../lib/commands";
-import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID, type AppSettings } from "../../lib/types";
+import { SCRATCHPAD_PROJECT_ID, SCRATCHPAD_WORKTREE_ID, type AppSettings, type CustomTerminalTab } from "../../lib/types";
+import { TerminalPresetIcon } from "../ui/TerminalPresetIcon";
 import { getDefaultSessionModeLabel, resolveDefaultSessionMode } from "../../lib/defaultSessionMode";
 import { useWindowFocused } from "../../lib/windowFocus";
 
@@ -20,6 +21,7 @@ export function WorktreeView() {
   const addTab = useAppStore((s) => s.addTab);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const newTerminalTab = useAppStore((s) => s.newTerminalTab);
+  const newCustomTerminalTab = useAppStore((s) => s.newCustomTerminalTab);
   const newClaudeTab = useAppStore((s) => s.newClaudeTab);
   const newAgentTab = useAppStore((s) => s.newAgentTab);
   const newDefaultSessionTab = useAppStore((s) => s.newDefaultSessionTab);
@@ -171,6 +173,8 @@ export function WorktreeView() {
           onClaudeSdk={() => newAgentTab(wtId, "claude")}
           onPiAgent={() => newAgentTab(wtId, "pi")}
           onTerminal={() => newTerminalTab(wtId)}
+          customTerminalTabs={appSettings?.custom_terminal_tabs ?? []}
+          onCustomTerminal={(presetId) => newCustomTerminalTab(wtId, presetId)}
         />
         <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden">
           {tabs.map((tab) => (
@@ -244,6 +248,8 @@ function NewTabButton({
   onClaudeSdk,
   onPiAgent,
   onTerminal,
+  customTerminalTabs,
+  onCustomTerminal,
 }: {
   defaultLabel: string;
   onDefault: () => void;
@@ -251,6 +257,8 @@ function NewTabButton({
   onClaudeSdk: () => void;
   onPiAgent: () => void;
   onTerminal: () => void;
+  customTerminalTabs: CustomTerminalTab[];
+  onCustomTerminal: (presetId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -308,6 +316,21 @@ function NewTabButton({
           <NewTabMenuItem icon="pi" label="New Pi Agent" hint="Agent tab using Pi providers" onClick={() => runAndClose(onPiAgent)} />
           <div className="my-1.5 h-px bg-border-primary/80" />
           <NewTabMenuItem icon="terminal" label="New Terminal Tab" hint="Plain shell session" onClick={() => runAndClose(onTerminal)} />
+          {customTerminalTabs.length > 0 && (
+            <>
+              <div className="my-1.5 h-px bg-border-primary/80" />
+              {customTerminalTabs.map((preset) => (
+                <NewTabMenuItem
+                  key={preset.id}
+                  icon="custom"
+                  customIcon={preset.icon}
+                  label={preset.name}
+                  hint={preset.command}
+                  onClick={() => runAndClose(() => onCustomTerminal(preset.id))}
+                />
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -316,11 +339,13 @@ function NewTabButton({
 
 function NewTabMenuItem({
   icon,
+  customIcon,
   label,
   hint,
   onClick,
 }: {
-  icon: "claudeCli" | "claudeSdk" | "pi" | "terminal";
+  icon: "claudeCli" | "claudeSdk" | "pi" | "terminal" | "custom";
+  customIcon?: string;
   label: string;
   hint: string;
   onClick: () => void;
@@ -331,6 +356,8 @@ function NewTabMenuItem({
     ? "text-orange-300 bg-orange-500/10 border-orange-400/20 group-hover:bg-orange-500/20"
     : icon === "claudeCli"
     ? "text-accent bg-accent/10 border-accent/20 group-hover:bg-accent/20"
+    : icon === "custom"
+    ? "text-green-300 bg-green-500/10 border-green-400/20 group-hover:bg-green-500/20"
     : "text-text-tertiary bg-bg-tertiary border-border-primary group-hover:text-text-secondary";
 
   return (
@@ -341,7 +368,7 @@ function NewTabMenuItem({
       role="menuitem"
     >
       <span className={`w-7 h-7 flex items-center justify-center rounded-lg border shrink-0 transition-colors ${toneClass}`}>
-        <NewTabMenuIcon icon={icon} />
+        {icon === "custom" ? <TerminalPresetIcon icon={customIcon} /> : <NewTabMenuIcon icon={icon} />}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block text-xs font-medium text-text-primary truncate">{label}</span>
