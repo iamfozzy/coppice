@@ -78,6 +78,25 @@ function isDefaultClaudeLabel(label: string) {
   return /^Claude #(\d+)$/.test(label);
 }
 
+function isAgentBackend(value: unknown): value is AgentBackend {
+  return value === "claude" || value === "pi";
+}
+
+function fallbackAgentBackend(settings: AppSettings | null): AgentBackend {
+  const backend = settings?.agent_backend;
+  return isAgentBackend(backend) ? backend : "claude";
+}
+
+function parseJsonOr<T>(value: string | null | undefined, fallback: T, label: string, tabId: string): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch (err) {
+    console.warn(`Failed to parse ${label} for cached agent tab ${tabId}:`, err);
+    return fallback;
+  }
+}
+
 function titleFromPrompt(prompt: string) {
   const cleaned = prompt
     .trim()
@@ -195,9 +214,6 @@ function persistAgentTabDebounced(tabId: string, immediate = false) {
     }
     if (!worktreeId || !tabInfo || tabInfo.type !== "agent") return;
 
-    // Don't persist tabs that have never been used (no messages, no SDK session)
-    if (session.messages.length === 0 && !session.sdkSessionId) return;
-
     const cache: commands.AgentTabCache = {
       tab_id: tabInfo.id,
       worktree_id: worktreeId,
@@ -249,9 +265,6 @@ export async function flushAllAgentTabCaches(): Promise<void> {
       if (tab.type !== "agent") continue;
       const session = s.agentSessionByTab[tab.id];
       if (!session) continue;
-      // Don't persist tabs that have never been used
-      if (session.messages.length === 0 && !session.sdkSessionId) continue;
-
       const cache: commands.AgentTabCache = {
         tab_id: tab.id,
         worktree_id: worktreeId,
@@ -698,11 +711,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (nextClaudeStatus) {
         set({ claudeStatusByTab: nextClaudeStatus });
       }
-      // Restore cached agent tabs (but don't auto-create new ones).
-      const tabs = s.tabsByWorktree[id];
-      if (!tabs || tabs.length === 0) {
-        get().restoreAgentTabs(id);
-      }
+      // Restore cached agent tabs (but don't auto-create new ones). This is
+      // idempotent and must run even when restored terminal/CLI tabs already exist.
+      get().restoreAgentTabs(id);
     }
   },
   selectScratchpad: () => {
@@ -712,10 +723,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         selectedProjectId: SCRATCHPAD_PROJECT_ID,
         selectedWorktreeId: SCRATCHPAD_WORKTREE_ID,
       });
-      const tabs = s.tabsByWorktree[SCRATCHPAD_WORKTREE_ID];
-      if (!tabs || tabs.length === 0) {
-        get().restoreAgentTabs(SCRATCHPAD_WORKTREE_ID);
-      }
+      get().restoreAgentTabs(SCRATCHPAD_WORKTREE_ID);
     }
   },
 
@@ -981,32 +989,33 @@ export const useAppStore = create<AppState>((set, get) => ({
         return;
       }
 
-      // Race guard: skip if tabs were already created while we were loading
-      if (get().tabsByWorktree[worktreeId]?.length) {
-        return;
-      }
-
+      const existingIds = new Set((get().tabsByWorktree[worktreeId] ?? []).map((tab) => tab.id));
       const restoredTabs: TabInfo[] = [];
       const restoredSessions: Record<string, AgentSessionState> = {};
       for (const cached of cachedTabs) {
+        if (existingIds.has(cached.tab_id)) continue;
+
+        const parsedMessages = parseJsonOr<AgentMessage[]>(cached.messages_json, [], "messages_json", cached.tab_id);
+        const messages = Array.isArray(parsedMessages) ? parsedMessages : [];
+        const cost = parseJsonOr<AgentCost | null>(cached.cost_json, null, "cost_json", cached.tab_id);
+        const lastTurnCost = parseJsonOr<TokenUsage | null>(cached.last_turn_cost_json, null, "last_turn_cost_json", cached.tab_id);
+
+        // Coerce in-flight statuses to "done" — the agent process isn't running after restart.
+        // Preserve "idle" so never-started tabs come back as editable empty sessions.
+        const status = cached.status === "idle" || cached.status === "done" || cached.status === "error"
+          ? cached.status as AgentStatus
+          : "done";
+
+        const configuredBackend = fallbackAgentBackend(get().appSettings);
+        const backend = isAgentBackend(cached.backend) ? cached.backend : configuredBackend;
         const tab: TabInfo = {
           id: cached.tab_id,
           type: "agent",
           label: cached.label,
           cwd: cached.cwd,
-          // command is intentionally omitted — restored tabs should NOT auto-start
+          // command is intentionally omitted — restored tabs should NOT auto-start.
         };
         restoredTabs.push(tab);
-
-        const messages: AgentMessage[] = JSON.parse(cached.messages_json);
-        const cost = cached.cost_json ? JSON.parse(cached.cost_json) : null;
-
-        // Coerce transient statuses to "done" — the agent process isn't running after restart
-        const status = cached.status === "done" || cached.status === "error"
-          ? cached.status as AgentStatus
-          : "done";
-
-        const backend = (cached.backend || get().appSettings?.agent_backend || "claude") as AgentBackend;
         restoredSessions[cached.tab_id] = {
           messages,
           status,
@@ -1022,7 +1031,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           chatMode: cached.chat_mode ?? false,
           permissionMode: cached.permission_mode as AgentPermissionMode,
           cost,
-          lastTurnCost: cached.last_turn_cost_json ? JSON.parse(cached.last_turn_cost_json) : null,
+          lastTurnCost,
           queryOutputTokens: 0,
           sdkContextWindow: cached.sdk_context_window ?? null,
           sdkSessionId: cached.sdk_session_id,
@@ -1036,28 +1045,37 @@ export const useAppStore = create<AppState>((set, get) => ({
         };
       }
 
-      // Only set if the worktree still has no tabs (race guard)
-      if (get().tabsByWorktree[worktreeId]?.length) {
+      if (restoredTabs.length === 0) {
         return;
       }
 
       set((s) => {
+        const existingTabs = s.tabsByWorktree[worktreeId] ?? [];
+        const idsAtSetTime = new Set(existingTabs.map((tab) => tab.id));
+        const tabsToAdd = restoredTabs.filter((tab) => !idsAtSetTime.has(tab.id));
+        if (tabsToAdd.length === 0) return {};
+
+        const nextTabs = [...existingTabs, ...tabsToAdd];
+        const activeId = s.activeTabByWorktree[worktreeId];
+        const activeStillExists = !!activeId && nextTabs.some((tab) => tab.id === activeId);
         const nextIndex = { ...s.tabWorktreeIndex };
-        for (const tab of restoredTabs) nextIndex[tab.id] = worktreeId;
+        const nextSessions = { ...s.agentSessionByTab };
+        for (const tab of tabsToAdd) {
+          nextIndex[tab.id] = worktreeId;
+          nextSessions[tab.id] = restoredSessions[tab.id];
+        }
+
         return {
           tabsByWorktree: {
             ...s.tabsByWorktree,
-            [worktreeId]: restoredTabs,
+            [worktreeId]: nextTabs,
           },
           activeTabByWorktree: {
             ...s.activeTabByWorktree,
-            [worktreeId]: restoredTabs[restoredTabs.length - 1]?.id ?? null,
+            [worktreeId]: activeStillExists ? activeId : tabsToAdd[tabsToAdd.length - 1]?.id ?? null,
           },
           tabWorktreeIndex: nextIndex,
-          agentSessionByTab: {
-            ...s.agentSessionByTab,
-            ...restoredSessions,
-          },
+          agentSessionByTab: nextSessions,
         };
       });
     } catch (err) {
@@ -1420,6 +1438,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         [tab.id]: sessionState,
       },
     }));
+    persistAgentTabDebounced(tab.id, true);
   },
 
   newAgentTab: (worktreeId, backend) => {
@@ -1640,6 +1659,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   setAgentModel: (tabId, model) => {
@@ -1653,6 +1673,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   setAgentEffort: (tabId, effort) => {
@@ -1666,6 +1687,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   setAgentExtendedContext: (tabId, enabled) => {
@@ -1679,6 +1701,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   setAgentConciseMode: (tabId, enabled) => {
@@ -1692,6 +1715,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   setAgentChatMode: (tabId, enabled) => {
@@ -1705,6 +1729,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   setAgentPermissionMode: (tabId, mode) => {
@@ -1718,6 +1743,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   replaceAgentCost: (tabId, cost) => {
@@ -1745,6 +1771,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   accumulateQueryOutput: (tabId, outputTokens) => {
@@ -1784,6 +1811,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    persistAgentTabDebounced(tabId);
   },
 
   setAgentSdkSessionId: (tabId, id) => {

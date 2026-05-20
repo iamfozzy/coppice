@@ -344,16 +344,32 @@ function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  // Flush all agent tab caches to the DB before the window unloads, so that
-  // conversations can be restored on the next launch.
-  // We intentionally use the browser `beforeunload` event instead of Tauri's
-  // `onCloseRequested`, because onCloseRequested wraps each listener with its
-  // own `await handler(); window.destroy()` — registering multiple handlers
-  // causes double-destroy and blocks the window from closing.
+  // Flush all agent tab caches to the DB before the window closes, so that
+  // conversations can be restored on the next launch. `beforeunload` alone is
+  // fire-and-forget in a Tauri webview, so intercept the close request, await
+  // the SQLite writes, then destroy the window ourselves.
   useEffect(() => {
-    const handler = () => { flushAllAgentTabCaches().catch(() => {}); };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
+    const appWindow = getCurrentWindow();
+    let closing = false;
+    const unlistenClose = appWindow.onCloseRequested(async (event) => {
+      if (closing) return;
+      event.preventDefault();
+      closing = true;
+      try {
+        await flushAllAgentTabCaches();
+      } finally {
+        await appWindow.destroy().catch(() => {});
+      }
+    });
+
+    const beforeUnloadHandler = () => {
+      if (!closing) flushAllAgentTabCaches().catch(() => {});
+    };
+    window.addEventListener("beforeunload", beforeUnloadHandler);
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnloadHandler);
+      unlistenClose.then((fn) => fn()).catch(() => {});
+    };
   }, []);
 
   // Refresh project/worktree data when the Rust backend signals a change
