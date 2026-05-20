@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../../stores/appStore";
-import type { AppSettings, McpServerEntry, ThemeMode, DefaultSessionMode } from "../../lib/types";
+import type { AppSettings, McpServerEntry, ThemeMode, DefaultSessionMode, CustomTerminalTab } from "../../lib/types";
 import { SUPPORTED_MODELS } from "../../lib/supportedModels";
 import { GitHubAuthSection } from "./GitHubAuthSection";
 import { normalizeAppFontSize } from "../../lib/fontScale";
 import { resolveDefaultSessionMode } from "../../lib/defaultSessionMode";
 import { THEME_OPTIONS } from "../../lib/theme";
+import { TERMINAL_PRESET_ICONS, TerminalPresetIcon, normalizeTerminalPresetIcon } from "../ui/TerminalPresetIcon";
 import {
   piGetModels,
   piOAuthLogin,
@@ -52,6 +53,7 @@ const defaultSettings: AppSettings = {
   window_decorations: true,
   notification_sound: true,
   notification_popup: true,
+  custom_terminal_tabs: [],
   default_claude_mode: "claude",
   claude_cli_statusline_enabled: true,
   claude_cli_statusline_git: true,
@@ -91,7 +93,10 @@ export function AppSettingsModal() {
 
   useEffect(() => {
     if (appSettings) {
-      setForm({ ...appSettings });
+      setForm({
+        ...appSettings,
+        custom_terminal_tabs: appSettings.custom_terminal_tabs ?? [],
+      });
     }
   }, [appSettings]);
 
@@ -109,8 +114,10 @@ export function AppSettingsModal() {
     setSaving(true);
     try {
       const mode = resolveDefaultSessionMode(form);
+      const customTerminalTabs = sanitizeCustomTerminalTabs(form.custom_terminal_tabs);
       await saveSettings({
         ...form,
+        custom_terminal_tabs: customTerminalTabs,
         default_claude_mode: mode,
         ...(mode === "terminal" ? {} : { agent_backend: mode }),
         app_font_size: normalizeAppFontSize(form.app_font_size),
@@ -198,6 +205,12 @@ export function AppSettingsModal() {
             onChange={(terminal_compact_prompt) => setForm({ ...form, terminal_compact_prompt })}
             hint="Shortens new plain terminal prompts so long worktree paths don't fill the command line."
           />
+
+          <TerminalPresetsEditor
+            presets={form.custom_terminal_tabs ?? []}
+            onChange={(custom_terminal_tabs) => setForm({ ...form, custom_terminal_tabs })}
+          />
+
           <ThemeDropdown
             label="Theme"
             value={form.theme}
@@ -250,27 +263,34 @@ export function AppSettingsModal() {
               </p>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="block text-xs text-text-secondary">Configure</label>
-              <div className="flex border-b border-border-primary">
+            <div className="space-y-2">
+              <label className="block text-xs text-text-secondary">Configure agents</label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {([
-                  ["cli", "Claude CLI"],
-                  ["claude", "Claude SDK"],
-                  ["pi", "Pi Agent"],
-                ] as const).map(([tab, label]) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setAgentConfigTab(tab)}
-                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                      agentConfigTab === tab
-                        ? "border-accent text-text-primary"
-                        : "border-transparent text-text-tertiary hover:text-text-primary"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+                  ["cli", "Claude CLI", "Terminal-based Claude Code sessions"],
+                  ["claude", "Claude SDK Agent", "Embedded Claude agent sessions"],
+                  ["pi", "Pi Agent", "Providers, models, and tools"],
+                ] as const).map(([tab, label, description]) => {
+                  const active = agentConfigTab === tab;
+                  const activeClass = tab === "pi"
+                    ? "border-purple-400/60 bg-purple-500/15 text-text-primary shadow-sm shadow-purple-950/20"
+                    : "border-accent/60 bg-accent/10 text-text-primary shadow-sm shadow-black/10";
+                  return (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setAgentConfigTab(tab)}
+                      className={`rounded-xl border px-3 py-3 text-left transition-all ${
+                        active
+                          ? activeClass
+                          : "border-border-primary bg-bg-tertiary/60 text-text-secondary hover:border-border-secondary hover:bg-bg-hover hover:text-text-primary"
+                      }`}
+                    >
+                      <span className="block text-xs font-semibold">{label}</span>
+                      <span className="mt-1 block text-[length:var(--app-font-10)] text-text-tertiary">{description}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -427,6 +447,157 @@ export function AppSettingsModal() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function generateTerminalPresetId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `terminal-preset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sanitizeCustomTerminalTabs(tabs: CustomTerminalTab[] | undefined): CustomTerminalTab[] {
+  return (tabs ?? [])
+    .map((tab) => ({
+      id: tab.id || generateTerminalPresetId(),
+      name: tab.name.trim(),
+      command: tab.command.trim(),
+      icon: normalizeTerminalPresetIcon(tab.icon),
+    }))
+    .filter((tab) => tab.name.length > 0 && tab.command.length > 0);
+}
+
+function TerminalPresetsEditor({
+  presets,
+  onChange,
+}: {
+  presets: CustomTerminalTab[];
+  onChange: (presets: CustomTerminalTab[]) => void;
+}) {
+  const updatePreset = (id: string, patch: Partial<CustomTerminalTab>) => {
+    onChange(presets.map((preset) => preset.id === id ? { ...preset, ...patch } : preset));
+  };
+
+  const addPreset = () => {
+    onChange([
+      ...presets,
+      {
+        id: generateTerminalPresetId(),
+        name: "",
+        command: "",
+        icon: "terminal",
+      },
+    ]);
+  };
+
+  const removePreset = (id: string) => {
+    onChange(presets.filter((preset) => preset.id !== id));
+  };
+
+  return (
+    <div className="pt-5 border-t border-border-primary space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <label className="block text-xs font-medium text-text-secondary">Terminal presets</label>
+          <p className="mt-0.5 text-[length:var(--app-font-10)] text-text-tertiary">
+            Add one-click terminal starters to the tab bar <span className="font-mono">+</span> dropdown.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={addPreset}
+          className="shrink-0 rounded border border-border-primary bg-bg-tertiary px-2.5 py-1.5 text-[length:var(--app-font-11)] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+        >
+          Add preset
+        </button>
+      </div>
+
+      {presets.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border-primary bg-bg-primary/20 px-3 py-3 text-[length:var(--app-font-11)] text-text-tertiary">
+          No custom terminal presets yet. Add one for commands like <span className="font-mono">npm run dev</span>, <span className="font-mono">npm test</span>, or <span className="font-mono">docker compose up</span>.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {presets.map((preset, index) => {
+            const nameMissing = preset.name.trim().length === 0;
+            const commandMissing = preset.command.trim().length === 0;
+            return (
+              <div key={preset.id} className="rounded-xl border border-border-primary bg-bg-primary/30 p-3 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border-primary bg-bg-tertiary text-text-secondary">
+                      <TerminalPresetIcon icon={preset.icon} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium text-text-primary">{preset.name.trim() || `Preset ${index + 1}`}</p>
+                      <p className="truncate text-[length:var(--app-font-10)] text-text-tertiary">{preset.command.trim() || "Command required before saving"}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removePreset(preset.id)}
+                    className="rounded px-2 py-1 text-[length:var(--app-font-10)] text-text-tertiary transition-colors hover:bg-error/10 hover:text-error"
+                  >
+                    Delete
+                  </button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+                  <div>
+                    <label className="block text-[length:var(--app-font-11)] text-text-secondary mb-1">Name</label>
+                    <input
+                      type="text"
+                      value={preset.name}
+                      onChange={(event) => updatePreset(preset.id, { name: event.target.value })}
+                      placeholder="Dev server"
+                      className={`w-full rounded border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent ${nameMissing ? "border-warning/60" : "border-border-primary"}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[length:var(--app-font-11)] text-text-secondary mb-1">Initial command</label>
+                    <input
+                      type="text"
+                      value={preset.command}
+                      onChange={(event) => updatePreset(preset.id, { command: event.target.value })}
+                      placeholder="npm run dev"
+                      className={`w-full rounded border bg-bg-tertiary px-3 py-1.5 text-sm font-mono text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent ${commandMissing ? "border-warning/60" : "border-border-primary"}`}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[length:var(--app-font-11)] text-text-secondary mb-1.5">Icon</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {TERMINAL_PRESET_ICONS.map((option) => {
+                      const active = normalizeTerminalPresetIcon(preset.icon) === option.id;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          title={option.label}
+                          onClick={() => updatePreset(preset.id, { icon: option.id })}
+                          className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
+                            active
+                              ? "border-accent/70 bg-accent/15 text-accent"
+                              : "border-border-primary bg-bg-tertiary text-text-tertiary hover:bg-bg-hover hover:text-text-secondary"
+                          }`}
+                        >
+                          <TerminalPresetIcon icon={option.id} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[length:var(--app-font-10)] text-text-tertiary">
+        Empty presets are ignored on save. Commands run in the selected worktree as the first line typed into a new interactive terminal.
+      </p>
     </div>
   );
 }
@@ -881,37 +1052,11 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
         <p className="text-[length:var(--app-font-10)] text-purple-400 animate-pulse">Loading models from Pi SDK...</p>
       )}
 
-      {/* ── Default provider & model ── */}
-      <div className="space-y-3">
-        <div>
-          <label className="block text-xs text-text-secondary mb-1.5">Default provider</label>
-          <PiProviderCombobox
-            providers={configured}
-            value={defaultProvider}
-            onChange={(p) => {
-              const firstModel = piModels.find((m) => m.provider === p);
-              setForm({
-                ...form,
-                pi_default_provider: p,
-                pi_default_model: firstModel ? `${p}/${firstModel.value}` : "",
-              });
-            }}
-          />
-        </div>
-
-        <PiModelCombobox
-          provider={defaultProvider}
-          models={providerModels}
-          value={form.pi_default_model}
-          onChange={(pi_default_model) => setForm({ ...form, pi_default_model })}
-        />
-      </div>
-
-      {/* ── Configured providers with per-provider auth ── */}
-      <div className="pt-4 border-t border-border-primary">
-        <label className="block text-xs text-text-secondary mb-1.5">Providers &amp; Authentication</label>
+      {/* ── Providers first ── */}
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">Providers</label>
         <p className="text-[length:var(--app-font-10)] text-text-tertiary mb-3">
-          Add providers you want to use. Each needs an API key or OAuth login.
+          Add providers you want to use before choosing defaults. Each needs an API key or OAuth login.
         </p>
         <div className="space-y-2.5 mb-3">
           {configured.map((p) => (
@@ -968,8 +1113,32 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
         </div>
       </div>
 
-      {/* Thinking level */}
-      <div className="pt-4 border-t border-border-primary">
+      {/* ── Defaults below providers ── */}
+      <div className="pt-4 border-t border-border-primary space-y-3">
+        <label className="block text-xs font-medium text-text-secondary">Defaults</label>
+        <div>
+          <label className="block text-xs text-text-secondary mb-1.5">Default provider</label>
+          <PiProviderCombobox
+            providers={configured}
+            value={defaultProvider}
+            onChange={(p) => {
+              const firstModel = piModels.find((m) => m.provider === p);
+              setForm({
+                ...form,
+                pi_default_provider: p,
+                pi_default_model: firstModel ? `${p}/${firstModel.value}` : "",
+              });
+            }}
+          />
+        </div>
+
+        <PiModelCombobox
+          provider={defaultProvider}
+          models={providerModels}
+          value={form.pi_default_model}
+          onChange={(pi_default_model) => setForm({ ...form, pi_default_model })}
+        />
+
         <SettingsEffortDropdown
           label="Thinking level"
           value={form.agent_default_effort || "medium"}
@@ -982,7 +1151,7 @@ function PiSettingsSection({ form, setForm }: { form: AppSettings; setForm: (f: 
 
       {/* Tools section */}
       <div className="pt-4 border-t border-border-primary">
-        <label className="block text-xs text-text-secondary mb-2">Tools</label>
+        <label className="block text-xs font-medium text-text-secondary mb-2">Capabilities</label>
         <Toggle
           label="Web access (search & fetch)"
           checked={form.pi_enable_web_access !== false}

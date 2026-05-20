@@ -122,13 +122,14 @@ server.registerTool("stop_runner", {
 }, async (args) => callCoppice("stop_runner", args));
 
 server.registerTool("runner_status", {
-  description: "Check whether a configured Coppice sidepanel runner is available and currently running.",
+  description: "Check whether a configured Coppice sidepanel runner is available and currently running. Returns recent terminal output from the runner panel.",
   inputSchema: {
     runner: z.enum(["setup", "build", "run"]),
     project_id: z.string().optional(),
     project_name: z.string().optional(),
     worktree_id: z.string().optional(),
     worktree_name: z.string().optional(),
+    max_output_chars: z.number().int().min(0).max(200000).optional(),
   },
   annotations: { readOnlyHint: true },
 }, async (args) => callCoppice("runner_status", args));

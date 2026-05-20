@@ -40,6 +40,7 @@ function App() {
       resumeLatest?: boolean;
       deferSpawn?: boolean;
       throttleSpawn?: boolean;
+      initialCommand?: string;
     }> = [];
     for (const [wtId, tabs] of Object.entries(tabsByWorktree)) {
       const activeTab = activeTabByWorktree[wtId];
@@ -61,6 +62,7 @@ function App() {
           id: tab.id,
           cwd: tab.cwd,
           command: tab.command,
+          initialCommand: tab.initialCommand,
           // In tile mode, claude wrappers are reparented into tiles — render
           // them as visible so the moved subtree shows in the tile (style is
           // carried with the moved node). TileView's z-100 backdrop covers
@@ -285,8 +287,8 @@ function App() {
       }
       getCurrentWindow().unminimize().catch(() => {});
       getCurrentWindow().setFocus().catch(() => {});
-    });
-    return () => { listener.then((l) => l.unregister()); };
+    }).catch(() => null);
+    return () => { listener.then((l) => l?.unregister()).catch(() => {}); };
   }, []);
 
   // Single window-level file drop handler — routes to active session only.
@@ -344,16 +346,32 @@ function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  // Flush all agent tab caches to the DB before the window unloads, so that
-  // conversations can be restored on the next launch.
-  // We intentionally use the browser `beforeunload` event instead of Tauri's
-  // `onCloseRequested`, because onCloseRequested wraps each listener with its
-  // own `await handler(); window.destroy()` — registering multiple handlers
-  // causes double-destroy and blocks the window from closing.
+  // Flush all agent tab caches to the DB before the window closes, so that
+  // conversations can be restored on the next launch. `beforeunload` alone is
+  // fire-and-forget in a Tauri webview, so intercept the close request, await
+  // the SQLite writes, then destroy the window ourselves.
   useEffect(() => {
-    const handler = () => { flushAllAgentTabCaches().catch(() => {}); };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
+    const appWindow = getCurrentWindow();
+    let closing = false;
+    const unlistenClose = appWindow.onCloseRequested(async (event) => {
+      if (closing) return;
+      event.preventDefault();
+      closing = true;
+      try {
+        await flushAllAgentTabCaches();
+      } finally {
+        await appWindow.destroy().catch(() => {});
+      }
+    });
+
+    const beforeUnloadHandler = () => {
+      if (!closing) flushAllAgentTabCaches().catch(() => {});
+    };
+    window.addEventListener("beforeunload", beforeUnloadHandler);
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnloadHandler);
+      unlistenClose.then((fn) => fn()).catch(() => {});
+    };
   }, []);
 
   // Refresh project/worktree data when the Rust backend signals a change
@@ -639,6 +657,7 @@ function App() {
                 sessionId={t.id}
                 cwd={t.cwd}
                 command={t.command}
+                initialCommand={t.initialCommand}
                 fontSize={termFontSize}
                 fontFamily={termFontFamily}
                 kind={t.kind}
@@ -669,8 +688,8 @@ function App() {
       {/* Runner terminal pool */}
       <div id="runner-terminal-pool" style={{ position: "fixed", left: -9999, top: -9999, width: 400, height: 9999 }}>
         {allRunners.map((r) => (
-          <div key={r.id} id={`runner-term-${r.id}`} style={{ width: "100%", height: 150 }}>
-            <TerminalPanel sessionId={r.id} cwd={r.cwd} command={r.command} fontSize={runnerTermFontSize} fontFamily={termFontFamily} keepAlive />
+          <div key={r.id} id={`runner-term-${r.id}`} style={{ position: "relative", width: "100%", height: 150, overflow: "hidden" }}>
+            <TerminalPanel sessionId={r.id} cwd={r.cwd} command={r.command} fontSize={runnerTermFontSize} fontFamily={termFontFamily} keepAlive disableWebgl />
           </div>
         ))}
       </div>

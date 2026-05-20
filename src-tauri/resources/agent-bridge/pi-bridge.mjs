@@ -413,7 +413,7 @@ function buildCoppiceToolDefinitions() {
       name: "coppice_runner_status",
       label: "Runner Status",
       description:
-        "Check whether a configured Coppice sidepanel runner is available and currently running.",
+        "Check whether a configured Coppice sidepanel runner is available and currently running. Returns recent terminal output from the runner panel.",
       promptSnippet: "Check Coppice runner status",
       parameters: Type.Object({
         runner: Type.Union([Type.Literal("setup"), Type.Literal("build"), Type.Literal("run")]),
@@ -421,6 +421,7 @@ function buildCoppiceToolDefinitions() {
         project_name: Type.Optional(Type.String()),
         worktree_id: Type.Optional(Type.String()),
         worktree_name: Type.Optional(Type.String()),
+        max_output_chars: Type.Optional(Type.Number({ minimum: 0, maximum: 200000, description: "Maximum recent output characters to return (default 60000)" })),
       }),
       execute: coppiceExecute("runner_status"),
     }),

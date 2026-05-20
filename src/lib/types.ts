@@ -70,6 +70,13 @@ export type AgentBackend = "claude" | "pi";
 export type DefaultSessionMode = "terminal" | AgentBackend;
 export type PersistedDefaultClaudeMode = DefaultSessionMode | "agent";
 
+export interface CustomTerminalTab {
+  id: string;
+  name: string;
+  command: string;
+  icon: string;
+}
+
 export interface AppSettings {
   editor_command: string;
   claude_command: string;
@@ -83,6 +90,7 @@ export interface AppSettings {
   window_decorations: boolean;
   notification_sound: boolean;
   notification_popup: boolean;
+  custom_terminal_tabs: CustomTerminalTab[];
   /** Legacy settings may still contain "agent"; new saves use "terminal", "claude", or "pi". */
   default_claude_mode: PersistedDefaultClaudeMode;
   claude_cli_statusline_enabled: boolean;

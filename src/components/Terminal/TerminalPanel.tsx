@@ -91,17 +91,21 @@ interface Props {
   fontFamily?: string;
   keepAlive?: boolean;
   kind?: "terminal" | "claude";
+  /** Command to type into a freshly spawned interactive terminal once. */
+  initialCommand?: string;
   /** Claude CLI session id captured from hooks; used when restoring a tab after app restart. */
   resumeSessionId?: string;
   /** Ask Claude CLI to continue the latest session when no exact resume id is provided. */
   resumeLatest?: boolean;
   /** Mount xterm but do not spawn the PTY until this flips false. */
   deferSpawn?: boolean;
+  /** Keep xterm on the DOM renderer. Useful for frequently reparented terminals. */
+  disableWebgl?: boolean;
   /** Queue/stagger the spawn to avoid many restored Claude CLIs starting at once. */
   throttleSpawn?: boolean;
 }
 
-export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFamily, keepAlive = false, kind = "terminal", resumeSessionId, resumeLatest = false, deferSpawn = false, throttleSpawn = false }: Props) {
+export function TerminalPanel({ sessionId, cwd, command, initialCommand, fontSize = 13, fontFamily, keepAlive = false, kind = "terminal", resumeSessionId, resumeLatest = false, deferSpawn = false, disableWebgl = false, throttleSpawn = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termInstanceRef = useRef<Terminal | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -113,6 +117,8 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
   // down the terminal when these change) while still letting changes take
   // effect mid-session.
   const keepAliveRef = useRef<boolean>(keepAlive);
+  const initialCommandRef = useRef<string | undefined>(initialCommand);
+  const initialCommandSentRef = useRef<boolean>(false);
   // Last dimensions sent to the backend. On Windows, ConPTY re-emits the
   // visible screen as VT sequences on every resize — those replays land in
   // xterm's scrollback and look like duplicate content (e.g. Claude's
@@ -154,6 +160,11 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
   useEffect(() => {
     keepAliveRef.current = keepAlive;
   }, [keepAlive]);
+
+  useEffect(() => {
+    initialCommandRef.current = initialCommand;
+    if (initialCommand) initialCommandSentRef.current = false;
+  }, [initialCommand]);
 
   useEffect(() => {
     deferSpawnRef.current = deferSpawn;
@@ -276,9 +287,11 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     };
     window.addEventListener("window-resize-end", onWindowResizeEnd);
     window.addEventListener("tile-toggle-end", onWindowResizeEnd);
+    window.addEventListener("runner-reparent-end", onWindowResizeEnd);
     return () => {
       window.removeEventListener("window-resize-end", onWindowResizeEnd);
       window.removeEventListener("tile-toggle-end", onWindowResizeEnd);
+      window.removeEventListener("runner-reparent-end", onWindowResizeEnd);
     };
   }, []);
 
@@ -338,7 +351,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
     // attachWebgl() is idempotent against rapid before/after-reparent pairs:
     // if a previous addon is still present, it's disposed first.
     const attachWebgl = () => {
-      if (aborted) return;
+      if (aborted || disableWebgl) return;
       detachWebgl();
       try {
         const addon = new WebglAddon();
@@ -536,6 +549,10 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
         needsFitRef.current = true;
         return;
       }
+      if (document.body.dataset.resizingRunner) {
+        needsFitRef.current = true;
+        return;
+      }
       if (isHidden()) {
         needsFitRef.current = true;
         return;
@@ -611,6 +628,15 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
         }
       };
 
+      const sendInitialCommandOnce = async () => {
+        if (isClaude || initialCommandSentRef.current) return;
+        const pending = initialCommandRef.current?.trim();
+        if (!pending) return;
+        initialCommandSentRef.current = true;
+        useAppStore.getState().clearTerminalInitialCommand(sessionId);
+        await commands.terminalWrite(sessionId, `${pending}\n`).catch(() => {});
+      };
+
       const startSpawn = async () => {
         if (aborted || spawnStartedRef.current) return;
         spawnStartedRef.current = true;
@@ -636,6 +662,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
           }
           commands.terminalResize(sessionId, rows, cols).catch(() => {});
           markStarted();
+          await sendInitialCommandOnce();
           focusIfVisible();
           return;
         }
@@ -675,6 +702,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
             // the first bytes. The pty-output listener clears it on first
             // output, which is the point the terminal becomes useful.
             markStarted();
+            sendInitialCommandOnce().catch(() => {});
             focusIfVisible();
           })
           .catch((e) => {
@@ -718,7 +746,7 @@ export function TerminalPanel({ sessionId, cwd, command, fontSize = 13, fontFami
       termInstanceRef.current = null;
       term.dispose();
     };
-  }, [sessionId, cwd, command, fontFamily, fontSize, isClaude]);
+  }, [sessionId, cwd, command, fontFamily, fontSize, isClaude, disableWebgl]);
 
   useEffect(() => {
     if (!contextMenu) return;

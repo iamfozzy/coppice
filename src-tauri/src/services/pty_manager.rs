@@ -16,6 +16,7 @@ use tauri::{AppHandle, Emitter, Manager};
 // perceptual threshold for "terminal looks live again".
 const FLUSH_INTERVAL_VISIBLE_MS: u64 = 50;
 const FLUSH_INTERVAL_HIDDEN_MS: u64 = 250;
+const RECENT_OUTPUT_LIMIT: usize = 1_000_000;
 
 pub struct PtySession {
     writer: Box<dyn Write + Send>,
@@ -28,6 +29,10 @@ pub struct PtyManager {
     // Flush interval (ms) shared with each session's flush thread. Frontend
     // toggles via `set_visible` based on IntersectionObserver state.
     flush_intervals: Arc<Mutex<HashMap<String, Arc<AtomicU64>>>>,
+    // Recent PTY output per session. This mirrors the chunks emitted to the
+    // frontend so non-UI callers (for example Coppice runner tools) can inspect
+    // sidepanel terminal output after a command finishes.
+    recent_outputs: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl PtyManager {
@@ -35,6 +40,7 @@ impl PtyManager {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             flush_intervals: Arc::new(Mutex::new(HashMap::new())),
+            recent_outputs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -264,11 +270,19 @@ impl PtyManager {
             .try_clone_reader()
             .map_err(|e| format!("Failed to get reader: {}", e))?;
 
+        // New PTY process for this session: clear any cached output from a
+        // previous run using the same stable session id (runner restarts do this).
+        self.recent_outputs
+            .lock()
+            .unwrap()
+            .insert(session_id.to_string(), String::new());
+
         let event_name = format!("pty-output-{}", session_id);
         let app = app_handle.clone();
         let sid = session_id.to_string();
         let sessions_ref = self.sessions.clone();
         let flush_intervals_ref = self.flush_intervals.clone();
+        let recent_outputs_ref = self.recent_outputs.clone();
 
         // Shared buffer between reader thread and flush thread
         let shared_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
@@ -286,6 +300,8 @@ impl PtyManager {
 
         let event_name_flush = event_name.clone();
         let app_flush = app.clone();
+        let sid_flush = session_id.to_string();
+        let recent_outputs_flush = recent_outputs_ref.clone();
 
         // Per-session flush interval — driven by frontend visibility events.
         // Default to the "visible" cadence so the first paint after spawn is
@@ -320,12 +336,14 @@ impl PtyManager {
                     // Utf8Error::valid_up_to()). String::from_utf8_lossy on a
                     // valid prefix is a zero-copy borrow.
                     let data = String::from_utf8_lossy(&buf[..valid_up_to]).to_string();
+                    append_recent_output(&recent_outputs_flush, &sid_flush, &data);
                     let _ = app_flush.emit(&event_name_flush, &data);
                     buf.drain(..valid_up_to);
                 }
 
                 if buf.len() > 64 {
                     let data = String::from_utf8_lossy(&buf).to_string();
+                    append_recent_output(&recent_outputs_flush, &sid_flush, &data);
                     let _ = app_flush.emit(&event_name_flush, &data);
                     buf.clear();
                 }
@@ -335,6 +353,7 @@ impl PtyManager {
             let mut buf = shared_buf_flusher.lock().unwrap();
             if !buf.is_empty() {
                 let data = String::from_utf8_lossy(&buf).to_string();
+                append_recent_output(&recent_outputs_flush, &sid_flush, &data);
                 let _ = app_flush.emit(&event_name_flush, &data);
                 buf.clear();
             }
@@ -494,6 +513,14 @@ impl PtyManager {
         self.sessions.lock().unwrap().contains_key(session_id)
     }
 
+    pub fn recent_output(&self, session_id: &str, max_chars: usize) -> (String, bool) {
+        let outputs = self.recent_outputs.lock().unwrap();
+        let Some(output) = outputs.get(session_id) else {
+            return (String::new(), false);
+        };
+        tail_chars(output, max_chars)
+    }
+
     pub fn kill(&self, session_id: &str) -> Result<(), String> {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(mut session) = sessions.remove(session_id) {
@@ -529,7 +556,43 @@ impl PtyManager {
             let _ = session.child.wait();
         }
         self.flush_intervals.lock().unwrap().clear();
+        self.recent_outputs.lock().unwrap().clear();
     }
+}
+
+fn append_recent_output(
+    recent_outputs: &Arc<Mutex<HashMap<String, String>>>,
+    session_id: &str,
+    data: &str,
+) {
+    let mut outputs = recent_outputs.lock().unwrap();
+    let output = outputs.entry(session_id.to_string()).or_default();
+    output.push_str(data);
+    if output.len() > RECENT_OUTPUT_LIMIT {
+        let mut drain_to = output.len() - RECENT_OUTPUT_LIMIT;
+        while drain_to < output.len() && !output.is_char_boundary(drain_to) {
+            drain_to += 1;
+        }
+        output.drain(..drain_to);
+    }
+}
+
+fn tail_chars(output: &str, max_chars: usize) -> (String, bool) {
+    if max_chars == 0 {
+        return (String::new(), !output.is_empty());
+    }
+
+    let char_count = output.chars().count();
+    if char_count <= max_chars {
+        return (output.to_string(), false);
+    }
+
+    let start_byte = output
+        .char_indices()
+        .nth(char_count - max_chars)
+        .map(|(idx, _)| idx)
+        .unwrap_or(0);
+    (output[start_byte..].to_string(), true)
 }
 
 const COPPICE_POWERSHELL_PROMPT: &str = r#"function global:prompt {

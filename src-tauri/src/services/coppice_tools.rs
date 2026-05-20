@@ -213,6 +213,16 @@ fn runner_id(worktree_id: &str, key: &str) -> String {
     format!("runner-{key}-{worktree_id}")
 }
 
+fn runner_status_output_limit(args: &Value) -> usize {
+    const DEFAULT: usize = 60_000;
+    const MAX: usize = 200_000;
+    args.get("max_output_chars")
+        .or_else(|| args.get("maxOutputChars"))
+        .and_then(|v| v.as_u64())
+        .map(|n| (n as usize).min(MAX))
+        .unwrap_or(DEFAULT)
+}
+
 fn build_worktree_path(project: &Project, name: &str) -> String {
     let base = std::path::Path::new(&project.local_path);
     let parent = base.parent().unwrap_or(base);
@@ -602,6 +612,9 @@ fn handle_runner_status(args: &Value, app: &AppHandle, cwd: &str) -> Result<Stri
     let command = runner_command(&project, key);
     let id = runner_id(&worktree.id, key);
     let pty = app.state::<PtyManager>();
+    let output_limit = runner_status_output_limit(args);
+    let (output, output_truncated) = pty.recent_output(&id, output_limit);
+    let output_chars = output.chars().count();
     Ok(serde_json::json!({
         "runner": key,
         "available": command.is_some(),
@@ -609,6 +622,10 @@ fn handle_runner_status(args: &Value, app: &AppHandle, cwd: &str) -> Result<Stri
         "command": command,
         "worktreeId": worktree.id,
         "worktreeName": worktree.name,
+        "output": output,
+        "outputChars": output_chars,
+        "outputTruncated": output_truncated,
+        "outputMaxChars": output_limit,
     }).to_string())
 }
 
